@@ -369,6 +369,50 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         });
     }
 
+    fn set_sidebar_git_metadata_visible(&self, visible: bool) {
+        self.with_store_mut(|store| {
+            store.set_sidebar_git_metadata_visible(visible);
+        });
+    }
+
+    fn set_repo_default_commit_action(&self, repo_id: &str, action: &str) {
+        let parsed = match action {
+            "commit" => another_one_core::project_store::RepoDefaultCommitAction::Commit,
+            "commit-and-push" => {
+                another_one_core::project_store::RepoDefaultCommitAction::CommitAndPush
+            }
+            other => {
+                tracing::warn!(other, "SetRepoDefaultCommitAction: unknown action id");
+                return;
+            }
+        };
+        let repo_id_owned = repo_id.to_string();
+        self.with_store_mut(move |store| {
+            store.set_repo_default_commit_action(repo_id_owned, parsed);
+        });
+    }
+
+    fn update_task_branch(
+        &self,
+        task_id: &str,
+        target_project_id: &str,
+        branch_name: &str,
+    ) {
+        let task_id = task_id.to_string();
+        let target_project_id = target_project_id.to_string();
+        let branch_name = branch_name.to_string();
+        self.with_store_mut(move |store| {
+            let _ = store.update_task_branch(&task_id, &target_project_id, &branch_name);
+        });
+    }
+
+    fn set_expanded_repos(&self, expanded_repo_ids: Vec<String>) {
+        let set: std::collections::HashSet<String> = expanded_repo_ids.into_iter().collect();
+        self.with_store_mut(move |store| {
+            store.set_expanded_repos(&set);
+        });
+    }
+
     fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
         self.with_state(|state| {
             let ui = &state.project_store.ui;

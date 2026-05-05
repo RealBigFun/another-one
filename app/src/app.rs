@@ -3981,7 +3981,19 @@ impl AnotherOneApp {
         visible: bool,
         cx: &mut Context<Self>,
     ) {
+        // Optimistic local update so the toggle flips immediately;
+        // daemon's reply absorbs through the broadcast push.
         self.project_store.set_sidebar_git_metadata_visible(visible);
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetSidebarGitMetadataVisible { visible },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetSidebarGitMetadataVisible failed: {err}");
+                }
+            },
+        );
         cx.notify();
     }
 
@@ -6159,6 +6171,50 @@ impl AnotherOneApp {
             |result| {
                 if let Err(err) = result {
                     log::warn!("RenameTask failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetRepoDefaultCommitAction` over the active
+    /// session. `action` is the variant id (`"commit"` or
+    /// `"commit-and-push"`) — encoded as a string so daemon-proto
+    /// stays free of the `RepoDefaultCommitAction` enum shape.
+    pub(crate) fn dispatch_set_repo_default_commit_action(
+        &self,
+        repo_id: String,
+        action: String,
+    ) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetRepoDefaultCommitAction { repo_id, action },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetRepoDefaultCommitAction failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::UpdateTaskBranch` over the active session.
+    pub(crate) fn dispatch_update_task_branch(
+        &self,
+        task_id: String,
+        target_project_id: String,
+        branch_name: String,
+    ) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::UpdateTaskBranch {
+                task_id,
+                target_project_id,
+                branch_name,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("UpdateTaskBranch failed: {err}");
                 }
             },
         );
@@ -9448,10 +9504,18 @@ impl AnotherOneApp {
 
         let new_section = SectionId::for_task(&section.project_id, &success.branch_name, &task_id);
         self.move_active_task_section(&section, &new_section, cx);
+        // Optimistic local update so the active section's title /
+        // branch label refresh immediately; daemon's reply absorbs
+        // through the broadcast push.
         let _ = self.project_store.update_task_branch(
             &task_id,
             &section.project_id,
             &success.branch_name,
+        );
+        self.dispatch_update_task_branch(
+            task_id.clone(),
+            section.project_id.clone(),
+            success.branch_name.clone(),
         );
         self.refresh_project_git_state(&section.project_id);
         self.create_branch_modal = None;
@@ -9953,16 +10017,24 @@ impl AnotherOneApp {
         let start_message = match &action {
             crate::git_actions::ToolbarGitAction::Commit => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
+                    // Optimistic local pin so the dropdown's primary
+                    // button flips immediately; daemon broadcast
+                    // absorbs the authoritative state.
                     self.project_store
-                        .set_repo_default_commit_action(repo_id, RepoDefaultCommitAction::Commit);
+                        .set_repo_default_commit_action(repo_id.clone(), RepoDefaultCommitAction::Commit);
+                    self.dispatch_set_repo_default_commit_action(repo_id, "commit".to_string());
                 }
                 "Generating an AI commit message for staged changes..."
             }
             crate::git_actions::ToolbarGitAction::CommitAndPush => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
                     self.project_store.set_repo_default_commit_action(
-                        repo_id,
+                        repo_id.clone(),
                         RepoDefaultCommitAction::CommitAndPush,
+                    );
+                    self.dispatch_set_repo_default_commit_action(
+                        repo_id,
+                        "commit-and-push".to_string(),
                     );
                 }
                 "Generating an AI commit message before commit and push..."

@@ -354,6 +354,30 @@ pub enum Control {
     ///
     /// Reply is [`WorkerReply::Empty`].
     SetLastActiveSection { section_id: Option<String> },
+    /// Toggle whether the projects sidebar shows per-task git
+    /// metadata (lines added/removed, last-commit relative). Mirrors
+    /// `core::project_store::UiState::show_sidebar_git_metadata`.
+    /// Reply is [`WorkerReply::Empty`].
+    SetSidebarGitMetadataVisible { visible: bool },
+    /// Update the per-repo "default commit action" pin (commit vs.
+    /// commit-and-push) — drives which button is the primary on the
+    /// titlebar's Commit dropdown. Mirrors
+    /// `core::project_store::UiState::repo_default_commit_actions`.
+    /// `action` is the string id of the variant (`"commit"`,
+    /// `"commit-and-push"`). Reply is [`WorkerReply::Empty`].
+    SetRepoDefaultCommitAction { repo_id: String, action: String },
+    /// Persist a new branch override on a worktree task — the
+    /// desktop renames the on-disk branch via git, then calls this
+    /// to update the task's record. Reply is [`WorkerReply::Empty`].
+    UpdateTaskBranch {
+        task_id: String,
+        target_project_id: String,
+        branch_name: String,
+    },
+    /// Persist the user's expanded-project / collapsed-project
+    /// state. `expanded_repo_ids` is the full set; the daemon
+    /// replaces its store wholesale. Reply is [`WorkerReply::Empty`].
+    SetExpandedRepos { expanded_repo_ids: Vec<String> },
     /// Compute the canonical branch slug for a free-text input.
     /// Powers the Create Branch modal's live `Branch: …` preview.
     /// Pure function — no project state involved. Reply is

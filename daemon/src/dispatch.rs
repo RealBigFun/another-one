@@ -430,6 +430,26 @@ async fn dispatch_call(
             registry.set_last_active_section(section_id);
             Some(WorkerReply::Empty)
         }
+        Control::SetSidebarGitMetadataVisible { visible } => {
+            registry.set_sidebar_git_metadata_visible(visible);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetRepoDefaultCommitAction { repo_id, action } => {
+            registry.set_repo_default_commit_action(&repo_id, &action);
+            Some(WorkerReply::Empty)
+        }
+        Control::UpdateTaskBranch {
+            task_id,
+            target_project_id,
+            branch_name,
+        } => {
+            registry.update_task_branch(&task_id, &target_project_id, &branch_name);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetExpandedRepos { expanded_repo_ids } => {
+            registry.set_expanded_repos(expanded_repo_ids);
+            Some(WorkerReply::Empty)
+        }
 
         // ── Project actions ──────────────────────────────────────────
         Control::RunProjectAction {
