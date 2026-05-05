@@ -2329,12 +2329,10 @@ impl EntityInputHandler for AnotherOneApp {
                     };
                     match kind {
                         SettingsGitActionScriptKind::Commit => {
-                            let _ = self
-                                .project_store
-                                .set_git_commit_generation_script(saved_draft);
+                            self.dispatch_set_git_commit_script(saved_draft);
                         }
                         SettingsGitActionScriptKind::PullRequest => {
-                            let _ = self.project_store.set_git_pr_generation_script(saved_draft);
+                            self.dispatch_set_git_pr_script(saved_draft);
                         }
                     }
                 }
@@ -3970,7 +3968,11 @@ impl AnotherOneApp {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
+        // Optimistic local update so prewarm sync sees the new
+        // enabled-set immediately; the daemon's reply absorbs through
+        // the broadcast push.
         if self.project_store.set_agent_enabled(agent_id, enabled) {
+            self.dispatch_set_agent_enabled(agent_id.to_string(), enabled);
             self.sync_new_task_modal_prewarm(cx);
             self.sync_add_agent_modal_prewarm(cx);
             cx.notify();
@@ -3979,6 +3981,7 @@ impl AnotherOneApp {
 
     pub(crate) fn set_default_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
         if self.project_store.set_default_agent(agent_id) {
+            self.dispatch_set_default_agent(agent_id.to_string());
             self.sync_new_task_modal_prewarm(cx);
             self.sync_add_agent_modal_prewarm(cx);
             cx.notify();
@@ -6011,6 +6014,34 @@ impl AnotherOneApp {
             |result| {
                 if let Err(err) = result {
                     log::warn!("ResetGitPrScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetAgentEnabled` over the active session.
+    pub(crate) fn dispatch_set_agent_enabled(&self, agent_id: String, enabled: bool) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetAgentEnabled { agent_id, enabled },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetAgentEnabled failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetDefaultAgent` over the active session.
+    pub(crate) fn dispatch_set_default_agent(&self, agent_id: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetDefaultAgent { agent_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetDefaultAgent failed: {err}");
                 }
             },
         );
