@@ -378,6 +378,13 @@ pub enum Control {
     /// state. `expanded_repo_ids` is the full set; the daemon
     /// replaces its store wholesale. Reply is [`WorkerReply::Empty`].
     SetExpandedRepos { expanded_repo_ids: Vec<String> },
+    /// Update the LLM settings for the AI commit-message generator.
+    /// `settings` is an opaque JSON-serialised
+    /// `core::project_store::GitActionLlmSettings`. Reply is
+    /// [`WorkerReply::Empty`].
+    SetGitCommitLlm { settings: serde_json::Value },
+    /// Same as `SetGitCommitLlm` but for the PR-generation LLM.
+    SetGitPrLlm { settings: serde_json::Value },
     /// Compute the canonical branch slug for a free-text input.
     /// Powers the Create Branch modal's live `Branch: …` preview.
     /// Pure function — no project state involved. Reply is

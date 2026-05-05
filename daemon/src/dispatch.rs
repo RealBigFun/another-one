@@ -450,6 +450,14 @@ async fn dispatch_call(
             registry.set_expanded_repos(expanded_repo_ids);
             Some(WorkerReply::Empty)
         }
+        Control::SetGitCommitLlm { settings } => {
+            registry.set_git_commit_llm(settings);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetGitPrLlm { settings } => {
+            registry.set_git_pr_llm(settings);
+            Some(WorkerReply::Empty)
+        }
 
         // ── Project actions ──────────────────────────────────────────
         Control::RunProjectAction {

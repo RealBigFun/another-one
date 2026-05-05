@@ -343,7 +343,13 @@ impl AnotherOneApp {
     }
 
     fn reset_all_shortcuts(&mut self, cx: &mut Context<Self>) {
-        self.project_store.reset_shortcuts();
+        // Loop-dispatch one ResetShortcutBinding per action — same
+        // end state as ProjectStore::reset_shortcuts(), just routed
+        // through the daemon. The broadcast push lands a single
+        // projection at the end of the burst.
+        for action in another_one_core::shortcuts::ALL_SHORTCUT_ACTIONS {
+            self.dispatch_reset_shortcut_binding(action);
+        }
         self.shortcut_capture_action = None;
         self.show_success_toast("Reset all shortcuts.", cx);
         cx.notify();
@@ -496,14 +502,19 @@ impl AnotherOneApp {
         settings: GitActionLlmSettings,
         cx: &mut Context<Self>,
     ) {
+        let Ok(value) = serde_json::to_value(&settings) else {
+            log::warn!("set_settings_git_action_llm: failed to serialise settings");
+            return;
+        };
         match kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
-                let _ = self.project_store.set_git_commit_generation_llm(settings);
+                self.dispatch_set_git_commit_llm(value);
             }
             crate::app::SettingsGitActionScriptKind::PullRequest => {
-                let _ = self.project_store.set_git_pr_generation_llm(settings);
+                self.dispatch_set_git_pr_llm(value);
             }
         }
+        let _ = settings; // moved into the JSON value above
         self.settings_git_action_llm_dropdown = None;
         cx.notify();
     }

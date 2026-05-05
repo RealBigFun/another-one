@@ -414,6 +414,30 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         });
     }
 
+    fn set_git_commit_llm(&self, settings: serde_json::Value) {
+        let Ok(settings) = serde_json::from_value::<
+            another_one_core::git_actions::GitActionLlmSettings,
+        >(settings) else {
+            tracing::warn!("SetGitCommitLlm payload failed to decode");
+            return;
+        };
+        self.with_store_mut(move |store| {
+            let _ = store.set_git_commit_generation_llm(settings);
+        });
+    }
+
+    fn set_git_pr_llm(&self, settings: serde_json::Value) {
+        let Ok(settings) = serde_json::from_value::<
+            another_one_core::git_actions::GitActionLlmSettings,
+        >(settings) else {
+            tracing::warn!("SetGitPrLlm payload failed to decode");
+            return;
+        };
+        self.with_store_mut(move |store| {
+            let _ = store.set_git_pr_generation_llm(settings);
+        });
+    }
+
     fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
         self.with_state(|state| {
             let ui = &state.project_store.ui;

@@ -6045,6 +6045,34 @@ impl AnotherOneApp {
         );
     }
 
+    /// Fire `Control::SetGitCommitLlm` over the active session.
+    pub(crate) fn dispatch_set_git_commit_llm(&self, settings: serde_json::Value) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitCommitLlm { settings },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitCommitLlm failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitPrLlm` over the active session.
+    pub(crate) fn dispatch_set_git_pr_llm(&self, settings: serde_json::Value) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitPrLlm { settings },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitPrLlm failed: {err}");
+                }
+            },
+        );
+    }
+
     /// Fire `Control::SetAgentEnabled` over the active session.
     pub(crate) fn dispatch_set_agent_enabled(&self, agent_id: String, enabled: bool) {
         let session = self.session_handle();

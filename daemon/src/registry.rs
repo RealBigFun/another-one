@@ -260,6 +260,15 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// impl is a no-op.
     fn set_expanded_repos(&self, _expanded_repo_ids: Vec<String>) {}
 
+    /// Replace the AI commit-message generation LLM settings.
+    /// `settings` is an opaque JSON-serialised
+    /// `GitActionLlmSettings`. Default impl is a no-op.
+    fn set_git_commit_llm(&self, _settings: serde_json::Value) {}
+
+    /// Same as `set_git_commit_llm` but for PR generation. Default
+    /// impl is a no-op.
+    fn set_git_pr_llm(&self, _settings: serde_json::Value) {}
+
     /// Subscribe to the live PTY byte stream for `(section_id,
     /// tab_id)`. Returns `None` if the tab isn't currently running
     /// (e.g., closed or never launched). Multiple subscribers share
