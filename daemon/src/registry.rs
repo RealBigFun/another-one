@@ -197,6 +197,33 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         daemon_proto::UiSnapshot::default()
     }
 
+    /// Subscribe to state-change notifications. Each
+    /// `Control::ListProjects` reply is built fresh from
+    /// [`Self::list_projects`], so every fanned-out tick of the
+    /// returned receiver tells server-side session loops "the
+    /// projection has likely changed; push a fresh `ProjectList` to
+    /// the peer". Default impl returns a never-yielding receiver
+    /// for registries that don't track mutations (sandbox).
+    fn subscribe_state_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
+        // Capacity 1 because this is "edge-triggered" — we drop
+        // duplicate ticks; consumers re-snapshot on the leading
+        // edge and ignore the rest.
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        // Keep the sender alive for the lifetime of the receiver
+        // so it doesn't get a `Closed` error immediately. Leak
+        // intentionally for the no-op default — sandbox registries
+        // never send.
+        std::mem::forget(tx);
+        rx
+    }
+
+    /// Notify every subscriber that the daemon's projection may
+    /// have changed (project / task / tab mutation, settings tweak,
+    /// pin toggle, etc.). Default impl is a no-op so registries
+    /// that don't have mutation surfaces (e.g. the sandbox) are
+    /// trivially compliant.
+    fn notify_state_changed(&self) {}
+
     /// Subscribe to the live PTY byte stream for `(section_id,
     /// tab_id)`. Returns `None` if the tab isn't currently running
     /// (e.g., closed or never launched). Multiple subscribers share

@@ -131,10 +131,18 @@ pub(crate) struct RegistryState {
     /// between "spawn kicked off" and "Launched reply observed"
     /// where a second LaunchTab would spawn a duplicate PTY.
     pub(crate) in_flight_launches: HashSet<TerminalRuntimeKey>,
+    /// Stable broadcast sender shared with `DesktopTerminalRegistry`
+    /// so the desktop GUI can fire a state-change tick after every
+    /// `project_store` mutation. Connected mobile sessions push a
+    /// fresh `WorkerReply::ProjectList` to their peer on each tick.
+    pub(crate) state_change_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl RegistryState {
     pub(crate) fn new(project_store: ProjectStore) -> Self {
+        // Capacity 16 — server-side push pumps drop duplicates,
+        // a small buffer prevents `Lagged` on bursts of mutations.
+        let (state_change_tx, _) = tokio::sync::broadcast::channel(16);
         Self {
             project_store,
             broadcasts: HashMap::new(),
@@ -149,6 +157,7 @@ impl RegistryState {
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
             effective_sizes: HashMap::new(),
+            state_change_tx,
         }
     }
 
@@ -252,11 +261,23 @@ pub(crate) struct PendingSpawnTerminal {
 /// the app alive.
 pub(crate) struct DesktopTerminalRegistry {
     inner: Weak<Mutex<RegistryState>>,
+    /// Stable broadcast sender for state-change notifications.
+    /// Cloned out of `RegistryState::state_change_tx` at construction
+    /// so the trait impl can serve `subscribe_state_changes` /
+    /// `notify_state_changed` without re-taking the inner state lock.
+    state_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl DesktopTerminalRegistry {
     pub(crate) fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
-        Self { inner }
+        // Pull the canonical sender out of the shared `RegistryState`
+        // so notifications fired by the GUI's
+        // `sync_registry_project_store` reach our subscribers too.
+        let state_tx = inner
+            .upgrade()
+            .and_then(|arc| arc.lock().ok().map(|guard| guard.state_change_tx.clone()))
+            .unwrap_or_else(|| tokio::sync::broadcast::channel(16).0);
+        Self { inner, state_tx }
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut RegistryState) -> R) -> Option<R> {
@@ -283,6 +304,16 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             project_summaries(state)
         })
         .unwrap_or_default()
+    }
+
+    fn subscribe_state_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
+        self.state_tx.subscribe()
+    }
+
+    fn notify_state_changed(&self) {
+        // `send` returns Err only if there are no receivers. That's
+        // fine — no one's listening yet, no work to do.
+        let _ = self.state_tx.send(());
     }
 
     fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {

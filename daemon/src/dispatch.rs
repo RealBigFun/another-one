@@ -133,6 +133,39 @@ pub async fn serve_session_with_attach(
 ) -> Result<(), TransportError> {
     let viewer_id = session.peer_id().to_string();
     let attach_for_loop = Arc::clone(&attach);
+
+    // Spawn a state-change pump: any time the registry signals a
+    // mutation, push a fresh `ProjectList` (with `request_id == 0`)
+    // to the peer. This is how mobile clients learn about desktop
+    // GUI mutations without polling. The pump exits when the
+    // session ends (push_reply returns Err) or the registry's
+    // sender drops.
+    let push_session = Arc::clone(&session);
+    let push_registry = Arc::clone(&registry);
+    let push_handle = tokio::spawn(async move {
+        let mut rx = push_registry.subscribe_state_changes();
+        loop {
+            match rx.recv().await {
+                Ok(()) => {
+                    let projects = push_registry.list_projects();
+                    let ui = push_registry.ui_snapshot();
+                    let reply = WorkerReply::ProjectList { projects, ui };
+                    if push_session.push_reply(reply).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    // Lagged means we missed ticks but the next
+                    // recv will give us the latest — and we always
+                    // re-snapshot fresh so missing intermediate
+                    // ticks is fine. Continue.
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
     let result = loop {
         let next = match session.next_call().await {
             Ok(v) => v,
@@ -157,6 +190,9 @@ pub async fn serve_session_with_attach(
             }
         }
     };
+
+    // Stop the push pump so it doesn't outlive the session.
+    push_handle.abort();
 
     // Tear down any lingering attach state on the way out so the
     // forwarder task doesn't outlive the session.
