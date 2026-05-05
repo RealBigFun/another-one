@@ -273,11 +273,15 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> Option<Project> {
         let project_id_set = std::collections::HashSet::from([project_id.to_string()]);
+        // Read the snapshot Project before dispatching; the
+        // broadcast push will remove it from the local store soon
+        // after this returns.
+        let removed_project = self.project_store.project(project_id).cloned()?;
         let removed_repo_ids = project_workflows::removed_repo_ids_without_remaining_projects(
             &self.project_store.projects,
             &project_id_set,
         );
-        let removed_project = self.project_store.remove_worktree_project(project_id)?;
+        self.dispatch_remove_project(project_id.to_string());
         self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
 
         self.workspace_pane.update(cx, |workspace, cx| {
