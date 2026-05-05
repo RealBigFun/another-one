@@ -243,13 +243,19 @@ impl AnotherOneApp {
             &project_id_set,
         );
 
-        for project_id in project_ids {
+        for project_id in project_ids.iter() {
+            self.dispatch_remove_project(project_id.clone());
+        }
+        // Optimistic local removal so the sidebar reflows immediately;
+        // the daemon's authoritative `RemoveProject` reply absorbs
+        // through drain_remote_worker_replies on the next broadcast
+        // tick.
+        for project_id in project_ids.iter() {
             self.project_store.remove_project(project_id);
         }
         self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
         let fallback_section =
             project_workflows::fallback_section_after_project_removal(&self.project_store);
-        self.project_store.save();
 
         self.workspace_pane.update(cx, |workspace, cx| {
             workspace.remove_project_sections(&project_id_set, cx);
@@ -412,9 +418,12 @@ impl AnotherOneApp {
     }
 
     fn set_sidebar_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
+        // Optimistic local update so the pin glyph flips before the
+        // round-trip — desktop renders the latest authoritative state
+        // when the daemon's broadcast push hits drain_remote_worker_replies.
         let changed = self.project_store.set_task_pinned(task_id, pinned);
         if changed {
-            self.project_store.save();
+            self.dispatch_set_task_pinned(task_id.to_string(), pinned);
         }
         changed
     }
@@ -519,6 +528,9 @@ impl AnotherOneApp {
         preferred_project_id: &str,
         cx: &mut Context<Self>,
     ) {
+        // Optimistic local removal so the sidebar reflows
+        // immediately; the daemon's RemoveTask reply absorbs through
+        // the broadcast push that follows.
         if self
             .project_store
             .remove_task(project_id, task_id)
@@ -527,6 +539,7 @@ impl AnotherOneApp {
             self.show_error_toast("Could not find the selected task.", cx);
             return;
         }
+        self.dispatch_remove_task(project_id.to_string(), task_id.to_string());
 
         self.sidebar_task_menu = None;
         self.sidebar_task_last_click = None;
@@ -541,7 +554,6 @@ impl AnotherOneApp {
             workspace.remove_task_sections(task_id, cx);
         });
         self.restore_view_after_task_removal(preferred_project_id, cx);
-        self.project_store.save();
         self.show_success_toast(format!("Deleted task {}.", task_name), cx);
         cx.notify();
     }
@@ -663,18 +675,18 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> String {
         if let Some(task_id) = confirm.task_id.as_deref() {
+            // Optimistic local removal; daemon RemoveTask reply
+            // absorbs through the broadcast push that follows.
             self.project_store
                 .remove_task(&confirm.root_project_id, task_id);
+            self.dispatch_remove_task(confirm.root_project_id.clone(), task_id.to_string());
             self.workspace_pane.update(cx, |workspace, cx| {
                 workspace.remove_task_sections(task_id, cx);
             });
         }
 
         self.sidebar_task_delete_confirm = None;
-        let removed_worktree_project = self.remove_worktree_project_id(&confirm.project_id, cx);
-        if removed_worktree_project.is_none() {
-            self.project_store.save();
-        }
+        let _removed_worktree_project = self.remove_worktree_project_id(&confirm.project_id, cx);
         if was_active_project
             && self
                 .project_store
@@ -1118,8 +1130,10 @@ impl AnotherOneApp {
         };
 
         if final_name != rename.original_name {
+            // Optimistic local rename; daemon's RenameTask reply
+            // absorbs through the broadcast push that follows.
             if self.project_store.rename_task(&rename.row_id, &final_name) {
-                self.project_store.save();
+                self.dispatch_rename_task(rename.row_id.clone(), final_name);
             }
         }
 

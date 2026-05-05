@@ -6030,6 +6030,65 @@ impl AnotherOneApp {
         );
     }
 
+    /// Fire `Control::RemoveProject` over the active session.
+    pub(crate) fn dispatch_remove_project(&self, project_id: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::RemoveProject { project_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("RemoveProject failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetTaskPinned` over the active session.
+    pub(crate) fn dispatch_set_task_pinned(&self, task_id: String, pinned: bool) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetTaskPinned { task_id, pinned },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetTaskPinned failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::RenameTask` over the active session.
+    pub(crate) fn dispatch_rename_task(&self, task_id: String, new_name: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::RenameTask { task_id, new_name },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("RenameTask failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::RemoveTask` over the active session.
+    pub(crate) fn dispatch_remove_task(&self, project_id: String, task_id: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::RemoveTask {
+                project_id,
+                task_id,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("RemoveTask failed: {err}");
+                }
+            },
+        );
+    }
+
     /// Populate `workspace_pane.section_states[section_id]` from the
     /// matching task's persisted tabs in `project_store.tasks` if it
     /// isn't already there. Called before `activate_section` on tap
