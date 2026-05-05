@@ -68,7 +68,7 @@ pub(crate) const DESKTOP_LOCAL_VIEWER_ID: &str = "desktop-local";
 /// negligible at PTY-launch rates (tens per session), whereas keeping
 /// projects/broadcasts/writers in sync would require multiple locks to
 /// be held in order and is fragile to refactor later.
-pub(crate) struct RegistryState {
+pub struct RegistryState {
     /// Snapshot of the desktop's projects/tasks/tabs, refreshed from
     /// `AnotherOneApp::project_store` on every mutation. The daemon's
     /// `ListProjects` handler reads directly from this snapshot so it
@@ -139,7 +139,7 @@ pub(crate) struct RegistryState {
 }
 
 impl RegistryState {
-    pub(crate) fn new(project_store: ProjectStore) -> Self {
+    pub fn new(project_store: ProjectStore) -> Self {
         // Capacity 16 — server-side push pumps drop duplicates,
         // a small buffer prevents `Lagged` on bursts of mutations.
         let (state_change_tx, _) = tokio::sync::broadcast::channel(16);
@@ -259,7 +259,7 @@ pub(crate) struct PendingSpawnTerminal {
 /// state onto the wire. Holds a `Weak` so a late-arriving daemon
 /// callback after app shutdown drops out cleanly instead of keeping
 /// the app alive.
-pub(crate) struct DesktopTerminalRegistry {
+pub struct DesktopTerminalRegistry {
     inner: Weak<Mutex<RegistryState>>,
     /// Stable broadcast sender for state-change notifications.
     /// Cloned out of `RegistryState::state_change_tx` at construction
@@ -269,7 +269,7 @@ pub(crate) struct DesktopTerminalRegistry {
 }
 
 impl DesktopTerminalRegistry {
-    pub(crate) fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
+    pub fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
         // Pull the canonical sender out of the shared `RegistryState`
         // so notifications fired by the GUI's
         // `sync_registry_project_store` reach our subscribers too.

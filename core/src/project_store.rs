@@ -774,6 +774,62 @@ pub struct ProjectStore {
 }
 
 impl ProjectStore {
+    /// Build an in-memory `ProjectStore` seeded with the given
+    /// projects + tasks, no disk involvement. The `file_path` is set
+    /// to a temp path so a stray `save()` call (e.g. via
+    /// `with_store_mut` in test) writes to a unique scratch file
+    /// rather than the user's real `projects.json`. Intended for
+    /// `app/tests/daemon_dispatch_harness.rs` and friends.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn from_projects_for_test(projects: Vec<Project>, tasks: Vec<Task>) -> Self {
+        use std::collections::HashMap;
+        // Seed `repos` with one entry per unique repo_id seen across
+        // the fixture projects. `sanitize` retains projects only when
+        // `repos.contains_key(&project.repo_id)` so an empty `repos`
+        // map silently drops every fixture — exactly the bug that
+        // burned the first round of harness tests.
+        let mut repos: HashMap<String, RepoRecord> = HashMap::new();
+        for project in &projects {
+            repos
+                .entry(project.repo_id.clone())
+                .or_insert_with(|| RepoRecord {
+                    id: project.repo_id.clone(),
+                    common_dir: None,
+                    branch_order: Vec::new(),
+                    branches_by_name: HashMap::new(),
+                });
+        }
+        let mut store = Self {
+            repos,
+            projects_by_id: projects.iter().cloned().map(|p| (p.id.clone(), p)).collect(),
+            projects: Vec::new(),
+            project_order: projects.iter().map(|p| p.id.clone()).collect(),
+            tasks_by_id: tasks.iter().cloned().map(|t| (t.id.clone(), t)).collect(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            // Unique tmpfile-name so concurrent tests don't trample
+            // each other on save(); not actually opened during tests
+            // unless `with_store_mut` is exercised (then a write
+            // succeeds harmlessly into the temp dir).
+            file_path: std::env::temp_dir().join(format!(
+                "another-one-test-store-{}.json",
+                uuid::Uuid::new_v4()
+            )),
+        };
+        for task in &tasks {
+            store
+                .task_ids_by_root_project
+                .entry(task.root_project_id.clone())
+                .or_default()
+                .push(task.id.clone());
+        }
+        store.sanitize();
+        store.rebuild_runtime_views();
+        store
+    }
+
     #[hotpath::measure]
     pub fn load() -> Self {
         let file_path = Self::config_path();
