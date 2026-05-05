@@ -1342,7 +1342,7 @@ fn open_in_app_from_id(id: &str) -> Option<OpenInAppKind> {
     OpenInAppKind::all().into_iter().find(|app| app.id() == id)
 }
 
-fn shortcut_action_id(action: ShortcutAction) -> &'static str {
+pub(crate) fn shortcut_action_id(action: ShortcutAction) -> &'static str {
     match action {
         ShortcutAction::CycleProjects => "cycle-projects",
         ShortcutAction::NewTabInCurrentTask => "new-tab-in-current-task",

@@ -5902,6 +5902,134 @@ impl AnotherOneApp {
     /// `ListProjects` responses reflect recent renames / new tasks /
     /// tab changes. Cheap (full clone) but called only after state
     /// mutations, not per frame.
+    /// Fire `Control::SetShortcutBinding` over the active session.
+    /// Settings-page handlers and any future shortcut-mutating UI use
+    /// this so the daemon's `set_shortcut_binding` mutator owns the
+    /// write — desktop's local `project_store.ui` updates on the
+    /// broadcast push that follows. Replaces direct
+    /// `self.project_store.set_shortcut_binding` calls.
+    pub(crate) fn dispatch_set_shortcut_binding(
+        &self,
+        action: another_one_core::shortcuts::ShortcutAction,
+        binding: String,
+    ) {
+        let action_id = crate::daemon_host::shortcut_action_id(action).to_string();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetShortcutBinding {
+                action_id,
+                binding,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetShortcutBinding failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Like [`Self::dispatch_set_shortcut_binding`] but clears the
+    /// binding (empty string == "no override; fall back to default").
+    pub(crate) fn dispatch_clear_shortcut_binding(
+        &self,
+        action: another_one_core::shortcuts::ShortcutAction,
+    ) {
+        // Clearing is encoded as an empty binding on the wire — the
+        // daemon's handler routes it to `clear_shortcut_binding`.
+        self.dispatch_set_shortcut_binding(action, String::new());
+    }
+
+    /// Reset a single shortcut to its default. The daemon's
+    /// handler uses `reset_shortcut_binding` which restores the
+    /// hardcoded default rather than the empty/cleared state.
+    pub(crate) fn dispatch_reset_shortcut_binding(
+        &self,
+        action: another_one_core::shortcuts::ShortcutAction,
+    ) {
+        let action_id = crate::daemon_host::shortcut_action_id(action).to_string();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::ResetShortcutBinding { action_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("ResetShortcutBinding failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitCommitScript` over the active session.
+    pub(crate) fn dispatch_set_git_commit_script(&self, script: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitCommitScript { script },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitCommitScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::ResetGitCommitScript` over the active session.
+    pub(crate) fn dispatch_reset_git_commit_script(&self) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::ResetGitCommitScript,
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("ResetGitCommitScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitPrScript` over the active session.
+    pub(crate) fn dispatch_set_git_pr_script(&self, script: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitPrScript { script },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitPrScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::ResetGitPrScript` over the active session.
+    pub(crate) fn dispatch_reset_git_pr_script(&self) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::ResetGitPrScript,
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("ResetGitPrScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetAgentLaunchArgs` over the active session.
+    pub(crate) fn dispatch_set_agent_launch_args(&self, agent_id: String, args: Vec<String>) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetAgentLaunchArgs { agent_id, args },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetAgentLaunchArgs failed: {err}");
+                }
+            },
+        );
+    }
+
     /// Populate `workspace_pane.section_states[section_id]` from the
     /// matching task's persisted tabs in `project_store.tasks` if it
     /// isn't already there. Called before `activate_section` on tap
