@@ -22,7 +22,9 @@ pub mod status;
 // Wire types live in `daemon-proto`. Callers reach for
 // `daemon_proto::Control` etc. directly — this crate no longer
 // mirrors them.
-pub use iroh_transport::{iroh_factory, pairing_target, socket_target, IrohTransportFactory};
+pub use iroh_transport::{
+    iroh_factory, pairing_target, socket_target, wrap_legacy_session, IrohTransportFactory,
+};
 pub use pairing_url::{parse_pairing_url, PairingUrl};
 pub use session::{connect, Session, SessionEvent};
 pub use status::{drain_status, DialStatus};

@@ -76,57 +76,55 @@ impl TransportFactory for IrohTransportFactory {
             let legacy = connect(&pairing_url)
                 .await
                 .map_err(|e| TransportError::Connect(format!("{e:#}")))?;
-            let inner = Arc::new(legacy);
-            let attached = Arc::new(AsyncMutex::new(None::<(String, String)>));
-
-            // Bridge: drain the legacy session's PTY-bytes channel
-            // into a SessionEvent mpsc tagged with the current attach
-            // key. The bridge task ends when next_incoming_bytes
-            // returns None (session closed). Worker-reply push
-            // frames are NOT bridged — `app/src/iroh_client.rs` still
-            // owns that channel; rerouting waits on the typed-client
-            // refactor that retires the polling path.
-            let (events_tx, events_rx) = mpsc::unbounded_channel::<SessionEvent>();
-            let bridge_session = Arc::clone(&inner);
-            let bridge_attached = Arc::clone(&attached);
-            tokio::spawn(async move {
-                while let Some(bytes) = bridge_session.next_incoming_bytes().await {
-                    let (section_id, tab_id) = match &*bridge_attached.lock().await {
-                        Some(pair) => pair.clone(),
-                        // PTY bytes arriving while no tab is attached
-                        // is a wire-level race — the daemon may keep
-                        // pushing for a few frames after a DetachTab.
-                        // Drop on the floor; consumers don't have
-                        // anywhere to render them anyway.
-                        None => continue,
-                    };
-                    if events_tx
-                        .send(SessionEvent::PtyBytes {
-                            section_id,
-                            tab_id,
-                            bytes,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                // Closing notification so any held event stream
-                // terminates cleanly per the trait contract.
-                let _ = events_tx.send(SessionEvent::Closed { reason: None });
-            });
-
-            let session = IrohSession {
-                inner,
-                attached,
-                events_rx: StdMutex::new(Some(events_rx)),
-            };
-            Ok(Box::new(session) as Box<dyn AbstractSession>)
+            Ok(wrap_legacy_session(Arc::new(legacy)))
         })
     }
 }
 
 /// `Session` impl wrapping the legacy `daemon_client::Session`. Now
+/// Wrap an existing legacy [`LegacySession`] into an
+/// [`AbstractSession`]. Spawns the same `next_incoming_bytes →
+/// SessionEvent::PtyBytes` bridge task that [`IrohTransportFactory::dial`]
+/// uses internally, so any holder of an `Arc<LegacySession>` (e.g.
+/// app-side code that already owns one from `connect()`) can hand a
+/// matched abstract session to consumers that program against
+/// [`AbstractSession`] without re-dialing.
+///
+/// The bridge consumes `next_incoming_bytes` on the legacy session,
+/// so callers must not also drain that channel themselves. Worker
+/// replies (`next_worker_reply`) are a separate channel and stay
+/// available for legacy polling consumers.
+pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession> {
+    let attached = Arc::new(AsyncMutex::new(None::<(String, String)>));
+    let (events_tx, events_rx) = mpsc::unbounded_channel::<SessionEvent>();
+    let bridge_session = Arc::clone(&inner);
+    let bridge_attached = Arc::clone(&attached);
+    tokio::spawn(async move {
+        while let Some(bytes) = bridge_session.next_incoming_bytes().await {
+            let (section_id, tab_id) = match &*bridge_attached.lock().await {
+                Some(pair) => pair.clone(),
+                None => continue,
+            };
+            if events_tx
+                .send(SessionEvent::PtyBytes {
+                    section_id,
+                    tab_id,
+                    bytes,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+        let _ = events_tx.send(SessionEvent::Closed { reason: None });
+    });
+    Box::new(IrohSession {
+        inner,
+        attached,
+        events_rx: StdMutex::new(Some(events_rx)),
+    })
+}
+
 /// uses the per-call request-id router on the legacy session, so
 /// concurrent `call`s from separate tasks correlate cleanly instead
 /// of racing the FIFO recv channel.
