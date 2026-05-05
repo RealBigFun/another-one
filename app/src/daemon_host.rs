@@ -343,6 +343,32 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let _ = self.state_tx.send(());
     }
 
+    fn persist_section_state(&self, section_id: &str, persisted: serde_json::Value) {
+        let Ok(persisted) = serde_json::from_value::<
+            another_one_core::project_store::PersistedSectionState,
+        >(persisted) else {
+            tracing::warn!(section_id, "PersistSectionState payload failed to decode");
+            return;
+        };
+        let Some(parsed) = SectionId::from_store_key(section_id) else {
+            tracing::warn!(section_id, "PersistSectionState section_id malformed");
+            return;
+        };
+        self.with_store_mut(|store| {
+            if let Some(task_id) = parsed.task_id.as_deref() {
+                store.update_task_tabs(task_id, &persisted);
+            } else {
+                store.set_terminal_section(section_id.to_string(), persisted);
+            }
+        });
+    }
+
+    fn set_last_active_section(&self, section_id: Option<String>) {
+        self.with_store_mut(|store| {
+            store.set_last_active_section_key(section_id);
+        });
+    }
+
     fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
         self.with_state(|state| {
             let ui = &state.project_store.ui;

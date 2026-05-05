@@ -4718,16 +4718,54 @@ impl AnotherOneApp {
     }
 
     fn set_last_active_section_key(&mut self, section_key: Option<String>) {
-        self.project_store.set_last_active_section_key(section_key);
+        // Optimistic local update so UI reads (sidebar focus
+        // highlight, etc.) see it immediately; the daemon's reply
+        // absorbs through the broadcast push.
+        self.project_store
+            .set_last_active_section_key(section_key.clone());
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetLastActiveSection {
+                section_id: section_key,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetLastActiveSection failed: {err}");
+                }
+            },
+        );
     }
 
     fn persist_section_state(&mut self, section_id: &SectionId, persisted: PersistedSectionState) {
+        // Optimistic local update so the local terminal panel sees
+        // its persisted state immediately; the daemon's reply
+        // absorbs through the broadcast push.
         if let Some(task_id) = section_id.task_id.as_deref() {
-            self.project_store.update_task_tabs(task_id, &persisted);
+            self.project_store
+                .update_task_tabs(task_id, &persisted);
         } else {
             self.project_store
-                .set_terminal_section(section_id.store_key(), persisted);
+                .set_terminal_section(section_id.store_key(), persisted.clone());
         }
+        let store_key = section_id.store_key();
+        let Ok(value) = serde_json::to_value(&persisted) else {
+            log::warn!("persist_section_state: failed to serialise PersistedSectionState");
+            return;
+        };
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::PersistSectionState {
+                section_id: store_key,
+                persisted: value,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("PersistSectionState failed: {err}");
+                }
+            },
+        );
     }
 
     fn update_terminal_tab(

@@ -419,6 +419,17 @@ async fn dispatch_call(
                 removed,
             })
         }
+        Control::PersistSectionState {
+            section_id,
+            persisted,
+        } => {
+            registry.persist_section_state(&section_id, persisted);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetLastActiveSection { section_id } => {
+            registry.set_last_active_section(section_id);
+            Some(WorkerReply::Empty)
+        }
 
         // ── Project actions ──────────────────────────────────────────
         Control::RunProjectAction {

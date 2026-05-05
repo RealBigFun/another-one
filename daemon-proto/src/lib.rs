@@ -327,6 +327,33 @@ pub enum Control {
     /// [`WorkerReply::TaskRemoved`] with `removed = true` if a task
     /// was deleted, `false` for an unknown id (idempotent).
     RemoveTask { project_id: String, task_id: String },
+    /// Persist the desktop's per-section terminal-tab snapshot to
+    /// the daemon. Routes to either `update_task_tabs` (when the
+    /// section belongs to a task — `task_id` set on the wire
+    /// `section_id`) or `set_terminal_section` (project pages /
+    /// standalone shells). The desktop GUI fires this on every
+    /// terminal-state change (tab pinned, title updated, restore
+    /// status changed, etc.) so connected mobile sessions see the
+    /// new tab metadata via the broadcast push.
+    ///
+    /// `persisted` is an opaque JSON-serialised
+    /// `core::project_store::PersistedSectionState` — daemon-proto
+    /// stays free of the section-state structural shape; both
+    /// clients deserialize via `serde_json::from_value` into the
+    /// canonical core type.
+    ///
+    /// Reply is [`WorkerReply::Empty`].
+    PersistSectionState {
+        section_id: String,
+        persisted: serde_json::Value,
+    },
+    /// Update the user's last-active-section pointer so a
+    /// reconnect or restart restores focus to the same section
+    /// across both clients. `None` clears the pointer (no section
+    /// active).
+    ///
+    /// Reply is [`WorkerReply::Empty`].
+    SetLastActiveSection { section_id: Option<String> },
     /// Compute the canonical branch slug for a free-text input.
     /// Powers the Create Branch modal's live `Branch: …` preview.
     /// Pure function — no project state involved. Reply is

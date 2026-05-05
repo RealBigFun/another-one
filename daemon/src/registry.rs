@@ -224,6 +224,20 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// trivially compliant.
     fn notify_state_changed(&self) {}
 
+    /// Persist the section's terminal-tab snapshot. `persisted` is
+    /// an opaque JSON-serialised `PersistedSectionState`; the
+    /// concrete registry deserialises and routes to either
+    /// `update_task_tabs` (task-bound section) or
+    /// `set_terminal_section` (project pages / standalone shells).
+    /// Default impl is a no-op for registries that don't track
+    /// section state.
+    fn persist_section_state(&self, _section_id: &str, _persisted: serde_json::Value) {}
+
+    /// Update the user's last-active-section pointer. `None` clears
+    /// it (no active section). Default impl is a no-op for
+    /// registries that don't track UI state.
+    fn set_last_active_section(&self, _section_id: Option<String>) {}
+
     /// Subscribe to the live PTY byte stream for `(section_id,
     /// tab_id)`. Returns `None` if the tab isn't currently running
     /// (e.g., closed or never launched). Multiple subscribers share
