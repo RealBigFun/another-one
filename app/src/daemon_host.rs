@@ -285,6 +285,33 @@ impl DesktopTerminalRegistry {
         let mut guard = arc.lock().ok()?;
         Some(f(&mut guard))
     }
+
+    /// Mutator helper for daemon-side store writes: locks state,
+    /// runs `f` with `&mut ProjectStore`, then persists to disk and
+    /// fires the state-change broadcast so connected sessions push
+    /// a fresh `WorkerReply::ProjectList` to peers. Use from every
+    /// `Control::*` handler that mutates the store.
+    ///
+    /// Save errors are logged but not surfaced — keeping them out of
+    /// the trait return type means call-site authors can write
+    /// "match the existing GUI mutator" without worrying about
+    /// per-handler error mapping. A failed save is exotic enough
+    /// (disk full / permissions) that the daemon's `tracing` log is
+    /// the right surface anyway.
+    #[allow(dead_code)] // call-site migrations land in commits 6–9
+    fn with_store_mut<R>(&self, f: impl FnOnce(&mut ProjectStore) -> R) -> Option<R> {
+        self.with_state(|state| {
+            let result = f(&mut state.project_store);
+            // `ProjectStore::save` swallows errors internally
+            // (logs + returns ()); no Result to map here.
+            state.project_store.save();
+            // Fire the broadcast tick so every connected session's
+            // push pump sends a fresh ProjectList. Same channel the
+            // GUI's sync_registry_project_store fires on.
+            let _ = state.state_change_tx.send(());
+            result
+        })
+    }
 }
 
 impl DaemonRegistry for DesktopTerminalRegistry {
@@ -685,19 +712,19 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn set_agent_enabled(&self, agent_id: &str, enabled: bool) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_agent_enabled(agent_id, enabled))
+        self.with_store_mut(|store| store.set_agent_enabled(agent_id, enabled))
             .ok_or_else(registry_unavailable)
     }
 
     fn set_default_agent(&self, agent_id: &str) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_default_agent(agent_id))
+        self.with_store_mut(|store| store.set_default_agent(agent_id))
             .ok_or_else(registry_unavailable)
     }
 
     fn set_agent_launch_args(&self, agent_id: &str, args: Vec<String>) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_agent_launch_args(agent_id, args))
+        self.with_store_mut(|store| store.set_agent_launch_args(agent_id, args))
             .ok_or_else(registry_unavailable)
     }
 
@@ -722,10 +749,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let app =
             open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
         let available = detect_available_open_in_apps();
-        self.with_state(|state| {
-            state
-                .project_store
-                .set_open_in_app_enabled(app, enabled, &available);
+        self.with_store_mut(|store| {
+            store.set_open_in_app_enabled(app, enabled, &available);
         })
         .ok_or_else(registry_unavailable)
     }
@@ -744,10 +769,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .ok_or_else(registry_unavailable)?;
         let path = path.ok_or_else(|| format!("unknown project: {project_id}"))?;
         open_path_in_app(&path, app)?;
-        self.with_state(|state| {
-            state
-                .project_store
-                .set_preferred_open_in_app(app, &available);
+        self.with_store_mut(|store| {
+            store.set_preferred_open_in_app(app, &available);
         })
         .ok_or_else(registry_unavailable)
     }
@@ -781,22 +804,22 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.set_git_commit_generation_script(script))
+        self.with_store_mut(|store| store.set_git_commit_generation_script(script))
             .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_commit_script(&self) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.reset_git_commit_generation_script())
+        self.with_store_mut(|store| store.reset_git_commit_generation_script())
             .ok_or_else(registry_unavailable)
     }
 
     fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.set_git_pr_generation_script(script))
+        self.with_store_mut(|store| store.set_git_pr_generation_script(script))
             .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_pr_script(&self) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.reset_git_pr_generation_script())
+        self.with_store_mut(|store| store.reset_git_pr_generation_script())
             .ok_or_else(registry_unavailable)
     }
 
@@ -825,11 +848,11 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn set_shortcut_binding(&self, action_id: &str, binding: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_state(|state| {
+        self.with_store_mut(|store| {
             if binding.is_empty() {
-                state.project_store.clear_shortcut_binding(action);
+                store.clear_shortcut_binding(action);
             } else {
-                state.project_store.set_shortcut_binding(action, binding);
+                store.set_shortcut_binding(action, binding);
             }
         })
         .ok_or_else(registry_unavailable)
@@ -838,7 +861,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_state(|state| state.project_store.reset_shortcut_binding(action))
+        self.with_store_mut(|store| store.reset_shortcut_binding(action))
             .ok_or_else(registry_unavailable)
     }
 
