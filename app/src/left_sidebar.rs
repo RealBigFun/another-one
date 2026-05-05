@@ -1809,6 +1809,14 @@ impl AnotherOneApp {
                     );
                     let sid_for_state = sid.clone();
                     let project_path = project_path.clone();
+                    // Hydrate the workspace's local section state from
+                    // the persisted task tabs *before* activating, so
+                    // a freshly-tapped task uses the daemon's
+                    // authoritative tab IDs instead of fabricating a
+                    // new one in `SectionState::with_cwd`. Without
+                    // this, mobile's `AttachTab` would target a UUID
+                    // the daemon has never heard of.
+                    this.hydrate_section_state_from_store(&sid, cx);
                     this.workspace_pane.update(cx, |workspace, cx| {
                         workspace.activate_section(
                             sid_for_state,

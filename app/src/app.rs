@@ -5902,6 +5902,64 @@ impl AnotherOneApp {
     /// `ListProjects` responses reflect recent renames / new tasks /
     /// tab changes. Cheap (full clone) but called only after state
     /// mutations, not per frame.
+    /// Populate `workspace_pane.section_states[section_id]` from the
+    /// matching task's persisted tabs in `project_store.tasks` if it
+    /// isn't already there. Called before `activate_section` on tap
+    /// handlers so the freshly-activated workspace pane uses the
+    /// daemon's tab IDs instead of synthesising a new UUID via
+    /// `SectionState::with_cwd`.
+    ///
+    /// No-op when the section already has a local state (the user
+    /// tapped a task they've already activated this session) or when
+    /// the project_store doesn't carry tabs for that section
+    /// (project page sections, standalone shells).
+    pub(crate) fn hydrate_section_state_from_store(
+        &mut self,
+        section_id: &SectionId,
+        cx: &mut Context<Self>,
+    ) {
+        let already_present = self
+            .workspace_pane
+            .read(cx)
+            .section_states
+            .contains_key(section_id);
+        if already_present {
+            return;
+        }
+        let section_store_key = section_id.store_key();
+        let task = self
+            .project_store
+            .tasks
+            .values()
+            .flatten()
+            .find(|t| t.section_id == section_store_key);
+        let Some(task) = task else {
+            return;
+        };
+        if task.tabs.is_empty() {
+            return;
+        }
+        let persisted = another_one_core::project_store::PersistedSectionState {
+            active_tab_id: task.active_tab_id.clone(),
+            next_tab_id: task.next_tab_id,
+            cwd: task.cwd.clone(),
+            tabs: task.tabs.clone(),
+        };
+        let fallback_cwd = self
+            .project_store
+            .project(&section_id.project_id)
+            .map(|p| p.path.clone());
+        let section_id_for_insert = section_id.clone();
+        self.workspace_pane.update(cx, |workspace, _cx| {
+            workspace
+                .section_states
+                .insert(
+                    section_id_for_insert,
+                    SectionState::from_persisted(persisted, fallback_cwd),
+                );
+        });
+    }
+
     pub(crate) fn sync_registry_project_store(&self) {
         if let Ok(mut state) = self.registry_state.lock() {
             state.project_store = self.project_store.clone();
