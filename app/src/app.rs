@@ -5255,6 +5255,14 @@ impl AnotherOneApp {
             // viewer-only runtime that renders bytes pushed via
             // `SessionEvent::PtyBytes`, then ask the daemon to
             // launch + attach the real PTY on the desktop side.
+            log::info!(
+                "android: ensure_active_terminal_runtime → viewer-only \
+                 section={} tab={} size={}x{}",
+                request.key.section_id.store_key(),
+                request.key.tab_id,
+                request.size.cols,
+                request.size.rows
+            );
             let mut runtime = LiveTerminalRuntime::from_remote(request.size);
             self.terminal_surface_snapshots
                 .insert(request.key.clone(), runtime.snapshot());
@@ -5287,19 +5295,33 @@ impl AnotherOneApp {
             // registered. The daemon ack's each AttachTab with
             // WorkerReply::Empty so .await resolves cleanly.
             crate::session_host::runtime_handle().spawn(async move {
-                for delay_ms in [0_u64, 200, 500, 1000, 2000] {
-                    if delay_ms > 0 {
-                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                for (i, delay_ms) in [0_u64, 200, 500, 1000, 2000].iter().enumerate() {
+                    if *delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
                     }
-                    if let Err(err) = session
+                    log::info!(
+                        "AttachTab attempt {} (delay={}ms) section={} tab={}",
+                        i + 1,
+                        delay_ms,
+                        section_id,
+                        tab_id
+                    );
+                    match session
                         .call(daemon_proto::Control::AttachTab {
                             section_id: section_id.clone(),
                             tab_id: tab_id.clone(),
                         })
                         .await
                     {
-                        log::warn!("session AttachTab failed: {err}");
-                        return;
+                        Ok(reply) => log::info!(
+                            "AttachTab attempt {} ack: {:?}",
+                            i + 1,
+                            std::mem::discriminant(&reply)
+                        ),
+                        Err(err) => {
+                            log::warn!("session AttachTab failed: {err}");
+                            return;
+                        }
                     }
                 }
             });
@@ -5368,6 +5390,12 @@ impl AnotherOneApp {
                     tab_id,
                     bytes,
                 } => {
+                    log::info!(
+                        "drain_session_events PtyBytes section={} tab={} bytes={}",
+                        section_id,
+                        tab_id,
+                        bytes.len()
+                    );
                     let Some(section_id) = SectionId::from_store_key(&section_id) else {
                         log::warn!("session event PtyBytes with malformed section_id");
                         continue;
@@ -14924,6 +14952,60 @@ fn convert_remote_snapshot(
         };
         let project_id = summary.id.clone();
         for task_summary in summary.tasks {
+            // Mirror the daemon's tab list onto the phone's local
+            // store so when the user taps a task we activate the
+            // existing tab id (which the daemon will recognise on
+            // AttachTab) instead of fabricating a fresh UUID. The
+            // wire `TabSummary` doesn't carry launch_config — that's
+            // owned by the daemon — so the phone's persisted-tab
+            // copies just record id/title/provider/etc. for display.
+            let tabs = task_summary
+                .tabs
+                .into_iter()
+                .map(|tab_summary| ps::PersistedTerminalTab {
+                    id: tab_summary.id,
+                    title: tab_summary.title,
+                    pinned: tab_summary.pinned,
+                    fixed_title: tab_summary.fixed_title,
+                    provider: tab_summary.provider.and_then(|p| match p {
+                        daemon_proto::AgentProvider::ClaudeCode => {
+                            Some(another_one_core::agents::AgentProviderKind::ClaudeCode)
+                        }
+                        daemon_proto::AgentProvider::CursorAgent => {
+                            Some(another_one_core::agents::AgentProviderKind::CursorAgent)
+                        }
+                        daemon_proto::AgentProvider::Codex => {
+                            Some(another_one_core::agents::AgentProviderKind::Codex)
+                        }
+                        daemon_proto::AgentProvider::Pi => {
+                            Some(another_one_core::agents::AgentProviderKind::Pi)
+                        }
+                        daemon_proto::AgentProvider::Gemini => {
+                            Some(another_one_core::agents::AgentProviderKind::Gemini)
+                        }
+                        daemon_proto::AgentProvider::OpenCode => {
+                            Some(another_one_core::agents::AgentProviderKind::OpenCode)
+                        }
+                        daemon_proto::AgentProvider::Amp => {
+                            Some(another_one_core::agents::AgentProviderKind::Amp)
+                        }
+                        daemon_proto::AgentProvider::RovoDev => {
+                            Some(another_one_core::agents::AgentProviderKind::RovoDev)
+                        }
+                        daemon_proto::AgentProvider::Forge => {
+                            Some(another_one_core::agents::AgentProviderKind::Forge)
+                        }
+                        // `Shell` has no AgentProviderKind equivalent —
+                        // it represents a tab launched without an agent.
+                        daemon_proto::AgentProvider::Shell => None,
+                    }),
+                    launch_config: None,
+                    restore_status: tab_summary.restore_status,
+                    failure_message: tab_summary.failure_message,
+                    failure_details: tab_summary.failure_details,
+                })
+                .collect::<Vec<_>>();
+            let next_tab_id = tabs.len();
             tasks.push(ps::Task {
                 id: task_summary.id,
                 name: task_summary.name,
@@ -14933,9 +15015,9 @@ fn convert_remote_snapshot(
                 branch_name: task_summary.branch_name,
                 section_id: task_summary.section_id,
                 worktree_project_id: None,
-                tabs: Vec::new(),
+                tabs,
                 active_tab_id: task_summary.active_tab_id,
-                next_tab_id: 0,
+                next_tab_id,
                 cwd: None,
             });
         }
