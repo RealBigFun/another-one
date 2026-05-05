@@ -151,7 +151,6 @@ async fn harness_round_trips_list_projects() {
 }
 
 #[tokio::test]
-#[ignore = "fails until commit 3 wires the initial-push at session connect"]
 async fn boot_session_receives_initial_project_list_push() {
     let (projects, tasks) = seed_one_project_one_task();
     let mut harness = Harness::new_seeded(projects, tasks).await;
@@ -170,7 +169,6 @@ async fn boot_session_receives_initial_project_list_push() {
 }
 
 #[tokio::test]
-#[ignore = "fails until commit 3 wires the Push arm in drain_session_events / initial-push at connect"]
 async fn mutation_broadcast_reaches_session_events() {
     let (projects, tasks) = seed_one_project_one_task();
     let mut harness = Harness::new_seeded(projects, tasks).await;

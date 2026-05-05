@@ -5451,10 +5451,41 @@ impl AnotherOneApp {
                     }
                 }
                 daemon_transport::SessionEvent::Push(reply) => {
-                    log::debug!(
-                        "session pushed unsolicited reply: {:?}",
-                        std::mem::discriminant(&reply)
-                    );
+                    // Daemon broadcasts the registry's projection
+                    // through `serve_session_with_attach`'s push
+                    // pump on every state change (and once at
+                    // session connect). Both clients absorb here —
+                    // same path mobile uses for the legacy iroh
+                    // worker-reply queue, just sourced from the
+                    // events stream instead.
+                    match reply {
+                        daemon_proto::WorkerReply::ProjectList { projects, ui } => {
+                            log::debug!(
+                                "drain_session_events: absorbed projection ({} projects, ui pinned={} expanded={})",
+                                projects.len(),
+                                ui.pinned_task_ids.len(),
+                                ui.expanded_repo_ids.len(),
+                            );
+                            self.project_store.absorb_projection(projects, ui);
+                            for project in &self.project_store.projects {
+                                if self
+                                    .project_store
+                                    .tasks
+                                    .get(&project.id)
+                                    .is_some_and(|tasks| !tasks.is_empty())
+                                {
+                                    self.expanded_projects.insert(project.repo_id.clone());
+                                }
+                            }
+                            updated = true;
+                        }
+                        other => {
+                            log::debug!(
+                                "session pushed unsolicited reply: {:?}",
+                                std::mem::discriminant(&other)
+                            );
+                        }
+                    }
                 }
                 daemon_transport::SessionEvent::Lagged { skipped } => {
                     log::warn!("session events lagged — skipped {skipped} events");

@@ -134,6 +134,24 @@ pub async fn serve_session_with_attach(
     let viewer_id = session.peer_id().to_string();
     let attach_for_loop = Arc::clone(&attach);
 
+    // Initial-projection push: fresh sessions need the current
+    // registry state immediately, without waiting for a mutation
+    // tick. Without this, both desktop's in-memory pair and any
+    // mobile reconnect would see an empty projection until the
+    // user touches something. Idempotent w.r.t. the call-reply
+    // path — `Session::call(ListProjects)` still returns its own
+    // typed reply because `pair`'s router correlates by
+    // request_id and routes unsolicited pushes to
+    // `SessionEvent::Push` instead.
+    {
+        let projects = registry.list_projects();
+        let ui = registry.ui_snapshot();
+        let reply = WorkerReply::ProjectList { projects, ui };
+        if let Err(e) = session.push_reply(reply).await {
+            return Err(e);
+        }
+    }
+
     // Spawn a state-change pump: any time the registry signals a
     // mutation, push a fresh `ProjectList` (with `request_id == 0`)
     // to the peer. This is how mobile clients learn about desktop
