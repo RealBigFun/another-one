@@ -10,7 +10,7 @@ workflows.
 Run the desktop app:
 
 ```sh
-cargo run -p desktop
+bash ./scripts/dev-watch.sh
 ```
 
 The desktop target is macOS and Linux.
