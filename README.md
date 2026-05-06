@@ -3,6 +3,8 @@
 AnotherOne is a greenfield desktop and mobile app built around local agent
 workflows.
 
+![AnotherOne screenshot](docs/assets/screenshot.png)
+
 ## Development
 
 Run the desktop app:
