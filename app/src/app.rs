@@ -753,6 +753,14 @@ pub(crate) struct TerminalTabMenuState {
     pub(crate) anchor_y: f32,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalTabRenameState {
+    pub(crate) section_id: SectionId,
+    pub(crate) tab_id: String,
+    pub(crate) draft: String,
+    pub(crate) cursor: usize,
+}
+
 /// Per-frame hover hint for a terminal link. Carries the link target
 /// (so the tooltip can show what's about to open) and the cursor
 /// screen position (so the tooltip renders next to the cursor without
@@ -951,6 +959,7 @@ pub(crate) struct WorkspacePane {
     pub(crate) section_states: HashMap<SectionId, SectionState>,
     /// Context menu for a terminal tab.
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
+    pub(crate) terminal_tab_rename: Option<TerminalTabRenameState>,
     /// Tooltip state for the link the cursor is currently over inside a
     /// terminal pane. Populated on `on_mouse_move`; cleared on
     /// mouse-leave. The tooltip itself renders alongside the canvas in
@@ -989,6 +998,7 @@ impl WorkspacePane {
             project_page_pr_query_draft: String::new(),
             section_states,
             terminal_tab_menu: None,
+            terminal_tab_rename: None,
             terminal_context_menu: None,
             terminal_link_hover: None,
             pinned_tab_close_confirm: None,
@@ -1411,6 +1421,155 @@ impl WorkspacePane {
         let removed = self.close_tab_ids(&confirm.section_id, tab_ids, cx);
         cx.notify();
         removed.into_iter().next()
+    }
+
+    pub(crate) fn begin_tab_rename(
+        &mut self,
+        section_id: &SectionId,
+        tab_id: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(title) = self
+            .section_states
+            .get(section_id)
+            .and_then(|state| state.tabs.iter().find(|tab| tab.id == tab_id))
+            .map(|tab| tab.title.clone())
+        else {
+            return false;
+        };
+
+        self.terminal_tab_menu = None;
+        self.terminal_tab_rename = Some(TerminalTabRenameState {
+            section_id: section_id.clone(),
+            tab_id: tab_id.to_string(),
+            cursor: title.len(),
+            draft: title,
+        });
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn cancel_tab_rename(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_tab_rename.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn commit_tab_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(rename) = self.terminal_tab_rename.take() else {
+            return false;
+        };
+        let title = rename.draft.trim().to_string();
+        if title.is_empty() {
+            cx.notify();
+            return false;
+        }
+
+        let changed = self
+            .section_states
+            .get_mut(&rename.section_id)
+            .and_then(|state| state.tabs.iter_mut().find(|tab| tab.id == rename.tab_id))
+            .is_some_and(|tab| {
+                if tab.title == title && tab.fixed_title.as_deref() == Some(title.as_str()) {
+                    return false;
+                }
+                tab.title = title.clone();
+                tab.fixed_title = Some(title);
+                true
+            });
+        if changed {
+            self.persist_section_state(&rename.section_id, cx);
+        }
+        cx.notify();
+        changed
+    }
+
+    pub(crate) fn handle_tab_rename_key_down(
+        &mut self,
+        ev: &gpui::KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(rename) = self.terminal_tab_rename.as_mut() else {
+            return false;
+        };
+        cx.stop_propagation();
+        let modifiers = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "escape" => self.cancel_tab_rename(cx),
+            "enter" => {
+                self.commit_tab_rename(cx);
+            }
+            "backspace" => {
+                if rename.cursor > 0 {
+                    let start = if modifiers.platform {
+                        0
+                    } else if modifiers.control || modifiers.alt {
+                        word_start_before(&rename.draft, rename.cursor)
+                    } else {
+                        rename.draft[..rename.cursor]
+                            .char_indices()
+                            .next_back()
+                            .map_or(0, |(index, _)| index)
+                    };
+                    rename.draft.replace_range(start..rename.cursor, "");
+                    rename.cursor = start;
+                    cx.notify();
+                }
+            }
+            "delete" => {
+                if rename.cursor < rename.draft.len() {
+                    let end = rename.draft[rename.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map_or(rename.draft.len(), |(index, _)| rename.cursor + index);
+                    rename.draft.replace_range(rename.cursor..end, "");
+                    cx.notify();
+                }
+            }
+            "left" => {
+                if rename.cursor > 0 {
+                    rename.cursor = rename.draft[..rename.cursor]
+                        .char_indices()
+                        .next_back()
+                        .map_or(0, |(index, _)| index);
+                    cx.notify();
+                }
+            }
+            "right" => {
+                if rename.cursor < rename.draft.len() {
+                    rename.cursor = rename.draft[rename.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map_or(rename.draft.len(), |(index, _)| rename.cursor + index);
+                    cx.notify();
+                }
+            }
+            "home" => {
+                rename.cursor = 0;
+                cx.notify();
+            }
+            "end" => {
+                rename.cursor = rename.draft.len();
+                cx.notify();
+            }
+            _ if modifiers.platform && ev.keystroke.key.as_str() == "v" => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    let text = text.replace(['\n', '\r', '\t'], " ");
+                    rename.draft.insert_str(rename.cursor, &text);
+                    rename.cursor += text.len();
+                    cx.notify();
+                }
+            }
+            _ if modifiers.control || modifiers.platform || modifiers.function => {}
+            _ => {
+                if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+                    rename.draft.insert_str(rename.cursor, key_char);
+                    rename.cursor += key_char.len();
+                    cx.notify();
+                }
+            }
+        }
+        true
     }
 
     pub(crate) fn toggle_tab_pinned(
@@ -14267,9 +14426,7 @@ impl AnotherOneApp {
             .w(px(44.))
             .h(px(PHONE_HEADER_H))
             .cursor_pointer()
-            .child(Self::right_sidebar_toggle_svg(
-                window,
-            ))
+            .child(Self::right_sidebar_toggle_svg(window))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _window, cx| {
@@ -14626,6 +14783,23 @@ fn short_id(id: &str) -> String {
         format!("{}…{}", &id[..6], &id[id.len() - 4..])
     } else {
         id.to_string()
+    }
+}
+
+fn word_start_before(text: &str, cursor: usize) -> usize {
+    let prefix = &text[..cursor];
+    let trimmed = prefix.trim_end_matches(char::is_whitespace);
+    let after_ws = trimmed.len();
+    match trimmed.rfind(char::is_whitespace) {
+        Some(idx) => {
+            let mut i = idx;
+            while !trimmed.is_char_boundary(i) {
+                i += 1;
+            }
+            let after = trimmed[i..].chars().next().map_or(i, |c| i + c.len_utf8());
+            after.min(after_ws)
+        }
+        None => 0,
     }
 }
 

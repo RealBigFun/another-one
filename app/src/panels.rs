@@ -50,7 +50,7 @@ impl AnotherOneApp {
         };
 
         let menu_w = 206.0;
-        let menu_h = 144.0;
+        let menu_h = 176.0;
         let window_w = f32::from(window.bounds().size.width);
         let window_h = f32::from(window.bounds().size.height);
         let left = (menu.anchor_x + 4.0).min((window_w - menu_w - 8.0).max(8.0));
@@ -78,6 +78,23 @@ impl AnotherOneApp {
             .flex_col()
             .py(px(4.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        let rename_section_id = section_id.clone();
+        let rename_tab_id = tab_id.clone();
+        items = items.child(terminal_context_menu_item(
+            "terminal-tab-menu-rename",
+            "Rename Tab",
+            cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
+                this.focus_handle.focus(window, cx);
+                let section_id = rename_section_id.clone();
+                let tab_id = rename_tab_id.clone();
+                this.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.begin_tab_rename(&section_id, &tab_id, cx);
+                });
+                cx.stop_propagation();
+            }),
+            tab_index.is_some(),
+        ));
 
         let pin_section_id = section_id.clone();
         let pin_tab_id = tab_id.clone();
@@ -663,6 +680,10 @@ impl WorkspacePane {
                 let tab_id_val = tab.id.clone();
                 let tab_id_for_menu = tab.id.clone();
                 let is_pinned = tab.pinned;
+                let rename = self
+                    .terminal_tab_rename
+                    .as_ref()
+                    .filter(|rename| rename.section_id == *section_id && rename.tab_id == tab.id);
 
                 tab_strip = tab_strip.child(
                     div()
@@ -727,7 +748,29 @@ impl WorkspacePane {
                                 tab_text_inactive
                             },
                         ))
-                        .child(
+                        .child(if let Some(rename) = rename {
+                            let before: SharedString =
+                                rename.draft[..rename.cursor].to_string().into();
+                            let after: SharedString =
+                                rename.draft[rename.cursor..].to_string().into();
+                            div()
+                                .flex()
+                                .items_center()
+                                .min_w(px(90.))
+                                .max_w(px(220.))
+                                .px(px(5.))
+                                .py(px(2.))
+                                .rounded(px(4.))
+                                .bg(gpui::black().opacity(0.24))
+                                .border_1()
+                                .border_color(gpui::white().opacity(0.28))
+                                .text_sm()
+                                .text_color(tab_text_active)
+                                .child(before)
+                                .child(div().w(px(1.)).h(px(14.)).bg(tab_text_active))
+                                .child(after)
+                                .into_any_element()
+                        } else {
                             div()
                                 .text_sm()
                                 .text_color(if is_active {
@@ -735,8 +778,9 @@ impl WorkspacePane {
                                 } else {
                                     tab_text_inactive
                                 })
-                                .child(tab_title),
-                        )
+                                .child(tab_title)
+                                .into_any_element()
+                        })
                         .child(
                             div()
                                 .id(SharedString::from(format!("tab-close-{}", tab_id_val)))

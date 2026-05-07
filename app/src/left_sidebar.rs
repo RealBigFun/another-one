@@ -716,6 +716,12 @@ impl AnotherOneApp {
             return;
         }
 
+        if self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.handle_tab_rename_key_down(ev, cx)
+        }) {
+            return;
+        }
+
         // Cmd-F search overlay claims keystrokes first so typed
         // characters extend the query rather than feeding the TUI.
         if self.terminal_search.is_some() {
@@ -1824,10 +1830,7 @@ impl AnotherOneApp {
                     // as tapping the project row, just with that
                     // task's terminal active. No-op on desktop.
                     if this.is_narrow(window) {
-                        this.mobile_push(
-                            MobileView::Project(left_click_project_id.clone()),
-                            cx,
-                        );
+                        this.mobile_push(MobileView::Project(left_click_project_id.clone()), cx);
                     }
                 }),
             )
