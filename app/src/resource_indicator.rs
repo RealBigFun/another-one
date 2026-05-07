@@ -1,6 +1,4 @@
-use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, svg, Context, MouseButton, MouseDownEvent, Window,
-};
+use gpui::{div, prelude::*, px, rems, svg, Context, MouseButton, MouseDownEvent, Window};
 
 use crate::agent_icons::branded_icon;
 use crate::app::AnotherOneApp;
@@ -56,15 +54,16 @@ impl AnotherOneApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let text_col = gpui::white().opacity(0.78);
-        let hover_bg = gpui::white().opacity(0.08);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let text_col = app_theme.text_secondary;
+        let hover_bg = app_theme.overlay_hover_strong;
         let bg = if self.resource_indicator_open {
-            gpui::white().opacity(0.10)
+            app_theme.overlay_active
         } else {
-            gpui::white().opacity(0.05)
+            app_theme.overlay_rest
         };
-        let border = gpui::white().opacity(0.08);
+        let border = app_theme.border;
         let cpu_label = format!("{:.1}%", self.resource_usage.app.cpu_percent);
         let memory_label = format_memory(self.resource_usage.app.memory_bytes);
 
@@ -111,7 +110,7 @@ impl AnotherOneApp {
                             .text_color(text_col)
                             .child(cpu_label),
                     )
-                    .child(div().text_color(gpui::white().opacity(0.36)).child("|"))
+                    .child(div().text_color(app_theme.divider).child("|"))
                     .child(
                         div()
                             .w(px(RESOURCE_MEMORY_LABEL_W))
@@ -131,7 +130,7 @@ impl AnotherOneApp {
             return div().id("resource-indicator-overlay");
         }
 
-        let panel = self.resource_indicator_panel(cx);
+        let panel = self.resource_indicator_panel(window, cx);
         if crate::platform::CurrentPlatform::supports_custom_chrome(window) {
             // Chrome present → anchor below the in-app titlebar.
             div()
@@ -151,14 +150,19 @@ impl AnotherOneApp {
         }
     }
 
-    fn resource_indicator_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let panel_bg = rgb(0x2b2d31);
-        let surface_bg = rgb(0x363941);
-        let border = gpui::white().opacity(0.08);
-        let title_col = hsla(0., 0., 0.92, 1.);
-        let muted_col = gpui::white().opacity(0.48);
-        let stat_col = gpui::white().opacity(0.86);
-        let empty_col = gpui::white().opacity(0.58);
+    fn resource_indicator_panel(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let panel_bg = app_theme.card_bg;
+        let surface_bg = app_theme.sunken_bg;
+        let border = app_theme.border;
+        let title_col = app_theme.text_primary;
+        let muted_col = app_theme.text_muted;
+        let stat_col = app_theme.text_primary;
+        let empty_col = app_theme.text_muted;
         let session_count = self.resource_usage.session_count.to_string();
 
         let mut tree = div().flex().flex_col().gap(px(4.));
@@ -168,7 +172,7 @@ impl AnotherOneApp {
                     .px(px(14.))
                     .py(px(10.))
                     .rounded(px(10.))
-                    .bg(gpui::black().opacity(0.10))
+                    .bg(app_theme.overlay_rest)
                     .child(
                         div()
                             .text_size(rems(12. / 16.))
@@ -216,7 +220,7 @@ impl AnotherOneApp {
                             .h(px(24.))
                             .rounded_md()
                             .cursor_pointer()
-                            .hover(|style| style.bg(gpui::white().opacity(0.08)))
+                            .hover(move |style| style.bg(app_theme.overlay_hover_strong))
                             .tooltip(move |_window, cx| {
                                 Self::action_tooltip_view("Refresh resource usage", cx)
                             })
@@ -236,7 +240,7 @@ impl AnotherOneApp {
                 div()
                     .px(px(20.))
                     .pb(px(10.))
-                    .child(Self::resource_section_heading("APP SHELL")),
+                    .child(Self::resource_section_heading("APP SHELL", title_col)),
             )
             .child(
                 div()
@@ -273,7 +277,10 @@ impl AnotherOneApp {
                     .px(px(20.))
                     .pt(px(16.))
                     .pb(px(20.))
-                    .child(Self::resource_section_heading("TERMINAL SESSIONS"))
+                    .child(Self::resource_section_heading(
+                        "TERMINAL SESSIONS",
+                        title_col,
+                    ))
                     .child(tree),
             )
     }
@@ -309,12 +316,12 @@ impl AnotherOneApp {
             )
     }
 
-    fn resource_section_heading(label: &'static str) -> impl IntoElement {
+    fn resource_section_heading(label: &'static str, text_col: gpui::Hsla) -> impl IntoElement {
         div().child(
             div()
                 .text_size(rems(14. / 16.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(gpui::white().opacity(0.90))
+                .text_color(text_col)
                 .child(label),
         )
     }
@@ -324,6 +331,7 @@ impl AnotherOneApp {
         project: &ResourceUsageProject,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let collapsed = self.resource_collapsed_nodes.contains(&project.key);
         let project_key = project.key.clone();
         let mut group = div()
@@ -337,7 +345,10 @@ impl AnotherOneApp {
                 0.0,
                 collapsed,
                 true,
-                gpui::white().opacity(0.82),
+                app_theme.text_primary,
+                app_theme.text_muted,
+                app_theme.overlay_hover,
+                app_theme.text_muted,
                 Some(move |this: &mut Self, cx: &mut Context<Self>| {
                     this.toggle_resource_node(&project_key, cx);
                 }),
@@ -358,6 +369,7 @@ impl AnotherOneApp {
         task: &ResourceUsageTask,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let collapsed = self.resource_collapsed_nodes.contains(&task.key);
         let task_key = task.key.clone();
         let mut group = div()
@@ -371,7 +383,10 @@ impl AnotherOneApp {
                 20.0,
                 collapsed,
                 true,
-                gpui::white().opacity(0.74),
+                app_theme.text_secondary,
+                app_theme.text_muted,
+                app_theme.overlay_hover,
+                app_theme.text_muted,
                 Some(move |this: &mut Self, cx: &mut Context<Self>| {
                     this.toggle_resource_node(&task_key, cx);
                 }),
@@ -380,7 +395,11 @@ impl AnotherOneApp {
 
         if !collapsed {
             for session in &task.sessions {
-                group = group.child(Self::resource_session_row(session));
+                group = group.child(Self::resource_session_row(
+                    session,
+                    app_theme.text_secondary,
+                    app_theme.text_muted,
+                ));
             }
         }
 
@@ -395,12 +414,12 @@ impl AnotherOneApp {
         collapsed: bool,
         collapsible: bool,
         text_col: gpui::Hsla,
+        metric_col: gpui::Hsla,
+        hover_bg: gpui::Hsla,
+        chevron_col: gpui::Hsla,
         on_toggle: Option<impl Fn(&mut Self, &mut Context<Self>) + 'static>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let metric_col = gpui::white().opacity(0.68);
-        let hover_bg = gpui::white().opacity(0.05);
-        let chevron_col = gpui::white().opacity(0.58);
         let row = div()
             .flex()
             .items_center()
@@ -458,10 +477,11 @@ impl AnotherOneApp {
         row
     }
 
-    fn resource_session_row(session: &ResourceUsageSession) -> impl IntoElement {
-        let title_col = gpui::white().opacity(0.64);
-        let metric_col = gpui::white().opacity(0.64);
-
+    fn resource_session_row(
+        session: &ResourceUsageSession,
+        title_col: gpui::Hsla,
+        metric_col: gpui::Hsla,
+    ) -> impl IntoElement {
         div()
             .flex()
             .items_center()

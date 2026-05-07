@@ -1,7 +1,7 @@
 //! Project page rendered in the centre panel when a project is selected.
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, svg, Context, MouseButton, MouseDownEvent, SharedString,
+    div, hsla, prelude::*, px, rems, svg, Context, MouseButton, MouseDownEvent, SharedString,
     Window,
 };
 
@@ -10,18 +10,20 @@ use crate::app::{AnotherOneApp, WorkspacePane};
 use crate::left_sidebar::open_external_url;
 use crate::project_store::{ProjectBranchSettingField, ResolvedProjectBranchSettings};
 use crate::task_launcher::TaskLaunchRequest;
+use crate::theme::{self, AppTheme};
 
 const PR_FILTER_TABS: &[&str] = &["All Open", "Needs My Review", "My PRs", "Draft"];
 
-// ── Colours ──────────────────────────────────────────────────────────
-
-const TEXT_PRIMARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.92, 1.);
-const TEXT_SECONDARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.55, 1.);
-const TEXT_MUTED: fn() -> gpui::Hsla = || hsla(0., 0., 0.40, 1.);
-const GREEN: fn() -> gpui::Hsla = || hsla(138. / 360., 0.50, 0.74, 1.);
-const RED: fn() -> gpui::Hsla = || hsla(352. / 360., 0.52, 0.76, 1.);
-
 impl WorkspacePane {
+    fn project_page_theme(&self, cx: &mut Context<Self>) -> AppTheme {
+        self.app
+            .upgrade()
+            .map(|entity| {
+                theme::app_theme_for_preference(entity.read(cx).project_store.ui.theme_mode)
+            })
+            .unwrap_or_else(theme::dark_theme)
+    }
+
     // ── Public entry point ───────────────────────────────────────────
 
     pub(crate) fn render_project_page(
@@ -30,17 +32,23 @@ impl WorkspacePane {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let app_theme = self.project_page_theme(cx);
         let Some(app_entity) = self.app.upgrade() else {
-            return div().flex().flex_col().size_full().bg(rgb(0x1e1f22)).child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(TEXT_MUTED())
-                    .child("Project not found"),
-            );
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(app_theme.sunken_bg)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(app_theme.text_muted)
+                        .child("Project not found"),
+                );
         };
         let project = {
             let app = app_entity.read(cx);
@@ -52,16 +60,21 @@ impl WorkspacePane {
         };
 
         let Some(project) = project else {
-            return div().flex().flex_col().size_full().bg(rgb(0x1e1f22)).child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(TEXT_MUTED())
-                    .child("Project not found"),
-            );
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(app_theme.sunken_bg)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(app_theme.text_muted)
+                        .child("Project not found"),
+                );
         };
 
         let project_name: SharedString = project.name.clone().into();
@@ -96,7 +109,7 @@ impl WorkspacePane {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x1e1f22))
+            .bg(app_theme.sunken_bg)
             // ── Header bar ───────────────────────────────────────
             .child(self.project_page_header(&project_id_owned, &project_name, github_url, cx))
             // ── Scrollable content ───────────────────────────────
@@ -131,6 +144,7 @@ impl WorkspacePane {
         github_url: Option<String>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let app_theme = self.project_page_theme(cx);
         let project_id_for_new_task = project_id.to_string();
         let project_id_for_remove = project_id.to_string();
         let has_github = github_url.is_some();
@@ -143,13 +157,13 @@ impl WorkspacePane {
             .py(px(16.))
             .gap(px(12.))
             .border_b_1()
-            .border_color(gpui::white().opacity(0.06))
+            .border_color(app_theme.overlay_hover)
             // Project name
             .child(
                 div()
                     .flex_1()
                     .min_w(px(0.))
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(app_theme.text_primary)
                     .text_size(rems(1.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .truncate()
@@ -165,10 +179,10 @@ impl WorkspacePane {
                     .h(px(30.))
                     .px(px(7.))
                     .rounded(px(7.))
-                    .bg(rgb(0x1e2024))
+                    .bg(app_theme.card_bg)
                     .border_1()
-                    .border_color(gpui::white().opacity(0.08))
-                    .hover(|s| s.bg(gpui::white().opacity(0.06)))
+                    .border_color(app_theme.border)
+                    .hover(|s| s.bg(app_theme.overlay_hover))
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
@@ -181,12 +195,12 @@ impl WorkspacePane {
                         svg()
                             .path("assets/icons/icons__plus.svg")
                             .size(px(12.))
-                            .text_color(TEXT_PRIMARY()),
+                            .text_color(app_theme.text_primary),
                     )
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(app_theme.text_primary)
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("New Task"),
                     ),
@@ -202,10 +216,10 @@ impl WorkspacePane {
                         .w(px(30.))
                         .h(px(30.))
                         .rounded(px(7.))
-                        .bg(rgb(0x1e2024))
+                        .bg(app_theme.card_bg)
                         .border_1()
-                        .border_color(gpui::white().opacity(0.08))
-                        .hover(|s| s.bg(gpui::white().opacity(0.06)))
+                        .border_color(app_theme.border)
+                        .hover(|s| s.bg(app_theme.overlay_hover))
                         .cursor_pointer()
                         .tooltip(move |_window, cx| {
                             AnotherOneApp::action_tooltip_view(
@@ -227,7 +241,7 @@ impl WorkspacePane {
                             svg()
                                 .path("assets/icons/icons__github.svg")
                                 .size(px(14.))
-                                .text_color(TEXT_SECONDARY()),
+                                .text_color(app_theme.text_secondary),
                         ),
                 )
             })
@@ -241,10 +255,10 @@ impl WorkspacePane {
                     .w(px(30.))
                     .h(px(30.))
                     .rounded(px(7.))
-                    .bg(rgb(0x1e2024))
+                    .bg(app_theme.card_bg)
                     .border_1()
-                    .border_color(gpui::white().opacity(0.08))
-                    .hover(|s| s.bg(gpui::white().opacity(0.06)))
+                    .border_color(app_theme.border)
+                    .hover(|s| s.bg(app_theme.overlay_hover))
                     .cursor_pointer()
                     .tooltip(move |_window, cx| {
                         AnotherOneApp::action_tooltip_view(
@@ -262,7 +276,7 @@ impl WorkspacePane {
                         svg()
                             .path("assets/icons/icons__trash.svg")
                             .size(px(14.))
-                            .text_color(TEXT_SECONDARY()),
+                            .text_color(app_theme.text_secondary),
                     ),
             )
     }
@@ -270,6 +284,7 @@ impl WorkspacePane {
     // ── Open PRs section ─────────────────────────────────────────────
 
     fn project_page_prs_section(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let app_theme = self.project_page_theme(cx);
         let collapsed = self.project_page_prs_collapsed;
         let app = self.app.upgrade().map(|entity| entity.read(cx));
         let project_id = self.active_project_page.clone().unwrap_or_default();
@@ -318,11 +333,11 @@ impl WorkspacePane {
                     svg()
                         .path(chevron_icon)
                         .size(px(16.))
-                        .text_color(TEXT_SECONDARY()),
+                        .text_color(app_theme.text_secondary),
                 )
                 .child(
                     div()
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(app_theme.text_primary)
                         .text_size(rems(13. / 16.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("Open PRs"),
@@ -335,9 +350,9 @@ impl WorkspacePane {
                         .px(px(8.))
                         .py(px(2.))
                         .rounded(px(10.))
-                        .bg(gpui::white().opacity(0.10))
+                        .bg(app_theme.overlay_active)
                         .text_xs()
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(app_theme.text_secondary)
                         .child(format!("{pr_count}")),
                 ),
         );
@@ -370,13 +385,13 @@ impl WorkspacePane {
                     .text_size(rems(11. / 16.))
                     .cursor_pointer()
                     .when(is_active, |d| {
-                        d.bg(gpui::white().opacity(0.10))
-                            .text_color(TEXT_PRIMARY())
+                        d.bg(app_theme.overlay_active)
+                            .text_color(app_theme.text_primary)
                             .font_weight(gpui::FontWeight::MEDIUM)
                     })
                     .when(!is_active, |d| {
-                        d.text_color(TEXT_SECONDARY())
-                            .hover(|s| s.bg(gpui::white().opacity(0.05)))
+                        d.text_color(app_theme.text_secondary)
+                            .hover(|s| s.bg(app_theme.overlay_rest))
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -407,14 +422,14 @@ impl WorkspacePane {
                         .px(px(12.))
                         .py(px(8.))
                         .rounded(px(7.))
-                        .bg(gpui::white().opacity(0.05))
+                        .bg(app_theme.overlay_rest)
                         .border_1()
-                        .border_color(gpui::white().opacity(0.08))
+                        .border_color(app_theme.border)
                         .child(
                             svg()
                                 .path("assets/icons/icons__file_icons__magnifying_glass.svg")
                                 .size(px(14.))
-                                .text_color(TEXT_MUTED()),
+                                .text_color(app_theme.text_muted),
                         )
                         .child({
                             let pr_query_hint: SharedString =
@@ -425,7 +440,7 @@ impl WorkspacePane {
                                 };
                             div()
                                 .text_sm()
-                                .text_color(TEXT_MUTED())
+                                .text_color(app_theme.text_muted)
                                 .child(pr_query_hint)
                         }),
                 )
@@ -437,14 +452,14 @@ impl WorkspacePane {
                         .items_center()
                         .px(px(7.))
                         .rounded(px(7.))
-                        .bg(rgb(0x1e2024))
+                        .bg(app_theme.card_bg)
                         .border_1()
-                        .border_color(gpui::white().opacity(0.08))
-                        .hover(|s| s.bg(gpui::white().opacity(0.06)))
+                        .border_color(app_theme.border)
+                        .hover(|s| s.bg(app_theme.overlay_hover))
                         .cursor_pointer()
                         .text_size(rems(11. / 16.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(app_theme.text_primary)
                         .child("Apply")
                         .on_mouse_down(
                             MouseButton::Left,
@@ -481,11 +496,11 @@ impl WorkspacePane {
                         .items_center()
                         .px(px(7.))
                         .rounded(px(7.))
-                        .hover(|s| s.bg(gpui::white().opacity(0.06)))
+                        .hover(|s| s.bg(app_theme.overlay_hover))
                         .cursor_pointer()
                         .text_size(rems(11. / 16.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(app_theme.text_secondary)
                         .child("Clear")
                         .on_mouse_down(
                             MouseButton::Left,
@@ -520,7 +535,7 @@ impl WorkspacePane {
         section = section.child(
             div()
                 .text_xs()
-                .text_color(TEXT_MUTED())
+                .text_color(app_theme.text_muted)
                 .child(
                     "Use GitHub PR search syntax like review-requested:@me, author:@me, draft:true, or free-text terms.",
                 ),
@@ -528,12 +543,17 @@ impl WorkspacePane {
 
         // PR rows
         if let Some(error) = load_error {
-            section = section.child(div().text_sm().text_color(TEXT_MUTED()).child(error));
+            section = section.child(
+                div()
+                    .text_sm()
+                    .text_color(app_theme.text_muted)
+                    .child(error),
+            );
         } else if loading && prs.is_none() {
             section = section.child(
                 div()
                     .text_sm()
-                    .text_color(TEXT_MUTED())
+                    .text_color(app_theme.text_muted)
                     .child("Loading pull requests..."),
             );
         } else if let Some(prs) = prs {
@@ -541,7 +561,7 @@ impl WorkspacePane {
                 section = section.child(
                     div()
                         .text_sm()
-                        .text_color(TEXT_MUTED())
+                        .text_color(app_theme.text_muted)
                         .child("No matching open pull requests."),
                 );
             } else {
@@ -559,6 +579,7 @@ impl WorkspacePane {
         pr: &crate::git_actions::ProjectPagePullRequest,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = self.project_page_theme(cx);
         let number_label: SharedString = format!("#{}", pr.number).into();
         let title: SharedString = pr.title.clone().into();
         let branch: SharedString = pr.branch.clone().into();
@@ -577,7 +598,11 @@ impl WorkspacePane {
         } else {
             "assets/icons/icons__badge-check.svg"
         };
-        let ci_color = if pr.review_required { RED() } else { GREEN() };
+        let ci_color = if pr.review_required {
+            app_theme.error.text
+        } else {
+            app_theme.success.text
+        };
 
         let row_id = SharedString::from(format!("pr-row-{}", pr.number));
 
@@ -589,10 +614,10 @@ impl WorkspacePane {
             .px(px(12.))
             .py(px(12.))
             .rounded(px(8.))
-            .bg(gpui::white().opacity(0.03))
-            .hover(|s| s.bg(gpui::white().opacity(0.06)))
+            .bg(app_theme.overlay_rest)
+            .hover(|s| s.bg(app_theme.overlay_hover))
             .border_1()
-            .border_color(gpui::white().opacity(0.06));
+            .border_color(app_theme.overlay_hover);
 
         // Top line: number + CI + title + review badge
         let mut top = div()
@@ -606,10 +631,13 @@ impl WorkspacePane {
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(5.))
-                    .bg(gpui::white().opacity(0.08))
+                    .bg(app_theme.border)
                     .text_xs()
-                    .text_color(TEXT_SECONDARY())
-                    .hover(|s| s.bg(gpui::white().opacity(0.14)).text_color(TEXT_PRIMARY()))
+                    .text_color(app_theme.text_secondary)
+                    .hover(|s| {
+                        s.bg(app_theme.overlay_hover_strong)
+                            .text_color(app_theme.text_primary)
+                    })
                     .cursor_pointer()
                     .tooltip(|_window, cx| {
                         AnotherOneApp::action_tooltip_view("Open pull request in GitHub", cx)
@@ -630,7 +658,7 @@ impl WorkspacePane {
                     .flex_1()
                     .min_w(px(0.))
                     .text_sm()
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(app_theme.text_primary)
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .truncate()
                     .child(title),
@@ -669,7 +697,7 @@ impl WorkspacePane {
         bottom = bottom.child(
             div()
                 .text_xs()
-                .text_color(TEXT_MUTED())
+                .text_color(app_theme.text_muted)
                 .font_family("Lilex Nerd Font Mono")
                 .truncate()
                 .max_w(px(200.))
@@ -677,13 +705,28 @@ impl WorkspacePane {
         );
 
         // Separator dot
-        bottom = bottom.child(div().text_xs().text_color(TEXT_MUTED()).child("\u{00B7}"));
+        bottom = bottom.child(
+            div()
+                .text_xs()
+                .text_color(app_theme.text_muted)
+                .child("\u{00B7}"),
+        );
 
         // Author
-        bottom = bottom.child(div().text_xs().text_color(TEXT_SECONDARY()).child(author));
+        bottom = bottom.child(
+            div()
+                .text_xs()
+                .text_color(app_theme.text_secondary)
+                .child(author),
+        );
 
         // Separator dot
-        bottom = bottom.child(div().text_xs().text_color(TEXT_MUTED()).child("\u{00B7}"));
+        bottom = bottom.child(
+            div()
+                .text_xs()
+                .text_color(app_theme.text_muted)
+                .child("\u{00B7}"),
+        );
 
         // Diff stats
         bottom = bottom.child(
@@ -695,14 +738,14 @@ impl WorkspacePane {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(GREEN())
+                        .text_color(app_theme.success.text)
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child(added),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(RED())
+                        .text_color(app_theme.error.text)
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child(removed),
                 ),
@@ -719,11 +762,11 @@ impl WorkspacePane {
                 .px(px(12.))
                 .py(px(4.))
                 .rounded(px(6.))
-                .bg(gpui::white().opacity(0.10))
-                .hover(|s| s.bg(gpui::white().opacity(0.18)))
+                .bg(app_theme.overlay_active)
+                .hover(|s| s.bg(app_theme.overlay_hover_strong))
                 .cursor_pointer()
                 .text_xs()
-                .text_color(TEXT_PRIMARY())
+                .text_color(app_theme.text_primary)
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .tooltip(|_window, cx| {
                     AnotherOneApp::action_tooltip_view(
@@ -774,6 +817,7 @@ impl WorkspacePane {
         open_dropdown: Option<ProjectBranchSettingField>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = self.project_page_theme(cx);
         let chevron_icon = if expanded {
             "assets/icons/icons__chevron-down.svg"
         } else {
@@ -813,7 +857,7 @@ impl WorkspacePane {
                                 svg()
                                     .path(chevron_icon)
                                     .size(px(15.))
-                                    .text_color(TEXT_SECONDARY()),
+                                    .text_color(app_theme.text_secondary),
                             )
                             .child(
                                 div()
@@ -824,13 +868,13 @@ impl WorkspacePane {
                                         div()
                                             .text_size(rems(13. / 16.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(TEXT_PRIMARY())
+                                            .text_color(app_theme.text_primary)
                                             .child("Configuration"),
                                     )
                                     .child(
                                         div()
                                             .text_size(rems(11. / 16.))
-                                            .text_color(TEXT_MUTED())
+                                            .text_color(app_theme.text_muted)
                                             .child(
                                                 "These defaults apply to the whole project group.",
                                             ),
@@ -902,6 +946,7 @@ impl WorkspacePane {
         dropdown_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = self.project_page_theme(cx);
         let trigger_id = match field {
             ProjectBranchSettingField::DefaultBranch => "project-page-default-branch",
             ProjectBranchSettingField::DefaultTargetBranch => "project-page-default-target-branch",
@@ -934,9 +979,9 @@ impl WorkspacePane {
             .flex_col()
             .gap(px(8.))
             .rounded(px(10.))
-            .bg(gpui::white().opacity(0.03))
+            .bg(app_theme.overlay_rest)
             .border_1()
-            .border_color(gpui::white().opacity(0.06))
+            .border_color(app_theme.overlay_hover)
             .p(px(12.))
             .child(
                 div()
@@ -954,13 +999,13 @@ impl WorkspacePane {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(app_theme.text_primary)
                                     .child(title),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(TEXT_MUTED())
+                                    .text_color(app_theme.text_muted)
                                     .child(description),
                             ),
                     )
@@ -971,15 +1016,15 @@ impl WorkspacePane {
                             .h(px(36.))
                             .px(px(12.))
                             .rounded(px(8.))
-                            .bg(rgb(0x1e2024))
+                            .bg(app_theme.card_bg)
                             .border_1()
-                            .border_color(gpui::white().opacity(0.08))
+                            .border_color(app_theme.border)
                             .flex()
                             .flex_row()
                             .items_center()
                             .justify_between()
                             .cursor_pointer()
-                            .hover(|style| style.bg(gpui::white().opacity(0.06)))
+                            .hover(|style| style.bg(app_theme.overlay_hover))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
@@ -991,30 +1036,30 @@ impl WorkspacePane {
                             .child(
                                 div()
                                     .text_size(rems(12. / 16.))
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(app_theme.text_primary)
                                     .child(selected_label.clone()),
                             )
                             .child(
                                 svg()
                                     .path("assets/icons/icons__chevron-down.svg")
                                     .size(px(11.))
-                                    .text_color(TEXT_SECONDARY()),
+                                    .text_color(app_theme.text_secondary),
                             ),
                     ),
             )
             .child(
                 div()
                     .text_size(rems(11. / 16.))
-                    .text_color(TEXT_MUTED())
+                    .text_color(app_theme.text_muted)
                     .child(helper_text),
             );
 
         if dropdown_open {
             let mut options = div()
                 .rounded(px(8.))
-                .bg(rgb(0x1e2024))
+                .bg(app_theme.card_bg)
                 .border_1()
-                .border_color(gpui::white().opacity(0.08))
+                .border_color(app_theme.border)
                 .overflow_hidden()
                 .child(self.project_page_branch_config_option(
                     &project_id,
@@ -1048,6 +1093,7 @@ impl WorkspacePane {
         selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = self.project_page_theme(cx);
         let project_id = project_id.to_string();
         let branch_name_owned = branch_name.map(str::to_string);
         let label: SharedString = branch_name
@@ -1068,11 +1114,11 @@ impl WorkspacePane {
             .justify_between()
             .cursor_pointer()
             .bg(if selected {
-                gpui::white().opacity(0.08)
+                app_theme.border
             } else {
                 gpui::white().opacity(0.0)
             })
-            .hover(|style| style.bg(gpui::white().opacity(0.06)))
+            .hover(|style| style.bg(app_theme.overlay_hover))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
@@ -1089,7 +1135,7 @@ impl WorkspacePane {
             .child(
                 div()
                     .text_size(rems(12. / 16.))
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(app_theme.text_primary)
                     .child(label.clone()),
             )
             .when(selected, |option| {
@@ -1097,7 +1143,7 @@ impl WorkspacePane {
                     div()
                         .text_size(rems(10. / 16.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(app_theme.text_secondary)
                         .child("Selected"),
                 )
             })

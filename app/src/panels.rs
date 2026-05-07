@@ -1,9 +1,9 @@
 //! Reusable panel helper and main content assembly.
 
 use gpui::{
-    canvas, div, fill, hsla, outline, point, prelude::*, px, rems, rgb, size, svg, App,
-    BorderStyle, Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Render, ScrollWheelEvent, SharedString, Window,
+    canvas, div, fill, hsla, outline, point, prelude::*, px, rems, size, svg, App, BorderStyle,
+    Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Render, ScrollWheelEvent, SharedString, Window,
 };
 
 use crate::agent_icons::branded_icon;
@@ -18,6 +18,7 @@ use crate::terminal_runtime::{
     TerminalCursorKind, TerminalRuntimeKey, TerminalSurfaceSnapshot, TERMINAL_CELL_WIDTH_RATIO,
     TERMINAL_LINE_HEIGHT_RATIO,
 };
+use crate::theme::{self, AppTheme};
 
 fn tab_icon_element(
     provider: Option<crate::agents::AgentProviderKind>,
@@ -49,6 +50,7 @@ impl AnotherOneApp {
             return div().id("terminal-tab-menu-popover");
         };
 
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
         let menu_w = 206.0;
         let menu_h = 176.0;
         let window_w = f32::from(window.bounds().size.width);
@@ -94,6 +96,7 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             tab_index.is_some(),
+            app_theme,
         ));
 
         let pin_section_id = section_id.clone();
@@ -112,14 +115,9 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             tab_index.is_some(),
+            app_theme,
         ));
-        items = items.child(
-            div()
-                .h(px(1.))
-                .mx(px(8.))
-                .my(px(3.))
-                .bg(gpui::white().opacity(0.08)),
-        );
+        items = items.child(div().h(px(1.)).mx(px(8.)).my(px(3.)).bg(app_theme.divider));
 
         let close_other_section_id = section_id.clone();
         let close_other_tab_id = tab_id.clone();
@@ -142,6 +140,7 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             close_other_enabled,
+            app_theme,
         ));
 
         let close_right_section_id = section_id.clone();
@@ -165,6 +164,7 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             close_right_enabled,
+            app_theme,
         ));
 
         let close_left_section_id = section_id.clone();
@@ -188,6 +188,7 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             close_left_enabled,
+            app_theme,
         ));
 
         div()
@@ -206,8 +207,8 @@ impl AnotherOneApp {
                     .w(px(menu_w))
                     .rounded(px(8.))
                     .border_1()
-                    .border_color(gpui::black().opacity(0.35))
-                    .bg(rgb(0x2b2d31))
+                    .border_color(app_theme.border)
+                    .bg(app_theme.card_bg)
                     .shadow_lg()
                     .overflow_hidden()
                     .child(items),
@@ -217,11 +218,16 @@ impl AnotherOneApp {
     /// Top-anchored search bar shown over the active terminal pane
     /// when `Cmd-F` is pressed. Non-IME — captures plain ASCII and
     /// Cmd-V paste through `handle_terminal_search_key_down`.
-    pub(crate) fn terminal_search_bar_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn terminal_search_bar_overlay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let Some(state) = self.terminal_search.clone() else {
             return div().id("terminal-search-bar");
         };
 
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
         let count_label = if state.matches.is_empty() {
             if state.query.is_empty() {
                 "".to_string()
@@ -250,17 +256,17 @@ impl AnotherOneApp {
             .px(px(10.))
             .rounded(px(8.))
             .border_1()
-            .border_color(gpui::black().opacity(0.35))
-            .bg(rgb(0x2b2d31))
+            .border_color(app_theme.border)
+            .bg(app_theme.card_bg)
             .shadow_lg()
             .child(
                 div()
                     .min_w(px(220.))
                     .text_sm()
                     .text_color(if query_text.is_empty() {
-                        hsla(0., 0., 0.92, 0.45)
+                        app_theme.text_placeholder
                     } else {
-                        hsla(0., 0., 0.92, 1.0)
+                        app_theme.text_primary
                     })
                     .child(if let Some(text) = placeholder {
                         text.to_string()
@@ -271,13 +277,14 @@ impl AnotherOneApp {
             .child(
                 div()
                     .text_xs()
-                    .text_color(hsla(0., 0., 0.92, 0.7))
+                    .text_color(app_theme.text_secondary)
                     .min_w(px(48.))
                     .child(count_label),
             )
             .child(terminal_search_button(
                 "terminal-search-prev",
                 "↑",
+                app_theme,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                     this.terminal_search_advance(false, cx);
                     cx.stop_propagation();
@@ -286,6 +293,7 @@ impl AnotherOneApp {
             .child(terminal_search_button(
                 "terminal-search-next",
                 "↓",
+                app_theme,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                     this.terminal_search_advance(true, cx);
                     cx.stop_propagation();
@@ -294,6 +302,7 @@ impl AnotherOneApp {
             .child(terminal_search_button(
                 "terminal-search-close",
                 "×",
+                app_theme,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                     this.close_terminal_search(cx);
                     cx.stop_propagation();
@@ -310,6 +319,7 @@ impl AnotherOneApp {
             return div().id("terminal-context-menu-popover");
         };
 
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
         let has_link = menu.link.is_some();
         let has_selection = menu.selected_text.is_some();
         let item_count = if has_link { 3 } else { 2 };
@@ -335,6 +345,7 @@ impl AnotherOneApp {
                     cx.stop_propagation();
                 }),
                 true,
+                app_theme,
             ));
         }
 
@@ -350,6 +361,7 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             has_selection,
+            app_theme,
         ));
 
         items = items.child(terminal_context_menu_item(
@@ -360,6 +372,7 @@ impl AnotherOneApp {
                 cx.stop_propagation();
             }),
             true,
+            app_theme,
         ));
 
         div()
@@ -375,8 +388,8 @@ impl AnotherOneApp {
                     .w(px(menu_w))
                     .rounded(px(8.))
                     .border_1()
-                    .border_color(gpui::black().opacity(0.35))
-                    .bg(rgb(0x2b2d31))
+                    .border_color(app_theme.border)
+                    .bg(app_theme.card_bg)
                     .shadow_lg()
                     .overflow_hidden()
                     .child(items),
@@ -385,6 +398,7 @@ impl AnotherOneApp {
 
     pub(crate) fn pinned_tab_close_confirm_modal(
         &self,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let Some(confirm) = self
@@ -395,6 +409,7 @@ impl AnotherOneApp {
         else {
             return div().id("pinned-tab-close-confirm-overlay");
         };
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
         let total_count = confirm.tab_ids.len().max(1);
         let pinned_count = confirm.pinned_tab_count.max(1);
         let title: SharedString = if total_count == 1 {
@@ -433,7 +448,7 @@ impl AnotherOneApp {
             .flex()
             .items_center()
             .justify_center()
-            .bg(hsla(0., 0., 0., 0.50))
+            .bg(app_theme.scrim_bg)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
@@ -457,9 +472,9 @@ impl AnotherOneApp {
                 div()
                     .w(px(364.))
                     .rounded_lg()
-                    .bg(rgb(0x2b2d31))
+                    .bg(app_theme.card_bg)
                     .border_1()
-                    .border_color(gpui::white().opacity(0.08))
+                    .border_color(app_theme.border)
                     .shadow_lg()
                     .overflow_hidden()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -475,13 +490,13 @@ impl AnotherOneApp {
                                 div()
                                     .text_lg()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0., 0., 0.92, 1.))
+                                    .text_color(app_theme.text_primary)
                                     .child(title),
                             )
                             .child(
                                 div()
                                     .text_sm()
-                                    .text_color(hsla(0., 0., 0.74, 1.))
+                                    .text_color(app_theme.text_secondary)
                                     .child(message),
                             ),
                     )
@@ -501,10 +516,10 @@ impl AnotherOneApp {
                                     .items_center()
                                     .rounded(px(6.))
                                     .cursor_pointer()
-                                    .bg(gpui::white().opacity(0.08))
-                                    .hover(|s| s.bg(gpui::white().opacity(0.14)))
+                                    .bg(app_theme.overlay_rest)
+                                    .hover(move |s| s.bg(app_theme.overlay_hover_strong))
                                     .text_sm()
-                                    .text_color(hsla(0., 0., 0.90, 1.))
+                                    .text_color(app_theme.text_primary)
                                     .child("Cancel")
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -598,6 +613,13 @@ impl AnotherOneApp {
 }
 
 impl WorkspacePane {
+    fn panel_theme(&self, window: &Window, cx: &mut Context<Self>) -> AppTheme {
+        self.app
+            .upgrade()
+            .map(|entity| theme::app_theme(window, entity.read(cx).project_store.ui.theme_mode))
+            .unwrap_or_else(theme::dark_theme)
+    }
+
     fn section_main_panel(
         &mut self,
         window: &mut Window,
@@ -611,30 +633,37 @@ impl WorkspacePane {
             return self.render_project_page(project_id, window, cx);
         }
 
+        let app_theme = self.panel_theme(window, cx);
+
         let Some(ref section_id) = self.active_section.clone() else {
-            return div().flex().flex_col().size_full().bg(rgb(0x1e1f22)).child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(hsla(0., 0., 0.40, 1.))
-                    .child("Select a branch to get started"),
-            );
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(app_theme.sunken_bg)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(app_theme.text_muted)
+                        .child("Select a branch to get started"),
+                );
         };
 
-        let tab_bar_bg = rgb(0x27292e);
-        let tab_bg_active = rgb(0x1e1f22);
-        let tab_bg_inactive = rgb(0x2b2d31);
-        let tab_text_active = hsla(0., 0., 0.92, 1.);
-        let tab_text_inactive = hsla(0., 0., 0.55, 1.);
-        let tab_hover = rgb(0x2f3136);
-        let close_col = hsla(0., 0., 0.45, 1.);
-        let close_hover = hsla(0., 0., 0.80, 1.);
-        let border_col = gpui::white().opacity(0.06);
-        let plus_col = hsla(0., 0., 0.50, 1.);
-        let terminal_bg = rgb(0x1e1f22);
+        let tab_bar_bg = app_theme.chrome_bg;
+        let tab_bg_active = app_theme.terminal_bg;
+        let tab_bg_inactive = app_theme.card_bg;
+        let tab_text_active = app_theme.text_primary;
+        let tab_text_inactive = app_theme.text_muted;
+        let tab_hover = app_theme.overlay_hover;
+        let close_col = app_theme.text_placeholder;
+        let close_hover = app_theme.text_secondary;
+        let border_col = app_theme.divider;
+        let plus_col = app_theme.text_muted;
+        let terminal_bg = app_theme.terminal_bg;
 
         let sid_for_add = section_id.clone();
 
@@ -761,9 +790,9 @@ impl WorkspacePane {
                                 .px(px(5.))
                                 .py(px(2.))
                                 .rounded(px(4.))
-                                .bg(gpui::black().opacity(0.24))
+                                .bg(app_theme.overlay_active)
                                 .border_1()
-                                .border_color(gpui::white().opacity(0.28))
+                                .border_color(app_theme.focus_ring)
                                 .text_sm()
                                 .text_color(tab_text_active)
                                 .child(before)
@@ -793,7 +822,7 @@ impl WorkspacePane {
                                 .cursor_pointer()
                                 .text_color(close_col)
                                 .hover(move |s| {
-                                    s.bg(gpui::white().opacity(0.08)).text_color(close_hover)
+                                    s.bg(app_theme.overlay_hover).text_color(close_hover)
                                 })
                                 .tooltip(move |_window, cx| {
                                     AnotherOneApp::action_tooltip_view("Close this tab", cx)
@@ -864,12 +893,13 @@ impl WorkspacePane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let terminal_bg = rgb(0x1e1f22);
-        let panel_bg = rgb(0x25282d);
-        let border = gpui::white().opacity(0.08);
-        let title_col = hsla(0., 0., 0.92, 1.);
-        let body_col = hsla(0., 0., 0.62, 1.);
-        let accent_col = hsla(0.58, 0.62, 0.68, 1.);
+        let app_theme = self.panel_theme(window, cx);
+        let terminal_bg = app_theme.terminal_bg;
+        let panel_bg = app_theme.card_bg;
+        let border = app_theme.border;
+        let title_col = app_theme.text_primary;
+        let body_col = app_theme.text_secondary;
+        let accent_col = app_theme.info.text;
 
         let Some(state) = self.section_states.get(section_id) else {
             return div().flex_1().bg(terminal_bg).into_any_element();
@@ -1294,8 +1324,8 @@ impl WorkspacePane {
                             .py(px(6.))
                             .rounded(px(6.))
                             .border_1()
-                            .border_color(gpui::black().opacity(0.4))
-                            .bg(rgb(0x1f2024))
+                            .border_color(app_theme.border)
+                            .bg(app_theme.card_bg)
                             .shadow_lg()
                             .flex()
                             .flex_col()
@@ -1303,13 +1333,13 @@ impl WorkspacePane {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(hsla(0., 0., 0.92, 0.75))
+                                    .text_color(app_theme.text_secondary)
                                     .child(format!("{modifier_label} to open")),
                             )
                             .child(
                                 div()
                                     .text_sm()
-                                    .text_color(hsla(0., 0., 0.92, 1.0))
+                                    .text_color(app_theme.text_primary)
                                     .child(url_preview),
                             ),
                     )
@@ -1373,7 +1403,7 @@ impl WorkspacePane {
                                         .h(px(28.))
                                         .rounded(px(7.))
                                         .cursor_pointer()
-                                        .hover(|style| style.bg(gpui::white().opacity(0.08)))
+                                        .hover(move |style| style.bg(app_theme.overlay_hover))
                                         .tooltip(move |_window, cx| {
                                             AnotherOneApp::action_tooltip_view(
                                                 "Copy error details",
@@ -1407,7 +1437,7 @@ impl WorkspacePane {
                                         ),
                                 ),
                         )
-                        .child(terminal_error_details(error, body_col)),
+                        .child(terminal_error_details(error, body_col, app_theme)),
                 )
                 .into_any_element();
         } else {
@@ -1489,7 +1519,11 @@ impl WorkspacePane {
     }
 }
 
-fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoElement {
+fn terminal_error_details(
+    error: String,
+    body_col: gpui::Hsla,
+    app_theme: AppTheme,
+) -> impl IntoElement {
     let mut details = div()
         .id("terminal-error-details")
         .w_full()
@@ -1497,8 +1531,8 @@ fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoEleme
         .overflow_scroll()
         .rounded(px(8.))
         .border_1()
-        .border_color(gpui::white().opacity(0.06))
-        .bg(gpui::black().opacity(0.14))
+        .border_color(app_theme.border)
+        .bg(app_theme.sunken_bg)
         .px(px(12.))
         .py(px(10.))
         .text_size(rems(12. / 16.))
@@ -1522,7 +1556,12 @@ fn terminal_error_details(error: String, body_col: gpui::Hsla) -> impl IntoEleme
     details
 }
 
-fn terminal_search_button<F>(id: &'static str, label: &'static str, on_click: F) -> impl IntoElement
+fn terminal_search_button<F>(
+    id: &'static str,
+    label: &'static str,
+    app_theme: AppTheme,
+    on_click: F,
+) -> impl IntoElement
 where
     F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 {
@@ -1535,9 +1574,9 @@ where
         .h(px(24.))
         .rounded(px(4.))
         .text_sm()
-        .text_color(hsla(0., 0., 0.92, 0.85))
+        .text_color(app_theme.text_secondary)
         .cursor_pointer()
-        .hover(|hover| hover.bg(gpui::white().opacity(0.06)))
+        .hover(move |hover| hover.bg(app_theme.overlay_hover))
         .on_mouse_down(MouseButton::Left, on_click)
         .child(label)
 }
@@ -1547,6 +1586,7 @@ fn terminal_context_menu_item<F>(
     label: impl Into<SharedString>,
     on_click: F,
     enabled: bool,
+    app_theme: AppTheme,
 ) -> impl IntoElement
 where
     F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
@@ -1563,11 +1603,11 @@ where
 
     if enabled {
         item = item
-            .text_color(hsla(0., 0., 0.92, 1.))
+            .text_color(app_theme.text_primary)
             .cursor_pointer()
-            .hover(|hover| hover.bg(gpui::white().opacity(0.06)));
+            .hover(move |hover| hover.bg(app_theme.overlay_hover));
     } else {
-        item = item.text_color(hsla(0., 0., 0.92, 0.4));
+        item = item.text_color(app_theme.text_placeholder);
     }
     // Always attach the listener: when disabled, the closure dismisses the
     // menu instead of acting. Without this the outer container's

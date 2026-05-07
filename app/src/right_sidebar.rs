@@ -50,6 +50,7 @@ struct ChangedFileActionButtonProps {
 }
 
 struct GitToolbarButtonProps {
+    theme_mode: crate::project_store::ThemeMode,
     label: &'static str,
     leading_icon: Option<&'static str>,
     trailing_icon: Option<&'static str>,
@@ -236,23 +237,25 @@ impl AnotherOneApp {
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let app_theme = theme::app_theme_for_preference(props.theme_mode);
         let visually_enabled = props.enabled || props.active;
         let text_col = if visually_enabled {
-            hsla(0., 0., 0.94, 1.)
+            app_theme.text_primary
         } else {
-            hsla(0., 0., 0.48, 1.)
+            app_theme.text_placeholder
         };
         let icon_col = if visually_enabled {
-            hsla(0., 0., 0.82, 1.)
+            app_theme.text_secondary
         } else {
-            hsla(0., 0., 0.42, 1.)
+            app_theme.text_placeholder
         };
-        let hover_bg = gpui::white().opacity(0.06);
+        let hover_bg = app_theme.overlay_hover;
         let border_color = if props.active {
-            gpui::white().opacity(0.14)
+            app_theme.focus_ring.opacity(0.50)
         } else {
             gpui::transparent_black()
         };
+        let active_bg = app_theme.focus_ring.opacity(0.14);
 
         let button = div()
             .id(SharedString::from(format!("git-toolbar-{}", props.label)))
@@ -264,7 +267,7 @@ impl AnotherOneApp {
             .border_1()
             .border_color(border_color)
             .opacity(if visually_enabled { 1. } else { 0.55 })
-            .when(props.active, |button| button.bg(rgb(0x262a30)));
+            .when(props.active, |button| button.bg(active_bg));
 
         let mut content = div().flex().flex_row().items_center().gap(px(5.));
 
@@ -416,13 +419,15 @@ impl AnotherOneApp {
         file_index: usize,
         row: &ChangedFilesRowSnapshot,
         group: ChangeGroup,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let title_col = hsla(0., 0., 0.94, 1.);
-        let path_col = hsla(0., 0., 0.58, 1.);
-        let row_hover = gpui::white().opacity(0.04);
-        let action_hover = gpui::white().opacity(0.08);
-        let action_icon = hsla(0., 0., 0.72, 1.);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let title_col = app_theme.text_primary;
+        let path_col = app_theme.text_muted;
+        let row_hover = app_theme.overlay_hover;
+        let action_hover = app_theme.overlay_hover_strong;
+        let action_icon = app_theme.text_secondary;
         let actions_busy = self.changed_files_actions_busy(project_id);
         let file_pending = self.changed_files_file_pending(project_id, row.path.as_ref());
         let project_mutations_pending = self.changed_files_project_mutations_pending(project_id);
@@ -466,7 +471,7 @@ impl AnotherOneApp {
                     && selection.path.as_str() == row.path.as_ref()
                     && selection.source == source
             });
-        let active_bg = gpui::white().opacity(0.075);
+        let active_bg = app_theme.overlay_active;
 
         let mut stats = div().flex().flex_row().items_center().gap(px(8.));
         if additions > 0 {
@@ -627,6 +632,7 @@ impl AnotherOneApp {
     fn changed_file_section_header(
         &self,
         props: ChangedFileSectionHeaderProps,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ChangedFileSectionHeaderProps {
@@ -639,12 +645,13 @@ impl AnotherOneApp {
             additions: section_additions,
             deletions: section_deletions,
         } = props;
-        let border = gpui::white().opacity(0.06);
-        let title_col = hsla(0., 0., 0.92, 1.);
-        let count_col = hsla(0., 0., 0.74, 1.);
-        let action_hover = gpui::white().opacity(0.08);
-        let action_icon = hsla(0., 0., 0.72, 1.);
-        let header_hover = gpui::white().opacity(0.03);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let border = app_theme.border;
+        let title_col = app_theme.text_primary;
+        let count_col = app_theme.text_secondary;
+        let action_hover = app_theme.overlay_hover_strong;
+        let action_icon = app_theme.text_secondary;
+        let header_hover = app_theme.overlay_hover;
         let collapsed = self.collapsed_change_sections.contains(section_key);
         let actions_busy = self.changed_files_actions_busy(&project_id);
         let project_mutations_pending = self.changed_files_project_mutations_pending(&project_id);
@@ -932,15 +939,17 @@ impl AnotherOneApp {
         project_id: &str,
         commit: &crate::project_store::BranchCommit,
         show_undo_button: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let title_col = hsla(0., 0., 0.94, 1.);
-        let meta_col = hsla(0., 0., 0.58, 1.);
-        let row_hover = gpui::white().opacity(0.04);
-        let undo_icon_col = hsla(0., 0., 0.72, 1.);
-        let undo_hover = gpui::white().opacity(0.08);
-        let details_bg = gpui::white().opacity(0.03);
-        let details_border = gpui::white().opacity(0.06);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let title_col = app_theme.text_primary;
+        let meta_col = app_theme.text_muted;
+        let row_hover = app_theme.overlay_hover;
+        let undo_icon_col = app_theme.text_secondary;
+        let undo_hover = app_theme.overlay_hover_strong;
+        let details_bg = app_theme.overlay_rest;
+        let details_border = app_theme.border;
         let expanded = self.commit_row_expanded(project_id, &commit.id);
         let commit_file_changes_state = self
             .commit_file_changes_state(project_id, &commit.id)
@@ -1190,12 +1199,13 @@ impl AnotherOneApp {
     fn check_runs_summary_badge(
         label: impl Into<SharedString>,
         text_color: gpui::Hsla,
+        bg: gpui::Hsla,
     ) -> impl IntoElement {
         div()
             .px(px(8.))
             .py(px(3.))
             .rounded(px(999.))
-            .bg(gpui::white().opacity(0.06))
+            .bg(bg)
             .text_size(rems(11. / 16.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(text_color)
@@ -1206,13 +1216,15 @@ impl AnotherOneApp {
         &self,
         check: &crate::git_actions::PullRequestCheck,
         index: usize,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let title_col = hsla(0., 0., 0.94, 1.);
-        let meta_col = hsla(0., 0., 0.58, 1.);
-        let hover_bg = gpui::white().opacity(0.04);
-        let action_hover = gpui::white().opacity(0.08);
-        let action_icon = hsla(0., 0., 0.72, 1.);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let title_col = app_theme.text_primary;
+        let meta_col = app_theme.text_muted;
+        let hover_bg = app_theme.overlay_hover;
+        let action_hover = app_theme.overlay_hover_strong;
+        let action_icon = app_theme.text_secondary;
         let (icon_path, icon_color) = Self::check_run_visual(check.bucket);
         let open_url = check.link.clone();
 
@@ -1306,8 +1318,9 @@ impl AnotherOneApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let bg = theme::chrome_bg(window);
-        let muted_col = hsla(0., 0., 0.54, 1.);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let bg = app_theme.chrome_bg;
+        let muted_col = app_theme.text_muted;
         let Some(active_section) = self.workspace_pane.read(cx).active_section.clone() else {
             return Self::panel("Changed files", "", bg, true).into_any_element();
         };
@@ -1359,6 +1372,7 @@ impl AnotherOneApp {
                                 additions: list_snapshot.staged_additions,
                                 deletions: list_snapshot.staged_deletions,
                             },
+                            window,
                             cx,
                         ));
 
@@ -1370,6 +1384,7 @@ impl AnotherOneApp {
                                         file_index,
                                         row,
                                         ChangeGroup::Staged,
+                                        window,
                                         cx,
                                     ));
                                 }
@@ -1389,6 +1404,7 @@ impl AnotherOneApp {
                                 additions: list_snapshot.unstaged_additions,
                                 deletions: list_snapshot.unstaged_deletions,
                             },
+                            window,
                             cx,
                         ));
 
@@ -1400,6 +1416,7 @@ impl AnotherOneApp {
                                         file_index,
                                         row,
                                         ChangeGroup::Uncommitted,
+                                        window,
                                         cx,
                                     ));
                                 }
@@ -1474,8 +1491,13 @@ impl AnotherOneApp {
                         .gap(px(0.));
 
                     for (index, commit) in commit_state.commits.iter().enumerate() {
-                        rows =
-                            rows.child(self.branch_commit_row(&project_id, commit, index == 0, cx));
+                        rows = rows.child(self.branch_commit_row(
+                            &project_id,
+                            commit,
+                            index == 0,
+                            window,
+                            cx,
+                        ));
                     }
 
                     if commit_state.has_more {
@@ -1489,6 +1511,7 @@ impl AnotherOneApp {
                                 .pb(px(6.))
                                 .child(Self::git_toolbar_button(
                                     GitToolbarButtonProps {
+                                        theme_mode: self.project_store.ui.theme_mode,
                                         label: "Load more",
                                         leading_icon: None,
                                         trailing_icon: None,
@@ -1571,7 +1594,7 @@ impl AnotherOneApp {
                             .px(px(14.))
                             .py(px(8.))
                             .border_b_1()
-                            .border_color(gpui::white().opacity(0.06))
+                            .border_color(app_theme.border)
                             .flex()
                             .flex_row()
                             .flex_wrap()
@@ -1579,25 +1602,29 @@ impl AnotherOneApp {
                             .when(passed > 0, |row| {
                                 row.child(Self::check_runs_summary_badge(
                                     format!("{passed} passed"),
-                                    hsla(138. / 360., 0.50, 0.74, 1.),
+                                    app_theme.success.text,
+                                    app_theme.success.bg,
                                 ))
                             })
                             .when(failed > 0, |row| {
                                 row.child(Self::check_runs_summary_badge(
                                     format!("{failed} failed"),
-                                    hsla(352. / 360., 0.52, 0.76, 1.),
+                                    app_theme.error.text,
+                                    app_theme.error.bg,
                                 ))
                             })
                             .when(pending > 0, |row| {
                                 row.child(Self::check_runs_summary_badge(
                                     format!("{pending} pending"),
-                                    hsla(42. / 360., 0.90, 0.66, 1.),
+                                    app_theme.warning.text,
+                                    app_theme.warning.bg,
                                 ))
                             })
                             .when(skipped > 0, |row| {
                                 row.child(Self::check_runs_summary_badge(
                                     format!("{skipped} skipped"),
-                                    hsla(0., 0., 0.62, 1.),
+                                    app_theme.text_muted,
+                                    app_theme.overlay_rest,
                                 ))
                             }),
                     );
@@ -1614,7 +1641,7 @@ impl AnotherOneApp {
                         .gap(px(0.));
 
                     for (index, check) in checks.iter().enumerate() {
-                        rows = rows.child(self.check_run_row(check, index, cx));
+                        rows = rows.child(self.check_run_row(check, index, window, cx));
                     }
 
                     body = body.child(rows);
@@ -1624,6 +1651,7 @@ impl AnotherOneApp {
 
         let commits_button = Self::git_toolbar_button(
             GitToolbarButtonProps {
+                theme_mode: self.project_store.ui.theme_mode,
                 label: "Commits",
                 leading_icon: Some("assets/icons/icons__git-commit.svg"),
                 trailing_icon: None,
@@ -1639,6 +1667,7 @@ impl AnotherOneApp {
 
         let checks_button = Self::git_toolbar_button(
             GitToolbarButtonProps {
+                theme_mode: self.project_store.ui.theme_mode,
                 label: "Checks",
                 leading_icon: Some("assets/icons/icons__tool-check.svg"),
                 trailing_icon: None,
@@ -1676,6 +1705,7 @@ impl AnotherOneApp {
                             .gap(px(6.))
                             .child(Self::git_toolbar_button(
                                 GitToolbarButtonProps {
+                                    theme_mode: self.project_store.ui.theme_mode,
                                     label: "Changes",
                                     leading_icon: Some(
                                         "assets/icons/icons__file_icons__changes.svg",

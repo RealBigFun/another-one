@@ -9,7 +9,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
-use gpui::{font, px, rgb, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
+#[cfg(test)]
+use gpui::rgb;
+use gpui::{font, px, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
 use portable_pty::MasterPty;
 
 // Shared with `core/src/terminal_types.rs` — the launcher side also
@@ -340,6 +342,13 @@ impl LiveTerminalRuntime {
             self.dirty = false;
         }
         self.cached_snapshot.clone()
+    }
+
+    /// Force the next snapshot to rebuild even if the terminal grid has not
+    /// changed. Theme changes alter default fg/bg resolution without touching
+    /// alacritty's grid, so cached snapshots need explicit invalidation.
+    pub fn invalidate_snapshot(&mut self) {
+        self.dirty = true;
     }
 
     /// Does this runtime have accumulated output the snapshot hasn't
@@ -912,6 +921,8 @@ fn resolve_cell_style(
 
     if cell.flags.contains(Flags::HIDDEN) {
         foreground = background;
+    } else {
+        foreground = ensure_light_terminal_contrast(foreground, background);
     }
 
     ResolvedCellStyle {
@@ -1022,6 +1033,13 @@ fn resolve_indexed_color(index: u8, colors: &alacritty_terminal::term::color::Co
 }
 
 fn default_named_color(named: NamedColor) -> Rgb {
+    match crate::theme::current_terminal_theme() {
+        crate::theme::ResolvedTheme::Light => default_light_named_color(named),
+        crate::theme::ResolvedTheme::Dark => default_dark_named_color(named),
+    }
+}
+
+fn default_dark_named_color(named: NamedColor) -> Rgb {
     match named {
         NamedColor::Black => rgb_to_vte(0x1f242d),
         NamedColor::Red => rgb_to_vte(0xe06c75),
@@ -1042,15 +1060,52 @@ fn default_named_color(named: NamedColor) -> Rgb {
         NamedColor::Foreground => hsla_to_vte(default_foreground_color()),
         NamedColor::Background => hsla_to_vte(default_background_color()),
         NamedColor::Cursor => hsla_to_vte(default_foreground_color()),
-        NamedColor::DimBlack => scale_rgb(default_named_color(NamedColor::Black), 0.72),
-        NamedColor::DimRed => scale_rgb(default_named_color(NamedColor::Red), 0.72),
-        NamedColor::DimGreen => scale_rgb(default_named_color(NamedColor::Green), 0.72),
-        NamedColor::DimYellow => scale_rgb(default_named_color(NamedColor::Yellow), 0.72),
-        NamedColor::DimBlue => scale_rgb(default_named_color(NamedColor::Blue), 0.72),
-        NamedColor::DimMagenta => scale_rgb(default_named_color(NamedColor::Magenta), 0.72),
-        NamedColor::DimCyan => scale_rgb(default_named_color(NamedColor::Cyan), 0.72),
-        NamedColor::DimWhite => scale_rgb(default_named_color(NamedColor::White), 0.72),
+        NamedColor::DimBlack => scale_rgb(default_dark_named_color(NamedColor::Black), 0.72),
+        NamedColor::DimRed => scale_rgb(default_dark_named_color(NamedColor::Red), 0.72),
+        NamedColor::DimGreen => scale_rgb(default_dark_named_color(NamedColor::Green), 0.72),
+        NamedColor::DimYellow => scale_rgb(default_dark_named_color(NamedColor::Yellow), 0.72),
+        NamedColor::DimBlue => scale_rgb(default_dark_named_color(NamedColor::Blue), 0.72),
+        NamedColor::DimMagenta => scale_rgb(default_dark_named_color(NamedColor::Magenta), 0.72),
+        NamedColor::DimCyan => scale_rgb(default_dark_named_color(NamedColor::Cyan), 0.72),
+        NamedColor::DimWhite => scale_rgb(default_dark_named_color(NamedColor::White), 0.72),
         NamedColor::BrightForeground => rgb_to_vte(0xffffff),
+        NamedColor::DimForeground => scale_rgb(hsla_to_vte(default_foreground_color()), 0.72),
+    }
+}
+
+fn default_light_named_color(named: NamedColor) -> Rgb {
+    match named {
+        // GitHub-ish light terminal palette. Importantly, ANSI white is
+        // *not* literal white on a light default background; many TUIs use
+        // white/bright-white as emphasis assuming a dark terminal.
+        NamedColor::Black => rgb_to_vte(0x24292f),
+        NamedColor::Red => rgb_to_vte(0xcf222e),
+        NamedColor::Green => rgb_to_vte(0x1a7f37),
+        NamedColor::Yellow => rgb_to_vte(0x9a6700),
+        NamedColor::Blue => rgb_to_vte(0x0969da),
+        NamedColor::Magenta => rgb_to_vte(0x8250df),
+        NamedColor::Cyan => rgb_to_vte(0x1b7f83),
+        NamedColor::White => rgb_to_vte(0x57606a),
+        NamedColor::BrightBlack => rgb_to_vte(0x6e7781),
+        NamedColor::BrightRed => rgb_to_vte(0xa40e26),
+        NamedColor::BrightGreen => rgb_to_vte(0x116329),
+        NamedColor::BrightYellow => rgb_to_vte(0x7d4e00),
+        NamedColor::BrightBlue => rgb_to_vte(0x0550ae),
+        NamedColor::BrightMagenta => rgb_to_vte(0x6639ba),
+        NamedColor::BrightCyan => rgb_to_vte(0x1f6f78),
+        NamedColor::BrightWhite => rgb_to_vte(0x24292f),
+        NamedColor::Foreground => hsla_to_vte(default_foreground_color()),
+        NamedColor::Background => hsla_to_vte(default_background_color()),
+        NamedColor::Cursor => hsla_to_vte(default_foreground_color()),
+        NamedColor::DimBlack => scale_rgb(default_light_named_color(NamedColor::Black), 0.72),
+        NamedColor::DimRed => scale_rgb(default_light_named_color(NamedColor::Red), 0.72),
+        NamedColor::DimGreen => scale_rgb(default_light_named_color(NamedColor::Green), 0.72),
+        NamedColor::DimYellow => scale_rgb(default_light_named_color(NamedColor::Yellow), 0.72),
+        NamedColor::DimBlue => scale_rgb(default_light_named_color(NamedColor::Blue), 0.72),
+        NamedColor::DimMagenta => scale_rgb(default_light_named_color(NamedColor::Magenta), 0.72),
+        NamedColor::DimCyan => scale_rgb(default_light_named_color(NamedColor::Cyan), 0.72),
+        NamedColor::DimWhite => scale_rgb(default_light_named_color(NamedColor::White), 0.72),
+        NamedColor::BrightForeground => hsla_to_vte(default_foreground_color()),
         NamedColor::DimForeground => scale_rgb(hsla_to_vte(default_foreground_color()), 0.72),
     }
 }
@@ -1097,11 +1152,56 @@ fn default_indexed_color(index: u8) -> Rgb {
 }
 
 fn default_background_color() -> Hsla {
-    rgb(0x1e1f22).into()
+    crate::theme::terminal_default_background()
 }
 
 fn default_foreground_color() -> Hsla {
-    rgb(0xd7dae0).into()
+    crate::theme::terminal_default_foreground()
+}
+
+fn ensure_light_terminal_contrast(foreground: Hsla, background: Hsla) -> Hsla {
+    if crate::theme::current_terminal_theme() != crate::theme::ResolvedTheme::Light {
+        return foreground;
+    }
+
+    let default_bg = hsla_to_vte(default_background_color());
+    let bg = hsla_to_vte(background);
+    if !rgb_near(bg, default_bg, 6) {
+        return foreground;
+    }
+
+    let fg = hsla_to_vte(foreground);
+    if contrast_ratio(fg, bg) >= 3.0 {
+        foreground
+    } else {
+        default_foreground_color()
+    }
+}
+
+fn rgb_near(a: Rgb, b: Rgb, tolerance: u8) -> bool {
+    a.r.abs_diff(b.r) <= tolerance
+        && a.g.abs_diff(b.g) <= tolerance
+        && a.b.abs_diff(b.b) <= tolerance
+}
+
+fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {
+    let a = relative_luminance(a);
+    let b = relative_luminance(b);
+    let (lighter, darker) = if a >= b { (a, b) } else { (b, a) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn relative_luminance(rgb: Rgb) -> f32 {
+    fn channel(v: u8) -> f32 {
+        let v = f32::from(v) / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b)
 }
 
 fn window_size_from_grid(size: TerminalGridSize) -> WindowSize {
@@ -1134,7 +1234,12 @@ fn default_color_request(index: usize) -> Rgb {
         x if x == NamedColor::Foreground as usize => hsla_to_vte(default_foreground_color()),
         x if x == NamedColor::Background as usize => hsla_to_vte(default_background_color()),
         x if x == NamedColor::Cursor as usize => hsla_to_vte(default_foreground_color()),
-        x if x == NamedColor::BrightForeground as usize => rgb_to_vte(0xffffff),
+        x if x == NamedColor::BrightForeground as usize => {
+            match crate::theme::current_terminal_theme() {
+                crate::theme::ResolvedTheme::Light => hsla_to_vte(default_foreground_color()),
+                crate::theme::ResolvedTheme::Dark => rgb_to_vte(0xffffff),
+            }
+        }
         x if x == NamedColor::DimForeground as usize => {
             scale_rgb(hsla_to_vte(default_foreground_color()), 0.72)
         }

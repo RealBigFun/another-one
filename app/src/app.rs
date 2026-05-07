@@ -3718,6 +3718,34 @@ impl AnotherOneApp {
             .open_in_app_enabled(app, &self.available_open_in_apps)
     }
 
+    pub(crate) fn set_theme_mode(
+        &mut self,
+        mode: crate::project_store::ThemeMode,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_store.set_theme_mode(mode);
+        // Republish a best-guess resolved theme immediately so the
+        // alacritty cell renderer picks up the new defaults before the
+        // next frame. The render path will refine this with the actual
+        // OS appearance once it has a Window in hand.
+        let resolved = match mode {
+            crate::project_store::ThemeMode::Light => crate::theme::ResolvedTheme::Light,
+            crate::project_store::ThemeMode::Dark => crate::theme::ResolvedTheme::Dark,
+            crate::project_store::ThemeMode::System => crate::theme::current_terminal_theme(),
+        };
+        crate::theme::set_terminal_theme(resolved);
+        // Rebuild cached terminal surface snapshots against the new default
+        // fg/bg. Alacritty's grid does not change when the app theme changes,
+        // so the runtime cache must be explicitly invalidated.
+        self.terminal_surface_snapshots.clear();
+        for (key, runtime) in &mut self.live_terminal_runtimes {
+            runtime.invalidate_snapshot();
+            self.terminal_surface_snapshots
+                .insert(key.clone(), runtime.snapshot());
+        }
+        cx.notify();
+    }
+
     pub(crate) fn open_settings_section(
         &mut self,
         section: crate::settings_page::SettingsSection,
@@ -4313,6 +4341,7 @@ impl AnotherOneApp {
     #[hotpath::measure]
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = ProjectStore::load();
+        theme::set_terminal_theme(theme::resolve_theme(window, store.ui.theme_mode));
         let registry_state = Arc::new(Mutex::new(crate::daemon_host::RegistryState::new(
             store.clone(),
         )));
@@ -10656,9 +10685,14 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    fn footer_add_project_button(window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let hover_bg = gpui::white().opacity(0.06);
+    fn footer_add_project_button(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let hover_bg = app_theme.overlay_hover;
 
         div()
             .id("footer-add-project-btn")
@@ -10680,9 +10714,10 @@ impl AnotherOneApp {
             )
     }
 
-    fn footer_settings_button(window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let hover_bg = gpui::white().opacity(0.06);
+    fn footer_settings_button(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let hover_bg = app_theme.overlay_hover;
 
         div()
             .id("footer-settings-btn")
@@ -10704,9 +10739,57 @@ impl AnotherOneApp {
             )
     }
 
+    fn footer_install_update_button(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let accent_bg = app_theme.info.bg;
+        let accent_hover_bg = app_theme.info.muted;
+        let text_col = app_theme.text_primary;
+
+        div()
+            .id("footer-install-update-btn")
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .h(px(26.))
+            .px(px(8.))
+            .rounded_md()
+            .bg(accent_bg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(accent_hover_bg))
+            .tooltip(move |_window, cx| Self::action_tooltip_view("Install downloaded update", cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.updater.send(crate::updater::UpdaterCommand::Install);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                svg()
+                    .path("assets/icons/icons__tool-download.svg")
+                    .size(px(14.))
+                    .text_color(icon_col),
+            )
+            .child(
+                div()
+                    .text_size(rems(12. / 16.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(text_col)
+                    .child(SharedString::from("Install update")),
+            )
+    }
+
     fn footer_branch_indicator(&self, window: &Window, cx: &App) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let text_col = gpui::white().opacity(0.55);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let text_col = app_theme.text_muted;
 
         if let Some(section) = self.workspace_pane.read(cx).active_section.clone() {
             let name: SharedString = section.branch_name.clone().into();
@@ -10735,8 +10818,9 @@ impl AnotherOneApp {
     }
 
     fn footer_worktree_indicator(&self, window: &Window, cx: &App) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let text_col = gpui::white().opacity(0.55);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let text_col = app_theme.text_muted;
 
         let worktree_name = self
             .workspace_pane
@@ -14425,7 +14509,10 @@ impl AnotherOneApp {
             .w(px(44.))
             .h(px(PHONE_HEADER_H))
             .cursor_pointer()
-            .child(Self::sidebar_toggle_svg(window))
+            .child(Self::sidebar_toggle_svg(
+                window,
+                self.project_store.ui.theme_mode,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _window, cx| {
@@ -14441,7 +14528,10 @@ impl AnotherOneApp {
             .w(px(44.))
             .h(px(PHONE_HEADER_H))
             .cursor_pointer()
-            .child(Self::right_sidebar_toggle_svg(window))
+            .child(Self::right_sidebar_toggle_svg(
+                window,
+                self.project_store.ui.theme_mode,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _window, cx| {
@@ -14482,7 +14572,10 @@ impl AnotherOneApp {
             .w(px(44.))
             .h(px(PHONE_HEADER_H))
             .cursor_pointer()
-            .child(Self::sidebar_toggle_svg(window))
+            .child(Self::sidebar_toggle_svg(
+                window,
+                self.project_store.ui.theme_mode,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _window, cx| {
@@ -14595,7 +14688,7 @@ impl AnotherOneApp {
                 .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))
                 .child(self.sidebar_task_delete_confirm_modal(cx))
-                .child(self.pinned_tab_close_confirm_modal(cx))
+                .child(self.pinned_tab_close_confirm_modal(window, cx))
                 .child(self.pair_mobile_overlay(cx))
                 .child(self.toast_layer(cx)),
             self.focus_handle.clone(),
@@ -14895,6 +14988,25 @@ impl Render for AnotherOneApp {
         let scale = self.font_size / 13.0;
         window.set_rem_size(px(16.0 * scale));
 
+        let theme_mode = self.project_store.ui.theme_mode;
+        let chrome_bg = theme::chrome_bg_for_mode(window, theme_mode);
+        // Publish the resolved theme so non-GPUI renderers (terminal cell
+        // resolver) can pick theme-aware default fg/bg colors. If System
+        // resolves differently from the last frame, rebuild snapshots because
+        // their default fg/bg colors are baked into cached TextRuns.
+        let resolved_theme = theme::resolve_theme(window, theme_mode);
+        if theme::current_terminal_theme() != resolved_theme {
+            theme::set_terminal_theme(resolved_theme);
+            self.terminal_surface_snapshots.clear();
+            for (key, runtime) in &mut self.live_terminal_runtimes {
+                runtime.invalidate_snapshot();
+                self.terminal_surface_snapshots
+                    .insert(key.clone(), runtime.snapshot());
+            }
+        } else {
+            theme::set_terminal_theme(resolved_theme);
+        }
+
         // ── Settings page (replaces normal layout) ─────────────
         if self.settings_open {
             let settings = self.render_settings_page(window, cx);
@@ -14907,7 +15019,7 @@ impl Render for AnotherOneApp {
                     .relative()
                     .size_full()
                     .track_focus(&self.focus_handle)
-                    .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                    .when(supports_custom_chrome, |d| d.bg(chrome_bg))
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -14966,7 +15078,7 @@ impl Render for AnotherOneApp {
             .items_center()
             .h(px(FOOTER_H))
             .flex_shrink_0()
-            .bg(theme::chrome_bg(window))
+            .bg(chrome_bg)
             // Left section: fixed width matching sidebar
             .child(
                 div()
@@ -14977,8 +15089,12 @@ impl Render for AnotherOneApp {
                     .pl(px(10.))
                     .flex_shrink_0()
                     .w(px(sw))
-                    .child(Self::footer_settings_button(window, cx))
-                    .child(Self::footer_add_project_button(window, cx)),
+                    .child(self.footer_settings_button(window, cx))
+                    .child(self.footer_add_project_button(window, cx))
+                    .when(
+                        matches!(self.updater_state, crate::updater::UpdateState::ReadyToInstall { .. }),
+                        |d| d.child(self.footer_install_update_button(window, cx)),
+                    ),
             )
             // Right section: branch + worktree
             .child(
@@ -15009,7 +15125,7 @@ impl Render for AnotherOneApp {
                 .relative()
                 .size_full()
                 .track_focus(&self.focus_handle)
-                .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                .when(supports_custom_chrome, |d| d.bg(chrome_bg))
                 .on_mouse_move(cx.listener(Self::on_mouse_move))
                 .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -15044,14 +15160,14 @@ impl Render for AnotherOneApp {
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.terminal_tab_menu_overlay(window, cx))
                 .child(self.terminal_context_menu_overlay(window, cx))
-                .child(self.terminal_search_bar_overlay(cx))
+                .child(self.terminal_search_bar_overlay(window, cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.create_branch_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))
                 .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))
                 .child(self.sidebar_task_delete_confirm_modal(cx))
-                .child(self.pinned_tab_close_confirm_modal(cx))
+                .child(self.pinned_tab_close_confirm_modal(window, cx))
                 .child(self.pair_mobile_overlay(cx))
                 .child(self.toast_layer(cx)),
             self.focus_handle.clone(),

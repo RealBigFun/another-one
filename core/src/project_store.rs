@@ -504,10 +504,21 @@ pub struct ArchivedProjectActions {
     pub actions: Vec<ProjectAction>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default = "default_left_sidebar_open")]
     pub left_sidebar_open: bool,
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
     #[serde(default)]
     pub expanded_repo_ids: HashSet<String>,
     #[serde(default)]
@@ -548,6 +559,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             left_sidebar_open: default_left_sidebar_open(),
+            theme_mode: ThemeMode::System,
             expanded_repo_ids: HashSet::new(),
             repo_default_commit_actions: HashMap::new(),
             pinned_task_ids: HashSet::new(),
@@ -1513,6 +1525,14 @@ impl ProjectStore {
             return;
         }
         self.ui.show_sidebar_git_metadata = visible;
+        self.save();
+    }
+
+    pub fn set_theme_mode(&mut self, mode: ThemeMode) {
+        if self.ui.theme_mode == mode {
+            return;
+        }
+        self.ui.theme_mode = mode;
         self.save();
     }
 
@@ -4974,6 +4994,7 @@ mod tests {
             ]),
             ui: super::UiState {
                 left_sidebar_open: false,
+                theme_mode: super::ThemeMode::System,
                 expanded_repo_ids: HashSet::from(["repo".to_string()]),
                 repo_default_commit_actions: HashMap::from([(
                     "repo".to_string(),
@@ -5976,6 +5997,35 @@ mod tests {
             project_action_agent_launch_args(&action).expect("shell args should build"),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn theme_mode_persists_to_store_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: file_path.clone(),
+        };
+
+        store.set_theme_mode(super::ThemeMode::Dark);
+
+        let saved: StoreFile = serde_json::from_str(
+            &fs::read_to_string(&file_path).expect("saved config should exist"),
+        )
+        .expect("saved config should deserialize");
+        assert_eq!(saved.ui.theme_mode, super::ThemeMode::Dark);
+
+        let reloaded = super::ProjectStore::read_from_disk(&file_path);
+        assert_eq!(reloaded.ui.theme_mode, super::ThemeMode::Dark);
     }
 
     #[test]
