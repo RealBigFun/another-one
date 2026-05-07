@@ -1529,9 +1529,10 @@ impl ProjectStore {
     }
 
     pub fn set_theme_mode(&mut self, mode: ThemeMode) {
-        if self.ui.theme_mode == mode {
-            return;
-        }
+        // Save even when the in-memory value is already selected. Older
+        // store files may not contain `ui.theme_mode`; clicking the selected
+        // option should still materialize the preference on disk so the next
+        // launch does not fall back through serde's default.
         self.ui.theme_mode = mode;
         self.save();
     }
@@ -6023,9 +6024,44 @@ mod tests {
         )
         .expect("saved config should deserialize");
         assert_eq!(saved.ui.theme_mode, super::ThemeMode::Dark);
+        assert!(
+            fs::read_to_string(&file_path)
+                .expect("saved config should exist")
+                .contains("\"theme_mode\""),
+            "saved config should materialize the theme preference field"
+        );
 
         let reloaded = super::ProjectStore::read_from_disk(&file_path);
         assert_eq!(reloaded.ui.theme_mode, super::ThemeMode::Dark);
+    }
+
+    #[test]
+    fn theme_mode_persists_when_setting_default_system() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: file_path.clone(),
+        };
+
+        store.set_theme_mode(super::ThemeMode::System);
+
+        let saved_json = fs::read_to_string(&file_path).expect("saved config should exist");
+        let saved: StoreFile =
+            serde_json::from_str(&saved_json).expect("saved config should deserialize");
+        assert_eq!(saved.ui.theme_mode, super::ThemeMode::System);
+        assert!(
+            saved_json.contains("\"theme_mode\""),
+            "setting the already-selected default should still persist the field"
+        );
     }
 
     #[test]

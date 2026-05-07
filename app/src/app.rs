@@ -3724,6 +3724,7 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) {
         self.project_store.set_theme_mode(mode);
+        self.sync_registry_project_store();
         // Republish a best-guess resolved theme immediately so the
         // alacritty cell renderer picks up the new defaults before the
         // next frame. The render path will refine this with the actual
