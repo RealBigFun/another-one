@@ -1740,7 +1740,9 @@ impl AnotherOneApp {
                         container.child(
                             div()
                                 .text_size(rems(11. / 16.))
-                                .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
+                                .text_color(settings_text_secondary(
+                                    self.project_store.ui.theme_mode,
+                                ))
                                 .child(detail),
                         )
                     })
@@ -1777,8 +1779,16 @@ impl AnotherOneApp {
                         "settings-general-install",
                         "Install update",
                         install_enabled,
-                        if install_enabled { active_button_bg } else { button_bg },
-                        if install_enabled { active_button_bg } else { button_hover },
+                        if install_enabled {
+                            active_button_bg
+                        } else {
+                            button_bg
+                        },
+                        if install_enabled {
+                            active_button_bg
+                        } else {
+                            button_hover
+                        },
                         gpui::white(),
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.updater.send(UpdaterCommand::Install);
@@ -1873,7 +1883,9 @@ impl AnotherOneApp {
                 .opacity(if is_installed { 1.0 } else { 0.45 });
 
             if index > 0 {
-                row = row.border_t_1().border_color(settings_border(self.project_store.ui.theme_mode));
+                row = row
+                    .border_t_1()
+                    .border_color(settings_border(self.project_store.ui.theme_mode));
             }
 
             let mut arg_pills = div().flex().flex_row().flex_wrap().gap(px(8.));
@@ -1910,7 +1922,9 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_family("Lilex Nerd Font Mono")
-                                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
+                                    .text_color(settings_text_primary(
+                                        self.project_store.ui.theme_mode,
+                                    ))
                                     .child(arg_label),
                             )
                             .child(
@@ -1938,7 +1952,9 @@ impl AnotherOneApp {
                                             .items_center()
                                             .justify_center()
                                             .text_size(rems(11. / 16.))
-                                            .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
+                                            .text_color(settings_text_secondary(
+                                                self.project_store.ui.theme_mode,
+                                            ))
                                             .child("x"),
                                     ),
                             ),
@@ -2905,7 +2921,11 @@ impl AnotherOneApp {
                             cx.stop_propagation();
                         }),
                     )
-                    .child(branded_icon(icon_path, 16., Some(settings_text_primary(self.project_store.ui.theme_mode))))
+                    .child(branded_icon(
+                        icon_path,
+                        16.,
+                        Some(settings_text_primary(self.project_store.ui.theme_mode)),
+                    ))
                     .child(
                         div()
                             .text_size(rems(12. / 16.))
@@ -2985,7 +3005,8 @@ impl AnotherOneApp {
         let button_bg = settings_button_bg(self.project_store.ui.theme_mode);
         let button_hover = settings_button_hover(self.project_store.ui.theme_mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
-        let editor_bg = crate::theme::app_theme_for_preference(self.project_store.ui.theme_mode).terminal_bg;
+        let editor_bg =
+            crate::theme::app_theme_for_preference(self.project_store.ui.theme_mode).terminal_bg;
         let using_default = match kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
                 self.project_store.ui.git_commit_generation_script.is_none()
@@ -3027,13 +3048,17 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(13. / 16.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
+                                    .text_color(settings_text_primary(
+                                        self.project_store.ui.theme_mode,
+                                    ))
                                     .child(title),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
+                                    .text_color(settings_text_secondary(
+                                        self.project_store.ui.theme_mode,
+                                    ))
                                     .child(if using_default {
                                         default_label
                                     } else {
@@ -3978,11 +4003,19 @@ fn render_settings_agent_input_content(
             .text_size(rems(12. / 16.))
             .font_family("Lilex Nerd Font Mono")
             .child(if focused {
-                div().w(px(1.)).h(px(16.)).mr(px(1.)).bg(settings_text_primary(mode))
+                div()
+                    .w(px(1.))
+                    .h(px(16.))
+                    .mr(px(1.))
+                    .bg(settings_text_primary(mode))
             } else {
                 div().w(px(0.))
             })
-            .child(div().text_color(settings_text_secondary(mode)).child("argv-token"));
+            .child(
+                div()
+                    .text_color(settings_text_secondary(mode))
+                    .child("argv-token"),
+            );
     }
 
     let selected = selection.filter(|range| range.start < range.end);
@@ -4048,7 +4081,11 @@ fn render_settings_agent_input_content(
     }
 
     if !trailing.is_empty() {
-        row = row.child(div().text_color(settings_text_primary(mode)).child(trailing));
+        row = row.child(
+            div()
+                .text_color(settings_text_primary(mode))
+                .child(trailing),
+        );
     }
 
     row
@@ -4083,7 +4120,11 @@ fn render_settings_multiline_input_content(
                 .items_center()
                 .gap(px(0.))
                 .child(if focused {
-                    div().w(px(1.)).h(px(16.)).mr(px(1.)).bg(settings_text_primary(mode))
+                    div()
+                        .w(px(1.))
+                        .h(px(16.))
+                        .mr(px(1.))
+                        .bg(settings_text_primary(mode))
                 } else {
                     div().w(px(0.))
                 })
@@ -4121,7 +4162,11 @@ fn render_settings_multiline_input_content(
                 let middle = &line_text[range.clone()];
                 let suffix = &line_text[range.end..];
                 if !prefix.is_empty() {
-                    row = row.child(div().text_color(settings_text_primary(mode)).child(prefix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(prefix.to_string()),
+                    );
                 }
                 row = row.child(
                     div()
@@ -4135,21 +4180,37 @@ fn render_settings_multiline_input_content(
                         }),
                 );
                 if !suffix.is_empty() {
-                    row = row.child(div().text_color(settings_text_primary(mode)).child(suffix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(suffix.to_string()),
+                    );
                 }
             }
             (None, Some(local_cursor)) => {
                 let prefix = &line_text[..local_cursor.min(line_text.len())];
                 let suffix = &line_text[local_cursor.min(line_text.len())..];
                 if !prefix.is_empty() {
-                    row = row.child(div().text_color(settings_text_primary(mode)).child(prefix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(prefix.to_string()),
+                    );
                 }
                 row = row.child(div().w(px(1.)).h(px(16.)).bg(settings_text_primary(mode)));
                 if !suffix.is_empty() {
-                    row = row.child(div().text_color(settings_text_primary(mode)).child(suffix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(suffix.to_string()),
+                    );
                 }
                 if prefix.is_empty() && suffix.is_empty() {
-                    row = row.child(div().text_color(settings_text_primary(mode).opacity(0.)).child(" "));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode).opacity(0.))
+                            .child(" "),
+                    );
                 }
             }
             (None, None) => {

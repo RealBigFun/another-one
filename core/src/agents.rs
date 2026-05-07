@@ -156,7 +156,7 @@ pub const AGENTS: &[AgentDef] = &[
     },
 ];
 
-pub const DEFAULT_AGENT_ID: &str = "pi";
+pub const DEFAULT_AGENT_ID: &str = "codex";
 
 pub fn effective_enabled_agents(configured: Option<&HashSet<String>>) -> Vec<&'static AgentDef> {
     AGENTS

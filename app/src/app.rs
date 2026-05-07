@@ -11125,6 +11125,7 @@ impl AnotherOneApp {
 
     fn toast_visuals(
         kind: ToastKind,
+        app_theme: theme::AppTheme,
     ) -> (
         &'static str,
         gpui::Hsla,
@@ -11135,30 +11136,30 @@ impl AnotherOneApp {
         match kind {
             ToastKind::Success => (
                 "assets/icons/icons__badge-check.svg",
-                hsla(138. / 360., 0.52, 0.66, 1.),
-                hsla(136. / 360., 0.40, 0.24, 0.90),
-                hsla(136. / 360., 0.42, 0.34, 0.55),
+                app_theme.success.icon,
+                app_theme.success.bg,
+                app_theme.success.muted,
                 "Success",
             ),
             ToastKind::Error => (
                 "assets/icons/icons__alert-triangle.svg",
-                hsla(0., 0.68, 0.72, 1.),
-                hsla(0., 0.40, 0.24, 0.90),
-                hsla(0., 0.45, 0.36, 0.58),
+                app_theme.error.icon,
+                app_theme.error.bg,
+                app_theme.error.muted,
                 "Error",
             ),
             ToastKind::Warning => (
                 "assets/icons/icons__badge-alert.svg",
-                hsla(42. / 360., 0.70, 0.68, 1.),
-                hsla(40. / 360., 0.42, 0.24, 0.90),
-                hsla(42. / 360., 0.46, 0.34, 0.58),
+                app_theme.warning.icon,
+                app_theme.warning.bg,
+                app_theme.warning.muted,
                 "Warning",
             ),
             ToastKind::Info => (
                 "assets/icons/icons__file_icons__info.svg",
-                hsla(208. / 360., 0.62, 0.72, 1.),
-                hsla(210. / 360., 0.40, 0.24, 0.90),
-                hsla(208. / 360., 0.42, 0.34, 0.58),
+                app_theme.info.icon,
+                app_theme.info.bg,
+                app_theme.info.muted,
                 "Info",
             ),
         }
@@ -11287,16 +11288,17 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let toast_id = toast.id;
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let (icon_path, icon_color, icon_bg, border_color, tone_label) =
-            Self::toast_visuals(toast.kind);
-        let text_col = hsla(0., 0., 0.94, 1.);
-        let card_bg = rgb(0x202329);
-        let copy_hover = gpui::white().opacity(0.06);
+            Self::toast_visuals(toast.kind, app_theme);
+        let text_col = app_theme.text_primary;
+        let card_bg = app_theme.card_bg;
+        let copy_hover = app_theme.overlay_hover;
         let copied = self.toast_copy_feedback_visible(toast_id);
         let copy_icon = if copied {
-            hsla(138. / 360., 0.58, 0.72, 1.)
+            app_theme.success.icon
         } else {
-            hsla(0., 0., 0.72, 1.)
+            app_theme.text_muted
         };
         let message = toast.message.clone();
         let copy_message = toast.copy_message.clone();
@@ -11965,6 +11967,7 @@ mod tests {
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
         TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
     };
+    use crate::theme::{dark_theme, light_theme};
     use daemon_proto::TerminalRestoreStatus;
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, Modifiers, ScrollDelta};
     use std::collections::{HashMap, HashSet};
@@ -12216,6 +12219,28 @@ mod tests {
             event,
             DrainedGitAction::Disconnected { project_id } if project_id == "project-a"
         )));
+    }
+
+    #[test]
+    fn toast_visuals_follow_light_theme_colors() {
+        let light = light_theme();
+        let (_icon_path, icon_color, icon_bg, border_color, _tone_label) =
+            AnotherOneApp::toast_visuals(ToastKind::Info, light);
+
+        assert_eq!(icon_color, light.info.icon);
+        assert_eq!(icon_bg, light.info.bg);
+        assert_eq!(border_color, light.info.muted);
+    }
+
+    #[test]
+    fn toast_visuals_follow_dark_theme_colors() {
+        let dark = dark_theme();
+        let (_icon_path, icon_color, icon_bg, border_color, _tone_label) =
+            AnotherOneApp::toast_visuals(ToastKind::Warning, dark);
+
+        assert_eq!(icon_color, dark.warning.icon);
+        assert_eq!(icon_bg, dark.warning.bg);
+        assert_eq!(border_color, dark.warning.muted);
     }
 
     #[test]
@@ -15093,7 +15118,10 @@ impl Render for AnotherOneApp {
                     .child(self.footer_settings_button(window, cx))
                     .child(self.footer_add_project_button(window, cx))
                     .when(
-                        matches!(self.updater_state, crate::updater::UpdateState::ReadyToInstall { .. }),
+                        matches!(
+                            self.updater_state,
+                            crate::updater::UpdateState::ReadyToInstall { .. }
+                        ),
                         |d| d.child(self.footer_install_update_button(window, cx)),
                     ),
             )

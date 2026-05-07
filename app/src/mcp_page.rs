@@ -15,8 +15,7 @@
 //! tracked as a follow-up.
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, AnyElement, Context, IntoElement, MouseButton,
-    MouseDownEvent,
+    div, hsla, prelude::*, px, rems, AnyElement, Context, IntoElement, MouseButton, MouseDownEvent,
 };
 
 use another_one_core::agents::AgentProviderKind;

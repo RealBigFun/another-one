@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::agents::{
-    effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, DEFAULT_AGENT_ID,
+    agent_executable_available, effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig,
+    DEFAULT_AGENT_ID,
 };
 use crate::git_actions::{
     default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
@@ -583,6 +584,36 @@ impl Default for UiState {
 
 fn default_left_sidebar_open() -> bool {
     true
+}
+
+fn initial_default_agent_id(enabled: &[&'static str]) -> Option<&'static str> {
+    initial_default_agent_id_with_claude_availability(
+        enabled,
+        agent_executable_available(AgentProviderKind::ClaudeCode),
+    )
+}
+
+fn initial_default_agent_id_with_claude_availability(
+    enabled: &[&'static str],
+    claude_code_available: bool,
+) -> Option<&'static str> {
+    if claude_code_available {
+        enabled
+            .iter()
+            .copied()
+            .find(|agent_id| *agent_id == "claude-code")
+            .or_else(|| {
+                enabled
+                    .iter()
+                    .copied()
+                    .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
+            })
+    } else {
+        enabled
+            .iter()
+            .copied()
+            .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
+    }
 }
 
 pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<String>, String> {
@@ -1715,12 +1746,7 @@ impl ProjectStore {
                     .copied()
                     .find(|enabled_id| *enabled_id == agent_id)
             })
-            .or_else(|| {
-                enabled
-                    .iter()
-                    .copied()
-                    .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
-            })
+            .or_else(|| initial_default_agent_id(&enabled))
             .or_else(|| enabled.first().copied())
     }
 
@@ -6311,7 +6337,44 @@ mod tests {
         assert!(crate::agents::AGENTS
             .iter()
             .all(|agent| store.agent_enabled(agent.id)));
-        assert_eq!(store.default_agent_id(), Some(DEFAULT_AGENT_ID));
+        let expected_default = if crate::agents::agent_executable_available(
+            crate::agents::AgentProviderKind::ClaudeCode,
+        ) {
+            "claude-code"
+        } else {
+            DEFAULT_AGENT_ID
+        };
+        assert_eq!(store.default_agent_id(), Some(expected_default));
+    }
+
+    #[test]
+    fn initial_default_agent_prefers_claude_code_when_available() {
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(
+                &["claude-code", "codex", "pi"],
+                true,
+            ),
+            Some("claude-code")
+        );
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(
+                &["claude-code", "codex", "pi"],
+                false,
+            ),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn initial_default_agent_respects_enabled_agents() {
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(&["codex", "pi"], true),
+            Some("codex")
+        );
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(&["pi"], false),
+            None
+        );
     }
 
     #[test]
