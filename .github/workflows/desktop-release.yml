@@ -181,6 +181,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfuse2 libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb1
+      - name: Install modern patchelf
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz \
+            -o "$RUNNER_TEMP/patchelf.tar.gz"
+          tar -xzf "$RUNNER_TEMP/patchelf.tar.gz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/bin/patchelf" /usr/local/bin/patchelf
+          patchelf --version
       - name: Run Linux packaging script
         env:
           ALLOW_HOST_BUILD: "1"
