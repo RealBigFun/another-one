@@ -156,8 +156,8 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}-*.dmg
-            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}-*.app.tar.gz
+            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}.dmg
+            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}.app.tar.gz
 
   build-linux:
     name: Build Linux (x86_64)
@@ -209,7 +209,7 @@ jobs:
         with:
           name: linux-x86_64
           path: |
-            dist/linux-x86_64/AnotherOne-linux-x86_64-*.AppImage
+            dist/linux-x86_64/AnotherOne-linux-x86_64.AppImage
 
   publish:
     name: Publish release

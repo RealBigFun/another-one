@@ -47,9 +47,9 @@ class Asset:
 # kinds (e.g. `.zip`) get added here once the packaging scripts
 # emit them.
 PATTERNS = [
-    (re.compile(r"^AnotherOne-(macos)-(aarch64|x86_64)-[0-9a-f]+\.app\.tar\.gz$"), "app-tar-gz"),
-    (re.compile(r"^AnotherOne-(macos)-(aarch64|x86_64)-[0-9a-f]+\.dmg$"), "dmg"),
-    (re.compile(r"^AnotherOne-(linux)-(aarch64|x86_64)-[0-9a-f]+\.AppImage$"), "appimage"),
+    (re.compile(r"^AnotherOne-(macos)-(aarch64|x86_64)\.app\.tar\.gz$"), "app-tar-gz"),
+    (re.compile(r"^AnotherOne-(macos)-(aarch64|x86_64)\.dmg$"), "dmg"),
+    (re.compile(r"^AnotherOne-(linux)-(aarch64|x86_64)\.AppImage$"), "appimage"),
 ]
 
 

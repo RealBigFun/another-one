@@ -9,9 +9,9 @@ workflows.
 
 Download the latest desktop builds from the current GitHub release:
 
-- [macOS Apple Silicon DMG](https://github.com/RealBigFun/another-one/releases/latest/download/AnotherOne-macos-aarch64-6ad0fb762fee478f2220e356b1bbe72848a4fabb.dmg)
-- [macOS Intel DMG](https://github.com/RealBigFun/another-one/releases/latest/download/AnotherOne-macos-x86_64-6ad0fb762fee478f2220e356b1bbe72848a4fabb.dmg)
-- [Linux x86_64 AppImage](https://github.com/RealBigFun/another-one/releases/latest/download/AnotherOne-linux-x86_64-6ad0fb762fee478f2220e356b1bbe72848a4fabb.AppImage)
+- [macOS Apple Silicon DMG](https://github.com/RealBigFun/another-one/releases/latest/download/AnotherOne-macos-aarch64.dmg)
+- [macOS Intel DMG](https://github.com/RealBigFun/another-one/releases/latest/download/AnotherOne-macos-x86_64.dmg)
+- [Linux x86_64 AppImage](https://github.com/RealBigFun/another-one/releases/latest/download/AnotherOne-linux-x86_64.AppImage)
 
 ## Development
 

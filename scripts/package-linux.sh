@@ -242,7 +242,7 @@ if [[ -n "$RELEASE_ID" ]]; then
     arm64) ARCH_LABEL="aarch64" ;;
     *) ARCH_LABEL="$ARCH" ;;
   esac
-  RELEASE_APPIMAGE="$PACKAGE_DIR/${ARTIFACT_PREFIX}-linux-${ARCH_LABEL}-${RELEASE_ID}.AppImage"
+  RELEASE_APPIMAGE="$PACKAGE_DIR/${ARTIFACT_PREFIX}-linux-${ARCH_LABEL}.AppImage"
   cp -f "$APPIMAGE_OUT" "$RELEASE_APPIMAGE"
   chmod +x "$RELEASE_APPIMAGE"
   echo "Release-named copy: $RELEASE_APPIMAGE"
