@@ -8,9 +8,10 @@ use gpui::{hsla, rgb, Hsla, Window, WindowAppearance};
 
 use crate::project_store::ThemeMode;
 
-/// Globally-visible resolved terminal theme. Updated by the render path so
-/// the alacritty-backed cell renderer (which doesn't have access to the
-/// `Window` / `App`) can pick the right default fg/bg without plumbing.
+/// Globally-visible resolved app theme. Updated by the render path so
+/// code that doesn't have access to the `Window` / `App` can still resolve
+/// `ThemeMode::System` consistently with the current OS appearance. The
+/// alacritty-backed cell renderer also uses this to pick default fg/bg colors.
 /// 0 = Dark (default), 1 = Light.
 static TERMINAL_THEME: AtomicU8 = AtomicU8::new(0);
 
@@ -121,12 +122,18 @@ pub fn app_theme(window: &Window, mode: ThemeMode) -> AppTheme {
 }
 
 /// Theme for render paths that do not currently receive a Window. `System`
-/// conservatively keeps the existing dark styling; explicit Light/Dark follow
-/// the user's selection.
+/// follows the most recently resolved app theme, which the main render path
+/// updates from the OS appearance before rendering child content.
 pub fn app_theme_for_preference(mode: ThemeMode) -> AppTheme {
-    match mode {
-        ThemeMode::Light => light_theme(),
-        ThemeMode::System | ThemeMode::Dark => dark_theme(),
+    let resolved = match mode {
+        ThemeMode::Light => ResolvedTheme::Light,
+        ThemeMode::Dark => ResolvedTheme::Dark,
+        ThemeMode::System => current_terminal_theme(),
+    };
+
+    match resolved {
+        ResolvedTheme::Light => light_theme(),
+        ResolvedTheme::Dark => dark_theme(),
     }
 }
 
