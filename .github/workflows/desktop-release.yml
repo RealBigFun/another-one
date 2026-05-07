@@ -264,16 +264,21 @@ jobs:
           python3 scripts/release/sign_manifest.py \
             --manifest "${{ steps.stage.outputs.release_dir }}/latest.json" \
             --signature "${{ steps.stage.outputs.release_dir }}/latest.json.sig"
-      - name: Publish to public release repo
+      - name: Publish to this repository release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ANOTHER_ONE_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.identity.outputs.release_name }}
         run: |
           set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "ANOTHER_ONE_RELEASE_TOKEN secret is not set." >&2
+            exit 1
+          fi
           RELEASE_DIR="${{ steps.stage.outputs.release_dir }}"
           gh release create "$RELEASE_TAG" \
             --repo "$RELEASE_REPO" \
+            --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
             --notes "Automated release from ${GITHUB_SHA}." \
             "$RELEASE_DIR"/AnotherOne-* \
