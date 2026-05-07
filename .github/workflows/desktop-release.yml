@@ -43,10 +43,10 @@ jobs:
           COMMIT_SHA="${GITHUB_SHA}"
           SHORT_SHA="${GITHUB_SHA::7}"
           RELEASE_ID="${COMMIT_SHA}"
-          RELEASE_TAG="desktop-${COMMIT_SHA}"
-          RELEASE_NAME="AnotherOne Desktop ${SHORT_SHA}"
           CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' app/Cargo.toml)"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          RELEASE_TAG="v${CARGO_VERSION}"
+          RELEASE_NAME="AnotherOne Desktop v${CARGO_VERSION}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           {
             echo "commit_sha=${COMMIT_SHA}"
@@ -278,6 +278,8 @@ jobs:
           GH_TOKEN: ${{ secrets.ANOTHER_ONE_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.identity.outputs.release_name }}
+          CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
+          BUILD_NUMBER: ${{ needs.identity.outputs.build_number }}
         run: |
           set -euo pipefail
           if [[ -z "${GH_TOKEN:-}" ]]; then
@@ -289,7 +291,7 @@ jobs:
             --repo "$RELEASE_REPO" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
-            --notes "Automated release from ${GITHUB_SHA}." \
+            --notes "AnotherOne Desktop v${CARGO_VERSION} (build ${BUILD_NUMBER}) — ${GITHUB_SHA}." \
             "$RELEASE_DIR"/AnotherOne-* \
             "$RELEASE_DIR"/SHA256SUMS \
             "$RELEASE_DIR"/latest.json \
