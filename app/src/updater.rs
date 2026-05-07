@@ -64,7 +64,7 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// `ANOTHER_ONE_UPDATE_MANIFEST_URL` env var at build time so we
 /// don't have to recompile when the public release repo moves.
 const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/RealBigFun/another-one-releases/releases/latest/download/latest.json";
+    "https://github.com/RealBigFun/another-one/releases/latest/download/latest.json";
 
 /// Build-time-injected manifest URL. Falls back to
 /// [`DEFAULT_MANIFEST_URL`] when unset.
@@ -132,8 +132,8 @@ impl BuildIdentity {
     }
 }
 
-/// Deserialized `latest.json` payload. Field set matches the
-/// schema in `docs/plans/desktop-releases-and-updates.md`.
+/// Deserialized `latest.json` payload. This type is the release
+/// manifest schema consumed by the updater.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UpdateManifest {
     pub schema_version: u32,

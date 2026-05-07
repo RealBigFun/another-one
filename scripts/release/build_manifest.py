@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Generate the `latest.json` update manifest for a desktop release.
 
-The schema lives in `docs/plans/desktop-releases-and-updates.md`
-and is consumed by `desktop/src/updater.rs`. CI runs this from
-`.github/workflows/desktop-release.yml` after the per-platform
-build jobs have uploaded their artifacts into a single staging
-directory.
+This script emits the schema consumed by `app/src/updater.rs`. CI runs
+it from `.github/workflows/desktop-release.yml` after the per-platform
+build jobs have uploaded their artifacts into a single staging directory.
 """
 
 from __future__ import annotations

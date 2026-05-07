@@ -1,11 +1,11 @@
 name: Desktop release
 
-# Each pushed tag (e.g. `v1.2.3`) produces a public release in the
-# `another-one-releases` repo: a DMG and updater payload for macOS
-# (per arch), an AppImage for Linux x86_64, a SHA256SUMS file, a
-# signed `latest.json` manifest, and the matching `latest.json.sig`.
-# The desktop app polls the resulting GitHub Release URL on a 10
-# minute cadence (see `app/src/updater.rs`).
+# Each pushed tag (e.g. `v1.2.3`) produces a GitHub Release in this
+# repository: a DMG and updater payload for macOS (per arch), an
+# AppImage for Linux x86_64, a SHA256SUMS file, a signed `latest.json`
+# manifest, and the matching `latest.json.sig`. The desktop app polls
+# this repository's latest release URL on a 10 minute cadence (see
+# `app/src/updater.rs`).
 
 on:
   push:
@@ -14,10 +14,10 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write
 
 env:
-  RELEASE_REPO: ${{ vars.ANOTHER_ONE_RELEASES_REPO || 'RealBigFun/another-one-releases' }}
+  RELEASE_REPO: ${{ github.repository }}
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
@@ -266,15 +266,11 @@ jobs:
             --signature "${{ steps.stage.outputs.release_dir }}/latest.json.sig"
       - name: Publish to public release repo
         env:
-          GH_TOKEN: ${{ secrets.ANOTHER_ONE_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.identity.outputs.release_name }}
         run: |
           set -euo pipefail
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "ANOTHER_ONE_RELEASES_TOKEN secret is not set." >&2
-            exit 1
-          fi
           RELEASE_DIR="${{ steps.stage.outputs.release_dir }}"
           gh release create "$RELEASE_TAG" \
             --repo "$RELEASE_REPO" \
