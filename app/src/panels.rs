@@ -3,7 +3,7 @@
 use gpui::{
     canvas, div, fill, hsla, outline, point, prelude::*, px, rems, size, svg, App, BorderStyle,
     Bounds, ClipboardItem, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Render, ScrollWheelEvent, SharedString, Window,
+    Pixels, Render, ScrollWheelEvent, SharedString, TextRun, Window,
 };
 
 use crate::agent_icons::branded_icon;
@@ -1275,6 +1275,7 @@ impl WorkspacePane {
                             paint_terminal_snapshot(
                                 bounds,
                                 &canvas_snapshot,
+                                &app_theme,
                                 window,
                                 cx,
                                 padding,
@@ -1615,9 +1616,35 @@ where
     item.on_mouse_down(MouseButton::Left, on_click)
 }
 
+fn light_terminal_paint_background(color: gpui::Hsla, app_theme: &AppTheme) -> gpui::Hsla {
+    if app_theme.resolved != theme::ResolvedTheme::Light || color.l > 0.22 {
+        return color;
+    }
+
+    if color.s < 0.10 {
+        gpui::rgb(0xe5e7eb).into()
+    } else if color.h < 0.06 || color.h > 0.94 {
+        app_theme.error.bg
+    } else if (0.20..=0.48).contains(&color.h) {
+        app_theme.success.bg
+    } else if (0.50..=0.70).contains(&color.h) {
+        app_theme.info.bg
+    } else {
+        color
+    }
+}
+
+fn light_terminal_paint_text_run(mut run: TextRun, app_theme: &AppTheme) -> TextRun {
+    if app_theme.resolved == theme::ResolvedTheme::Light && run.color.l < 0.12 && run.color.s < 0.20 {
+        run.color = app_theme.text_primary;
+    }
+    run
+}
+
 fn paint_terminal_snapshot(
     bounds: Bounds<Pixels>,
     snapshot: &TerminalSurfaceSnapshot,
+    app_theme: &AppTheme,
     window: &mut Window,
     cx: &mut App,
     padding: Pixels,
@@ -1638,7 +1665,7 @@ fn paint_terminal_snapshot(
                     point(left, top),
                     size(cell_width * span.width as f32, cell_height),
                 ),
-                span.color,
+                light_terminal_paint_background(span.color, app_theme),
             ));
         }
     }
@@ -1682,7 +1709,7 @@ fn paint_terminal_snapshot(
             .shape_line(
                 run.text.clone().into(),
                 font_size,
-                std::slice::from_ref(&run.style),
+                &[light_terminal_paint_text_run(run.style.clone(), app_theme)],
                 Some(cell_width),
             )
             .paint(

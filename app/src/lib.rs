@@ -38,6 +38,7 @@ mod right_sidebar;
 mod settings_page;
 mod shortcuts;
 mod terminal_runtime;
+mod terminal_theme;
 mod text_edit;
 mod theme;
 mod titlebar;

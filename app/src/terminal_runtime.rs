@@ -922,6 +922,7 @@ fn resolve_cell_style(
     if cell.flags.contains(Flags::HIDDEN) {
         foreground = background;
     } else {
+        (foreground, background) = normalize_light_terminal_reverse_bar(foreground, background);
         foreground = ensure_light_terminal_contrast(foreground, background);
     }
 
@@ -1033,101 +1034,16 @@ fn resolve_indexed_color(index: u8, colors: &alacritty_terminal::term::color::Co
 }
 
 fn default_named_color(named: NamedColor) -> Rgb {
-    match crate::theme::current_terminal_theme() {
-        crate::theme::ResolvedTheme::Light => default_light_named_color(named),
-        crate::theme::ResolvedTheme::Dark => default_dark_named_color(named),
-    }
-}
-
-fn default_dark_named_color(named: NamedColor) -> Rgb {
-    match named {
-        NamedColor::Black => rgb_to_vte(0x1f242d),
-        NamedColor::Red => rgb_to_vte(0xe06c75),
-        NamedColor::Green => rgb_to_vte(0x98c379),
-        NamedColor::Yellow => rgb_to_vte(0xe5c07b),
-        NamedColor::Blue => rgb_to_vte(0x61afef),
-        NamedColor::Magenta => rgb_to_vte(0xc678dd),
-        NamedColor::Cyan => rgb_to_vte(0x56b6c2),
-        NamedColor::White => rgb_to_vte(0xd7dae0),
-        NamedColor::BrightBlack => rgb_to_vte(0x5c6370),
-        NamedColor::BrightRed => rgb_to_vte(0xf28b95),
-        NamedColor::BrightGreen => rgb_to_vte(0xb8db87),
-        NamedColor::BrightYellow => rgb_to_vte(0xf2d48f),
-        NamedColor::BrightBlue => rgb_to_vte(0x8fc7ff),
-        NamedColor::BrightMagenta => rgb_to_vte(0xd7a8ff),
-        NamedColor::BrightCyan => rgb_to_vte(0x7fd7e6),
-        NamedColor::BrightWhite => rgb_to_vte(0xffffff),
-        NamedColor::Foreground => hsla_to_vte(default_foreground_color()),
-        NamedColor::Background => hsla_to_vte(default_background_color()),
-        NamedColor::Cursor => hsla_to_vte(default_foreground_color()),
-        NamedColor::DimBlack => scale_rgb(default_dark_named_color(NamedColor::Black), 0.72),
-        NamedColor::DimRed => scale_rgb(default_dark_named_color(NamedColor::Red), 0.72),
-        NamedColor::DimGreen => scale_rgb(default_dark_named_color(NamedColor::Green), 0.72),
-        NamedColor::DimYellow => scale_rgb(default_dark_named_color(NamedColor::Yellow), 0.72),
-        NamedColor::DimBlue => scale_rgb(default_dark_named_color(NamedColor::Blue), 0.72),
-        NamedColor::DimMagenta => scale_rgb(default_dark_named_color(NamedColor::Magenta), 0.72),
-        NamedColor::DimCyan => scale_rgb(default_dark_named_color(NamedColor::Cyan), 0.72),
-        NamedColor::DimWhite => scale_rgb(default_dark_named_color(NamedColor::White), 0.72),
-        NamedColor::BrightForeground => rgb_to_vte(0xffffff),
-        NamedColor::DimForeground => scale_rgb(hsla_to_vte(default_foreground_color()), 0.72),
-    }
-}
-
-fn default_light_named_color(named: NamedColor) -> Rgb {
-    match named {
-        // GitHub-ish light terminal palette. Importantly, ANSI white is
-        // *not* literal white on a light default background; many TUIs use
-        // white/bright-white as emphasis assuming a dark terminal.
-        NamedColor::Black => rgb_to_vte(0x24292f),
-        NamedColor::Red => rgb_to_vte(0xcf222e),
-        NamedColor::Green => rgb_to_vte(0x1a7f37),
-        NamedColor::Yellow => rgb_to_vte(0x9a6700),
-        NamedColor::Blue => rgb_to_vte(0x0969da),
-        NamedColor::Magenta => rgb_to_vte(0x8250df),
-        NamedColor::Cyan => rgb_to_vte(0x1b7f83),
-        NamedColor::White => rgb_to_vte(0x57606a),
-        NamedColor::BrightBlack => rgb_to_vte(0x6e7781),
-        NamedColor::BrightRed => rgb_to_vte(0xa40e26),
-        NamedColor::BrightGreen => rgb_to_vte(0x116329),
-        NamedColor::BrightYellow => rgb_to_vte(0x7d4e00),
-        NamedColor::BrightBlue => rgb_to_vte(0x0550ae),
-        NamedColor::BrightMagenta => rgb_to_vte(0x6639ba),
-        NamedColor::BrightCyan => rgb_to_vte(0x1f6f78),
-        NamedColor::BrightWhite => rgb_to_vte(0x24292f),
-        NamedColor::Foreground => hsla_to_vte(default_foreground_color()),
-        NamedColor::Background => hsla_to_vte(default_background_color()),
-        NamedColor::Cursor => hsla_to_vte(default_foreground_color()),
-        NamedColor::DimBlack => scale_rgb(default_light_named_color(NamedColor::Black), 0.72),
-        NamedColor::DimRed => scale_rgb(default_light_named_color(NamedColor::Red), 0.72),
-        NamedColor::DimGreen => scale_rgb(default_light_named_color(NamedColor::Green), 0.72),
-        NamedColor::DimYellow => scale_rgb(default_light_named_color(NamedColor::Yellow), 0.72),
-        NamedColor::DimBlue => scale_rgb(default_light_named_color(NamedColor::Blue), 0.72),
-        NamedColor::DimMagenta => scale_rgb(default_light_named_color(NamedColor::Magenta), 0.72),
-        NamedColor::DimCyan => scale_rgb(default_light_named_color(NamedColor::Cyan), 0.72),
-        NamedColor::DimWhite => scale_rgb(default_light_named_color(NamedColor::White), 0.72),
-        NamedColor::BrightForeground => hsla_to_vte(default_foreground_color()),
-        NamedColor::DimForeground => scale_rgb(hsla_to_vte(default_foreground_color()), 0.72),
-    }
+    crate::terminal_theme::default_named_color(crate::theme::current_terminal_theme(), named)
 }
 
 fn default_indexed_color(index: u8) -> Rgb {
     match index {
-        0 => default_named_color(NamedColor::Black),
-        1 => default_named_color(NamedColor::Red),
-        2 => default_named_color(NamedColor::Green),
-        3 => default_named_color(NamedColor::Yellow),
-        4 => default_named_color(NamedColor::Blue),
-        5 => default_named_color(NamedColor::Magenta),
-        6 => default_named_color(NamedColor::Cyan),
-        7 => default_named_color(NamedColor::White),
-        8 => default_named_color(NamedColor::BrightBlack),
-        9 => default_named_color(NamedColor::BrightRed),
-        10 => default_named_color(NamedColor::BrightGreen),
-        11 => default_named_color(NamedColor::BrightYellow),
-        12 => default_named_color(NamedColor::BrightBlue),
-        13 => default_named_color(NamedColor::BrightMagenta),
-        14 => default_named_color(NamedColor::BrightCyan),
-        15 => default_named_color(NamedColor::BrightWhite),
+        0..=15 => crate::terminal_theme::default_indexed_color(
+            crate::theme::current_terminal_theme(),
+            index,
+        )
+        .unwrap_or_else(|| default_named_color(NamedColor::Foreground)),
         16..=231 => {
             let index = index - 16;
             let red = index / 36;
@@ -1159,6 +1075,35 @@ fn default_foreground_color() -> Hsla {
     crate::theme::terminal_default_foreground()
 }
 
+fn normalize_light_terminal_reverse_bar(foreground: Hsla, background: Hsla) -> (Hsla, Hsla) {
+    if crate::theme::current_terminal_theme() != crate::theme::ResolvedTheme::Light {
+        return (foreground, background);
+    }
+
+    let fg = hsla_to_vte(foreground);
+    let bg = hsla_to_vte(background);
+
+    // Some CLIs (Claude Code included) draw selected/input rows with an
+    // explicit dark reverse-video bar and bright text. Blank cells in the
+    // same bar often keep the dark background without carrying the bright
+    // foreground, so normalize the whole near-black row accent into a native
+    // light-mode highlight while leaving coloured backgrounds alone.
+    if relative_luminance(bg) <= 0.08 && is_neutral_rgb(bg) {
+        let foreground = if relative_luminance(fg) >= 0.72 {
+            default_foreground_color()
+        } else {
+            foreground
+        };
+        return (foreground, gpui::rgb(0xe5e7eb).into());
+    }
+
+    if let Some(background) = light_semantic_background_for_dark_ansi(bg) {
+        return (foreground, background);
+    }
+
+    (foreground, background)
+}
+
 fn ensure_light_terminal_contrast(foreground: Hsla, background: Hsla) -> Hsla {
     if crate::theme::current_terminal_theme() != crate::theme::ResolvedTheme::Light {
         return foreground;
@@ -1182,6 +1127,30 @@ fn rgb_near(a: Rgb, b: Rgb, tolerance: u8) -> bool {
     a.r.abs_diff(b.r) <= tolerance
         && a.g.abs_diff(b.g) <= tolerance
         && a.b.abs_diff(b.b) <= tolerance
+}
+
+fn is_neutral_rgb(rgb: Rgb) -> bool {
+    rgb.r.abs_diff(rgb.g) <= 8 && rgb.g.abs_diff(rgb.b) <= 8 && rgb.r.abs_diff(rgb.b) <= 8
+}
+
+fn light_semantic_background_for_dark_ansi(rgb: Rgb) -> Option<Hsla> {
+    if relative_luminance(rgb) > 0.18 || is_neutral_rgb(rgb) {
+        return None;
+    }
+
+    let red = i16::from(rgb.r);
+    let green = i16::from(rgb.g);
+    let blue = i16::from(rgb.b);
+
+    if red > green + 12 && red > blue + 12 {
+        Some(gpui::rgb(0xffebe9).into())
+    } else if green > red + 12 && green > blue + 12 {
+        Some(gpui::rgb(0xdafbe1).into())
+    } else if blue > red + 12 && blue > green + 12 {
+        Some(gpui::rgb(0xddf4ff).into())
+    } else {
+        None
+    }
 }
 
 fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {
