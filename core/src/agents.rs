@@ -6,9 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 use crate::terminal_launch::{
     create_cursor_chat, pi_session_capture_extension_path, prepare_pi_session_capture,
     resolve_claude_session, resolve_codex_home_override, resolve_pi_session, DiscoveryKind,
@@ -68,26 +65,12 @@ impl AgentProviderKind {
 }
 
 pub fn agent_executable_available(provider: AgentProviderKind) -> bool {
-    command_available_on_path(provider.command())
-}
-
-fn command_available_on_path(command: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-
-    std::env::split_paths(&paths).any(|dir| {
-        let candidate = dir.join(command);
-        is_executable_file(&candidate)
-    })
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-
-    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    // Packaged macOS apps launched from Finder get a minimal environment and
+    // often miss the user's shell-initialized PATH. Use the same augmented
+    // command PATH that terminal launches use so Settings availability matches
+    // what a spawned agent tab can actually run.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    crate::command_env::command_available(provider.command(), &cwd)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
