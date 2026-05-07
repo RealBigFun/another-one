@@ -48,7 +48,12 @@ impl HeadlessPlatform for MacosPlatform {
             OpenInAppKind::VsCode => {
                 macos_app_exists("Visual Studio Code") || command_exists(&["code"])
             }
+            OpenInAppKind::PhpStorm => {
+                macos_app_exists("PhpStorm") || command_exists(&["phpstorm"])
+            }
             OpenInAppKind::Ghostty => macos_app_exists("Ghostty") || command_exists(&["ghostty"]),
+            OpenInAppKind::WezTerm => macos_app_exists("WezTerm") || command_exists(&["wezterm"]),
+            OpenInAppKind::SystemTerminal => macos_app_exists("Terminal"),
             OpenInAppKind::FileManager => macos_app_exists("Finder"),
         }
     }
@@ -65,8 +70,17 @@ impl HeadlessPlatform for MacosPlatform {
             OpenInAppKind::VsCode => {
                 command.args(["-a", "Visual Studio Code"]).arg(path);
             }
+            OpenInAppKind::PhpStorm => {
+                command.args(["-a", "PhpStorm"]).arg(path);
+            }
             OpenInAppKind::Ghostty => {
                 command.args(["-a", "Ghostty"]).arg(path);
+            }
+            OpenInAppKind::WezTerm => {
+                command.args(["-a", "WezTerm", "--args", "start", "--cwd"]).arg(path);
+            }
+            OpenInAppKind::SystemTerminal => {
+                command.args(["-a", "Terminal"]).arg(path);
             }
             OpenInAppKind::FileManager => {
                 command.arg(path);
@@ -86,7 +100,9 @@ fn macos_app_candidates(app_name: &str) -> Vec<PathBuf> {
     let bundle_name = format!("{app_name}.app");
     let mut candidates = vec![
         PathBuf::from("/Applications").join(&bundle_name),
+        PathBuf::from("/Applications/Utilities").join(&bundle_name),
         PathBuf::from("/System/Applications").join(&bundle_name),
+        PathBuf::from("/System/Applications/Utilities").join(&bundle_name),
         PathBuf::from("/System/Library/CoreServices").join(&bundle_name),
     ];
 

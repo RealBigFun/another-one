@@ -22,17 +22,23 @@ pub enum OpenInAppKind {
     Cursor,
     Zed,
     VsCode,
+    PhpStorm,
     Ghostty,
+    WezTerm,
+    SystemTerminal,
     FileManager,
 }
 
 impl OpenInAppKind {
-    pub const fn all() -> [Self; 5] {
+    pub const fn all() -> [Self; 8] {
         [
             Self::Cursor,
             Self::Zed,
             Self::VsCode,
+            Self::PhpStorm,
             Self::Ghostty,
+            Self::WezTerm,
+            Self::SystemTerminal,
             Self::FileManager,
         ]
     }
@@ -42,7 +48,10 @@ impl OpenInAppKind {
             Self::Cursor => "Cursor",
             Self::Zed => "Zed",
             Self::VsCode => "VS Code",
+            Self::PhpStorm => "PhpStorm",
             Self::Ghostty => "Ghostty",
+            Self::WezTerm => "WezTerm",
+            Self::SystemTerminal => system_terminal_label(),
             Self::FileManager => file_manager_label(),
         }
     }
@@ -52,7 +61,10 @@ impl OpenInAppKind {
             Self::Cursor => "Open the project directory in Cursor.",
             Self::Zed => "Open the project directory in Zed.",
             Self::VsCode => "Open the project directory in VS Code.",
+            Self::PhpStorm => "Open the project directory in PhpStorm.",
             Self::Ghostty => "Open the project directory in Ghostty.",
+            Self::WezTerm => "Open the project directory in WezTerm.",
+            Self::SystemTerminal => system_terminal_description(),
             Self::FileManager => file_manager_description(),
         }
     }
@@ -62,7 +74,10 @@ impl OpenInAppKind {
             Self::Cursor => "assets/icons/open_in__cursor.svg",
             Self::Zed => "assets/icons/open_in__zed.svg",
             Self::VsCode => "assets/icons/open_in__vscode.svg",
+            Self::PhpStorm => "assets/icons/icons__file_icons__php.svg",
             Self::Ghostty => "assets/icons/open_in__ghostty.svg",
+            Self::WezTerm => "assets/icons/open_in__wezterm.svg",
+            Self::SystemTerminal => "assets/icons/icons__terminal.svg",
             Self::FileManager => "assets/icons/open_in__folder_closed.svg",
         }
     }
@@ -72,7 +87,10 @@ impl OpenInAppKind {
             Self::Cursor => "cursor",
             Self::Zed => "zed",
             Self::VsCode => "vscode",
+            Self::PhpStorm => "phpstorm",
             Self::Ghostty => "ghostty",
+            Self::WezTerm => "wezterm",
+            Self::SystemTerminal => "system-terminal",
             Self::FileManager => "file-manager",
         }
     }
@@ -93,6 +111,60 @@ pub fn effective_enabled_open_in_apps(
         .filter(|app| available.contains(app))
         .filter(|app| configured.is_none_or(|enabled| enabled.contains(app)))
         .collect()
+}
+
+const fn system_terminal_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "Terminal"
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        "System Terminal"
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        "Windows Terminal"
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        "Terminal"
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        "Terminal"
+    }
+}
+
+const fn system_terminal_description() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "Open the project directory in macOS Terminal."
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        "Open the project directory in your system terminal."
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        "Open the project directory in Windows Terminal."
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        "Open the project directory in Terminal."
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        "Open the project directory in Terminal."
+    }
 }
 
 const fn file_manager_label() -> &'static str {
