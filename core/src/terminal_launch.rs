@@ -854,14 +854,51 @@ pub(crate) fn prepare_pi_session_capture(env: &HarnessEnv) -> anyhow::Result<PiS
     })
 }
 
+/// Source of truth for the extension contents — embedded at compile time
+/// so release builds don't depend on the workspace path that produced them
+/// (CI runners, packaged `.app`s, end-user installs, etc.).
+const PI_SESSION_START_EXTENSION_SRC: &str =
+    include_str!("../../scripts/pi-session-start-extension.ts");
+
 pub(crate) fn pi_session_capture_extension_path() -> PathBuf {
-    // `terminal_launch.rs` lives in the `core` crate, but the Pi extension is
-    // checked into the workspace-level `scripts/` directory.
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Dev workflow: when the workspace-checked-in script is present at the
+    // path baked in by the compiler, prefer it so edits to the .ts file
+    // take effect without a rebuild. This is the only path that exists for
+    // tests run inside the source tree.
+    let workspace_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
         .join("scripts")
-        .join("pi-session-start-extension.ts")
+        .join("pi-session-start-extension.ts");
+    if workspace_path.is_file() {
+        return workspace_path;
+    }
+
+    // Release / packaged build: the compile-time path lives on the build
+    // machine (`/Users/runner/...` for CI), so we materialize the embedded
+    // copy into a stable per-user location and hand Pi that path. Falling
+    // back to a temp dir keeps things working even if the config dir is
+    // unavailable.
+    let cache_dir = dirs::config_dir()
+        .map(|d| d.join("another-one"))
+        .unwrap_or_else(std::env::temp_dir);
+    let target = cache_dir.join("pi-session-start-extension.ts");
+    let needs_write = match fs::read_to_string(&target) {
+        Ok(existing) => existing != PI_SESSION_START_EXTENSION_SRC,
+        Err(_) => true,
+    };
+    if needs_write {
+        if let Err(err) = fs::create_dir_all(&cache_dir)
+            .and_then(|_| fs::write(&target, PI_SESSION_START_EXTENSION_SRC))
+        {
+            eprintln!(
+                "another-one: failed to materialize pi session-start extension at {}: {err}",
+                target.display()
+            );
+            return workspace_path;
+        }
+    }
+    target
 }
 
 pub(crate) fn create_cursor_chat(env: &HarnessEnv, cwd: &Path) -> anyhow::Result<String> {

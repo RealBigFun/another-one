@@ -10033,8 +10033,23 @@ impl AnotherOneApp {
         while let Some(event) = self.updater.try_recv() {
             match event {
                 crate::updater::UpdaterEvent::StateChanged(state) => {
+                    let installing = matches!(state, crate::updater::UpdateState::Installing);
                     self.updater_state = state;
                     should_notify = true;
+                    if installing {
+                        // The install helper is waiting for our
+                        // PID to exit before it swaps the
+                        // bundle/AppImage and relaunches.
+                        // Schedule a quit so the user doesn't
+                        // have to close the app manually.
+                        cx.spawn(async move |_, cx| {
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(250))
+                                .await;
+                            let _ = cx.update(|cx| cx.quit());
+                        })
+                        .detach();
+                    }
                 }
                 crate::updater::UpdaterEvent::Notice { kind, message } => match kind {
                     crate::updater::NoticeKind::Success => self.show_success_toast(message, cx),
