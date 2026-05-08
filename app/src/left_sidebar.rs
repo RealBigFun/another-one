@@ -937,7 +937,8 @@ impl AnotherOneApp {
                 cx.stop_propagation();
                 return true;
             }
-            return false;
+            // No selection: fall through so Ctrl+C is forwarded to the pty
+            // as 0x03 (SIGINT / pi's "clear editor; twice to exit" signal).
         }
 
         if is_clipboard_combo && ev.keystroke.key.as_str() == "v" {
@@ -3302,6 +3303,20 @@ mod tests {
         assert_eq!(
             terminal_key_bytes(&key_event("backspace", None, Modifiers::default())),
             Some(vec![0x7f])
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_ctrl_c_as_etx() {
+        // Ctrl+C must encode to 0x03 so pi's TUI can implement its
+        // "clear editor, press twice to exit" behavior inside the ADE
+        // terminal. Regression test for the fall-through fix in
+        // handle_terminal_key_down when no selection is present.
+        let mut modifiers = Modifiers::default();
+        modifiers.control = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("c", Some("c"), modifiers)),
+            Some(vec![0x03])
         );
     }
 
