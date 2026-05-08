@@ -124,6 +124,26 @@ const TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 /// in-flight memory in the tens of MiB.
 const WARM_TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 
+/// Ceiling on how many `Output` bytes the GPUI main thread will
+/// parse + render within a single drain tick before yielding back
+/// to the GPUI run loop. The drain used to greedily consume every
+/// pending reply, so a CDP-sized burst (several MiB across tens of
+/// chunks) would pay the full alacritty VT parse cost on one tick
+/// and stall the main thread for hundreds of ms. See #127 / the
+/// #128 watchdog data that motivated it.
+///
+/// 64 KiB keeps a single drain tick comfortably under one 60 Hz
+/// frame on the parse hot path while still clearing a typical
+/// interactive burst (`ls -la`, a prompt redraw, a test summary)
+/// in one tick. Larger values (256 KiB was the first pass) still
+/// blew the frame budget once a burst was dense enough. The
+/// leftover sits in the bounded channel and gets picked up on the
+/// next refresh tick (16 ms fast / 250 ms idle); the channel cap
+/// absorbs many ticks of backlog before backpressuring the reader,
+/// which is the intended behavior when the child is outpacing the
+/// UI (see [`TERMINAL_LAUNCH_QUEUE_CAP`]'s comment).
+const DRAIN_OUTPUT_BYTE_CAP: usize = 64 * 1024;
+
 fn new_tab_seed_agent_id(
     state: Option<&SectionState>,
     default_agent_id: Option<&str>,
@@ -5715,6 +5735,12 @@ impl AnotherOneApp {
         // once at the end. At 60 Hz drain frequency this caps snapshot
         // work at 60 rebuilds/sec even under sustained output storms.
         let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        // Bounded per-tick output budget. See
+        // [`DRAIN_OUTPUT_BYTE_CAP`] for the why; once we've parsed
+        // this many `Output` bytes we break out of the greedy
+        // `try_recv` loop and let GPUI repaint before the next
+        // tick picks up the remainder.
+        let mut drained_output_bytes: usize = 0;
 
         loop {
             match self.terminal_launch_receiver.try_recv() {
@@ -5752,6 +5778,7 @@ impl AnotherOneApp {
                 }
                 Ok(TerminalLaunchReply::Output { key, bytes }) => {
                     crate::leakscope::note_drain_output(bytes.len());
+                    drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
@@ -5765,14 +5792,20 @@ impl AnotherOneApp {
                         // Mirror the chunk to MCP subscribers. Each
                         // session has its own broadcast::Receiver so
                         // a slow consumer doesn't stall the daemon's
-                        // own output processing.
-                        self.emit_client_event(ClientEvent::Output {
-                            tab_id: key.tab_id.clone(),
-                            bytes: bytes.clone(),
-                        });
+                        // own output processing. `maybe_emit_tab_output`
+                        // short-circuits when no one's listening — the
+                        // common case — to avoid a per-chunk clone on
+                        // the GPUI thread. See #127.
+                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
                         updated = true;
+                    }
+                    if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
+                        // Yield back to the GPUI run loop. Remaining
+                        // replies stay in the bounded channel and
+                        // will be picked up on the next drain tick.
+                        break;
                     }
                 }
                 Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
@@ -5888,6 +5921,11 @@ impl AnotherOneApp {
         // thread, so it contributes to lockup diagnostics too.
         let _drain_guard = crate::leakscope::drain_tick_guard();
         let mut updated = false;
+        // Same byte budget as the hot drain — see
+        // [`DRAIN_OUTPUT_BYTE_CAP`]. Warm and hot drains both run
+        // on the GPUI main thread so they share the same frame-time
+        // budget regardless of which channel a chunk arrived on.
+        let mut drained_output_bytes: usize = 0;
 
         loop {
             match self.warm_terminal_launch_receiver.try_recv() {
@@ -5954,6 +5992,7 @@ impl AnotherOneApp {
                 }
                 Ok(WarmTerminalLaunchReply::Output { launch_id, bytes }) => {
                     crate::leakscope::note_drain_output(bytes.len());
+                    drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     let attached_key = self
                         .prewarmed_terminal_launches
                         .get(&launch_id)
@@ -5974,14 +6013,16 @@ impl AnotherOneApp {
                             // Same Output broadcast as the cold-path
                             // drain — warm-prewarm tabs (MCP spawn,
                             // GUI new-task fast path) also surface
-                            // their bytes to MCP subscribers.
-                            self.emit_client_event(ClientEvent::Output {
-                                tab_id: key.tab_id.clone(),
-                                bytes: bytes.clone(),
-                            });
+                            // their bytes to MCP subscribers. Guarded
+                            // on receiver_count so the no-subscriber
+                            // case skips the per-chunk clone.
+                            self.maybe_emit_tab_output(&key.tab_id, &bytes);
                             updated = true;
                         } else if self.maybe_retry_claude_restore(&key, cx) {
                             updated = true;
+                        }
+                        if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
+                            break;
                         }
                         continue;
                     }
@@ -5990,6 +6031,9 @@ impl AnotherOneApp {
                         if let Some(runtime) = launch.runtime.as_mut() {
                             let _ = runtime.apply_output(&bytes);
                         }
+                    }
+                    if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
+                        break;
                     }
                 }
                 Ok(WarmTerminalLaunchReply::SessionDiscovered { launch_id, session }) => {
@@ -6780,6 +6824,23 @@ impl AnotherOneApp {
     /// MCP session subscribes its own `broadcast::Receiver`.
     fn emit_client_event(&self, event: ClientEvent) {
         let _ = self.event_bus.send(event);
+    }
+
+    /// Specialized [`emit_client_event`] for `ClientEvent::Output`.
+    /// The hot-path drains fire this once per PTY chunk; constructing
+    /// the event cost a `tab_id.clone()` plus a `bytes.clone()` (8 KiB
+    /// each) on the GPUI main thread even when nobody was subscribed.
+    /// Most runs of the desktop app have zero MCP sessions attached,
+    /// so skipping construction when `receiver_count == 0` is a
+    /// straight main-thread win. See #127.
+    fn maybe_emit_tab_output(&self, tab_id: &str, bytes: &[u8]) {
+        if self.event_bus.receiver_count() == 0 {
+            return;
+        }
+        let _ = self.event_bus.send(ClientEvent::Output {
+            tab_id: tab_id.to_string(),
+            bytes: bytes.to_vec(),
+        });
     }
 
     /// `DaemonClient::open_task` for AnotherOneApp. Single source of
