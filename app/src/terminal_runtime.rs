@@ -9,7 +9,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
-use gpui::{font, px, rgb, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
+#[cfg(test)]
+use gpui::rgb;
+use gpui::{font, px, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
 use portable_pty::MasterPty;
 
 // Shared with `core/src/terminal_types.rs` — the launcher side also
@@ -396,6 +398,13 @@ impl LiveTerminalRuntime {
         self.cached_snapshot.clone()
     }
 
+    /// Force the next snapshot to rebuild even if the terminal grid has not
+    /// changed. Theme changes alter default fg/bg resolution without touching
+    /// alacritty's grid, so cached snapshots need explicit invalidation.
+    pub fn invalidate_snapshot(&mut self) {
+        self.dirty = true;
+    }
+
     /// Does this runtime have accumulated output the snapshot hasn't
     /// caught up with yet? Used by the drain loop to decide whether a
     /// focused-but-previously-backgrounded tab needs a rebuild this tick.
@@ -637,6 +646,8 @@ fn build_surface_snapshot<T: EventListener>(
             let is_cursor = cursor
                 .is_some_and(|cursor| cursor.line == viewport_line && cursor.column.0 == column);
             let mut cell_style = resolve_cell_style(cell, renderable.colors);
+            let has_explicit_background =
+                effective_background_color(cell) != Color::Named(NamedColor::Background);
             let chunk = cell_display_text(cell);
             let copy_text = cell_copy_text(cell);
             let cell_width = terminal_cell_width(cell);
@@ -649,6 +660,7 @@ fn build_surface_snapshot<T: EventListener>(
                 column,
                 cell_width,
                 cell_style.background,
+                has_explicit_background,
             );
             cells.push(TerminalCellSnapshot {
                 column,
@@ -665,10 +677,9 @@ fn build_surface_snapshot<T: EventListener>(
                     cell_width,
                     renderable.cursor.shape,
                     cursor_blinking,
-                    &cell_style,
                 ) {
                     if snapshot.kind == TerminalCursorKind::Block {
-                        cell_style.foreground = cell_style.background;
+                        cell_style.foreground = default_background_color();
                     }
                     cursor_snapshot = Some(snapshot);
                 }
@@ -912,8 +923,9 @@ fn maybe_push_background_span(
     column: usize,
     width: usize,
     color: Hsla,
+    has_explicit_background: bool,
 ) {
-    if color == default_background_color() {
+    if !has_explicit_background && color == default_background_color() {
         return;
     }
 
@@ -931,13 +943,20 @@ fn maybe_push_background_span(
     });
 }
 
+fn effective_background_color(cell: &alacritty_terminal::term::cell::Cell) -> Color {
+    if cell.flags.contains(Flags::INVERSE) {
+        cell.fg
+    } else {
+        cell.bg
+    }
+}
+
 fn cursor_snapshot_from_cell(
     line: usize,
     column: usize,
     width: usize,
     cursor_shape: CursorShape,
     blinking: bool,
-    cell_style: &ResolvedCellStyle,
 ) -> Option<TerminalCursorSnapshot> {
     let kind = match cursor_shape {
         CursorShape::Block => TerminalCursorKind::Block,
@@ -952,7 +971,7 @@ fn cursor_snapshot_from_cell(
         column,
         width,
         kind,
-        color: cell_style.foreground,
+        color: crate::theme::terminal_default_cursor(),
         blinking,
     })
 }
@@ -961,6 +980,7 @@ fn resolve_cell_style(
     cell: &alacritty_terminal::term::cell::Cell,
     colors: &alacritty_terminal::term::color::Colors,
 ) -> ResolvedCellStyle {
+    let raw_foreground = cell.fg;
     let mut foreground = resolve_color(cell.fg, cell.flags, true, colors);
     let mut background = resolve_color(cell.bg, cell.flags, false, colors);
 
@@ -970,6 +990,13 @@ fn resolve_cell_style(
 
     if cell.flags.contains(Flags::HIDDEN) {
         foreground = background;
+    } else {
+        foreground = ensure_light_terminal_foreground_contrast(
+            foreground,
+            background,
+            matches!(raw_foreground, Color::Spec(_)),
+            crate::theme::current_terminal_theme(),
+        );
     }
 
     ResolvedCellStyle {
@@ -984,6 +1011,23 @@ fn resolve_cell_style(
                 thickness: px(1.),
                 color: Some(foreground),
             }),
+    }
+}
+
+fn ensure_light_terminal_foreground_contrast(
+    foreground: Hsla,
+    background: Hsla,
+    is_true_color: bool,
+    resolved_theme: crate::theme::ResolvedTheme,
+) -> Hsla {
+    if is_true_color || resolved_theme != crate::theme::ResolvedTheme::Light {
+        return foreground;
+    }
+
+    if background.l > 0.70 && foreground.l > 0.75 && (foreground.l - background.l).abs() < 0.24 {
+        crate::theme::terminal_foreground_for_theme(resolved_theme)
+    } else {
+        foreground
     }
 }
 
@@ -1080,57 +1124,45 @@ fn resolve_indexed_color(index: u8, colors: &alacritty_terminal::term::color::Co
 }
 
 fn default_named_color(named: NamedColor) -> Rgb {
+    let palette = current_terminal_palette();
     match named {
-        NamedColor::Black => rgb_to_vte(0x1f242d),
-        NamedColor::Red => rgb_to_vte(0xe06c75),
-        NamedColor::Green => rgb_to_vte(0x98c379),
-        NamedColor::Yellow => rgb_to_vte(0xe5c07b),
-        NamedColor::Blue => rgb_to_vte(0x61afef),
-        NamedColor::Magenta => rgb_to_vte(0xc678dd),
-        NamedColor::Cyan => rgb_to_vte(0x56b6c2),
-        NamedColor::White => rgb_to_vte(0xd7dae0),
-        NamedColor::BrightBlack => rgb_to_vte(0x5c6370),
-        NamedColor::BrightRed => rgb_to_vte(0xf28b95),
-        NamedColor::BrightGreen => rgb_to_vte(0xb8db87),
-        NamedColor::BrightYellow => rgb_to_vte(0xf2d48f),
-        NamedColor::BrightBlue => rgb_to_vte(0x8fc7ff),
-        NamedColor::BrightMagenta => rgb_to_vte(0xd7a8ff),
-        NamedColor::BrightCyan => rgb_to_vte(0x7fd7e6),
-        NamedColor::BrightWhite => rgb_to_vte(0xffffff),
-        NamedColor::Foreground => hsla_to_vte(default_foreground_color()),
-        NamedColor::Background => hsla_to_vte(default_background_color()),
-        NamedColor::Cursor => hsla_to_vte(default_foreground_color()),
-        NamedColor::DimBlack => scale_rgb(default_named_color(NamedColor::Black), 0.72),
-        NamedColor::DimRed => scale_rgb(default_named_color(NamedColor::Red), 0.72),
-        NamedColor::DimGreen => scale_rgb(default_named_color(NamedColor::Green), 0.72),
-        NamedColor::DimYellow => scale_rgb(default_named_color(NamedColor::Yellow), 0.72),
-        NamedColor::DimBlue => scale_rgb(default_named_color(NamedColor::Blue), 0.72),
-        NamedColor::DimMagenta => scale_rgb(default_named_color(NamedColor::Magenta), 0.72),
-        NamedColor::DimCyan => scale_rgb(default_named_color(NamedColor::Cyan), 0.72),
-        NamedColor::DimWhite => scale_rgb(default_named_color(NamedColor::White), 0.72),
-        NamedColor::BrightForeground => rgb_to_vte(0xffffff),
-        NamedColor::DimForeground => scale_rgb(hsla_to_vte(default_foreground_color()), 0.72),
+        NamedColor::Black => palette.normal[0],
+        NamedColor::Red => palette.normal[1],
+        NamedColor::Green => palette.normal[2],
+        NamedColor::Yellow => palette.normal[3],
+        NamedColor::Blue => palette.normal[4],
+        NamedColor::Magenta => palette.normal[5],
+        NamedColor::Cyan => palette.normal[6],
+        NamedColor::White => palette.normal[7],
+        NamedColor::BrightBlack => palette.bright[0],
+        NamedColor::BrightRed => palette.bright[1],
+        NamedColor::BrightGreen => palette.bright[2],
+        NamedColor::BrightYellow => palette.bright[3],
+        NamedColor::BrightBlue => palette.bright[4],
+        NamedColor::BrightMagenta => palette.bright[5],
+        NamedColor::BrightCyan => palette.bright[6],
+        NamedColor::BrightWhite => palette.bright[7],
+        NamedColor::Foreground => palette.foreground,
+        NamedColor::Cursor => palette.cursor,
+        NamedColor::BrightForeground => palette.bright_foreground,
+        NamedColor::Background => palette.background,
+        NamedColor::DimBlack => palette.dim[0],
+        NamedColor::DimRed => palette.dim[1],
+        NamedColor::DimGreen => palette.dim[2],
+        NamedColor::DimYellow => palette.dim[3],
+        NamedColor::DimBlue => palette.dim[4],
+        NamedColor::DimMagenta => palette.dim[5],
+        NamedColor::DimCyan => palette.dim[6],
+        NamedColor::DimWhite => palette.dim[7],
+        NamedColor::DimForeground => palette.dim_foreground,
     }
 }
 
 fn default_indexed_color(index: u8) -> Rgb {
+    let palette = current_terminal_palette();
     match index {
-        0 => default_named_color(NamedColor::Black),
-        1 => default_named_color(NamedColor::Red),
-        2 => default_named_color(NamedColor::Green),
-        3 => default_named_color(NamedColor::Yellow),
-        4 => default_named_color(NamedColor::Blue),
-        5 => default_named_color(NamedColor::Magenta),
-        6 => default_named_color(NamedColor::Cyan),
-        7 => default_named_color(NamedColor::White),
-        8 => default_named_color(NamedColor::BrightBlack),
-        9 => default_named_color(NamedColor::BrightRed),
-        10 => default_named_color(NamedColor::BrightGreen),
-        11 => default_named_color(NamedColor::BrightYellow),
-        12 => default_named_color(NamedColor::BrightBlue),
-        13 => default_named_color(NamedColor::BrightMagenta),
-        14 => default_named_color(NamedColor::BrightCyan),
-        15 => default_named_color(NamedColor::BrightWhite),
+        0..=7 => palette.normal[index as usize],
+        8..=15 => palette.bright[(index - 8) as usize],
         16..=231 => {
             let index = index - 16;
             let red = index / 36;
@@ -1155,11 +1187,11 @@ fn default_indexed_color(index: u8) -> Rgb {
 }
 
 fn default_background_color() -> Hsla {
-    rgb(0x1e1f22).into()
+    crate::theme::terminal_default_background()
 }
 
 fn default_foreground_color() -> Hsla {
-    rgb(0xd7dae0).into()
+    crate::theme::terminal_default_foreground()
 }
 
 fn window_size_from_grid(size: TerminalGridSize) -> WindowSize {
@@ -1189,63 +1221,131 @@ fn default_color_request(index: usize) -> Rgb {
     }
 
     match index {
-        x if x == NamedColor::Foreground as usize => hsla_to_vte(default_foreground_color()),
-        x if x == NamedColor::Background as usize => hsla_to_vte(default_background_color()),
-        x if x == NamedColor::Cursor as usize => hsla_to_vte(default_foreground_color()),
-        x if x == NamedColor::BrightForeground as usize => rgb_to_vte(0xffffff),
+        x if x == NamedColor::Foreground as usize => default_named_color(NamedColor::Foreground),
+        x if x == NamedColor::Background as usize => default_named_color(NamedColor::Background),
+        x if x == NamedColor::Cursor as usize => default_named_color(NamedColor::Cursor),
+        x if x == NamedColor::BrightForeground as usize => {
+            default_named_color(NamedColor::BrightForeground)
+        }
         x if x == NamedColor::DimForeground as usize => {
-            scale_rgb(hsla_to_vte(default_foreground_color()), 0.72)
+            default_named_color(NamedColor::DimForeground)
         }
-        x if x == NamedColor::DimBlack as usize => {
-            scale_rgb(default_named_color(NamedColor::Black), 0.72)
-        }
-        x if x == NamedColor::DimRed as usize => {
-            scale_rgb(default_named_color(NamedColor::Red), 0.72)
-        }
-        x if x == NamedColor::DimGreen as usize => {
-            scale_rgb(default_named_color(NamedColor::Green), 0.72)
-        }
-        x if x == NamedColor::DimYellow as usize => {
-            scale_rgb(default_named_color(NamedColor::Yellow), 0.72)
-        }
-        x if x == NamedColor::DimBlue as usize => {
-            scale_rgb(default_named_color(NamedColor::Blue), 0.72)
-        }
-        x if x == NamedColor::DimMagenta as usize => {
-            scale_rgb(default_named_color(NamedColor::Magenta), 0.72)
-        }
-        x if x == NamedColor::DimCyan as usize => {
-            scale_rgb(default_named_color(NamedColor::Cyan), 0.72)
-        }
-        x if x == NamedColor::DimWhite as usize => {
-            scale_rgb(default_named_color(NamedColor::White), 0.72)
-        }
-        _ => hsla_to_vte(default_background_color()),
+        x if x == NamedColor::DimBlack as usize => default_named_color(NamedColor::DimBlack),
+        x if x == NamedColor::DimRed as usize => default_named_color(NamedColor::DimRed),
+        x if x == NamedColor::DimGreen as usize => default_named_color(NamedColor::DimGreen),
+        x if x == NamedColor::DimYellow as usize => default_named_color(NamedColor::DimYellow),
+        x if x == NamedColor::DimBlue as usize => default_named_color(NamedColor::DimBlue),
+        x if x == NamedColor::DimMagenta as usize => default_named_color(NamedColor::DimMagenta),
+        x if x == NamedColor::DimCyan as usize => default_named_color(NamedColor::DimCyan),
+        x if x == NamedColor::DimWhite as usize => default_named_color(NamedColor::DimWhite),
+        _ => default_named_color(NamedColor::Background),
     }
 }
 
-fn scale_rgb(rgb: Rgb, factor: f32) -> Rgb {
-    Rgb {
-        r: (f32::from(rgb.r) * factor).round().clamp(0.0, 255.0) as u8,
-        g: (f32::from(rgb.g) * factor).round().clamp(0.0, 255.0) as u8,
-        b: (f32::from(rgb.b) * factor).round().clamp(0.0, 255.0) as u8,
+#[derive(Clone, Copy)]
+struct TerminalPalette {
+    background: Rgb,
+    foreground: Rgb,
+    cursor: Rgb,
+    bright_foreground: Rgb,
+    dim_foreground: Rgb,
+    normal: [Rgb; 8],
+    bright: [Rgb; 8],
+    dim: [Rgb; 8],
+}
+
+fn current_terminal_palette() -> &'static TerminalPalette {
+    terminal_palette(crate::theme::current_terminal_theme())
+}
+
+fn terminal_palette(resolved: crate::theme::ResolvedTheme) -> &'static TerminalPalette {
+    match resolved {
+        crate::theme::ResolvedTheme::Light => &AYU_LIGHT_TERMINAL,
+        crate::theme::ResolvedTheme::Dark => &AYU_DARK_TERMINAL,
     }
 }
 
-fn hsla_to_vte(color: Hsla) -> Rgb {
-    let rgba: u32 = color.to_rgb().into();
-    Rgb {
-        r: ((rgba >> 24) & 0xff) as u8,
-        g: ((rgba >> 16) & 0xff) as u8,
-        b: ((rgba >> 8) & 0xff) as u8,
-    }
-}
+const AYU_DARK_TERMINAL: TerminalPalette = TerminalPalette {
+    background: vte_rgb(0x0d1016),
+    foreground: vte_rgb(0xbfbdb6),
+    cursor: vte_rgb(0x5ac1fe),
+    bright_foreground: vte_rgb(0xbfbdb6),
+    dim_foreground: vte_rgb(0x85847f),
+    normal: [
+        vte_rgb(0x0d1016),
+        vte_rgb(0xef7177),
+        vte_rgb(0xaad84c),
+        vte_rgb(0xfeb454),
+        vte_rgb(0x5ac1fe),
+        vte_rgb(0x39bae5),
+        vte_rgb(0x95e5cb),
+        vte_rgb(0xbfbdb6),
+    ],
+    bright: [
+        vte_rgb(0x545557),
+        vte_rgb(0x83353b),
+        vte_rgb(0x567627),
+        vte_rgb(0x92582b),
+        vte_rgb(0x27618c),
+        vte_rgb(0x205a78),
+        vte_rgb(0x4c806f),
+        vte_rgb(0xfafafa),
+    ],
+    dim: [
+        vte_rgb(0x3a3b3c),
+        vte_rgb(0xa74f53),
+        vte_rgb(0x769735),
+        vte_rgb(0xb17d3a),
+        vte_rgb(0x3e87b1),
+        vte_rgb(0x2782a0),
+        vte_rgb(0x68a08e),
+        vte_rgb(0x85847f),
+    ],
+};
 
-fn rgb_to_vte(color: u32) -> Rgb {
+const AYU_LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
+    background: vte_rgb(0xfcfcfc),
+    foreground: vte_rgb(0x5c6166),
+    cursor: vte_rgb(0x3b9ee5),
+    bright_foreground: vte_rgb(0x5c6166),
+    dim_foreground: vte_rgb(0xfcfcfc),
+    normal: [
+        vte_rgb(0x5c6166),
+        vte_rgb(0xef7271),
+        vte_rgb(0x85b304),
+        vte_rgb(0xf1ad49),
+        vte_rgb(0x3b9ee5),
+        vte_rgb(0x55b4d3),
+        vte_rgb(0x4dbf99),
+        vte_rgb(0xfcfcfc),
+    ],
+    bright: [
+        vte_rgb(0x3b9ee5),
+        vte_rgb(0xfebab6),
+        vte_rgb(0xc7d98f),
+        vte_rgb(0xfed5a3),
+        vte_rgb(0xabcdf2),
+        vte_rgb(0xb1d8e8),
+        vte_rgb(0xace0cb),
+        vte_rgb(0xffffff),
+    ],
+    dim: [
+        vte_rgb(0x9c9fa2),
+        vte_rgb(0x833538),
+        vte_rgb(0x445613),
+        vte_rgb(0x8a5227),
+        vte_rgb(0x214c76),
+        vte_rgb(0x2f5669),
+        vte_rgb(0x2a5f4a),
+        vte_rgb(0xbcbec0),
+    ],
+};
+
+const fn vte_rgb(hex: u32) -> Rgb {
     Rgb {
-        r: ((color >> 16) & 0xff) as u8,
-        g: ((color >> 8) & 0xff) as u8,
-        b: (color & 0xff) as u8,
+        r: ((hex >> 16) & 0xff) as u8,
+        g: ((hex >> 8) & 0xff) as u8,
+        b: (hex & 0xff) as u8,
     }
 }
 
@@ -1493,6 +1593,33 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_preserves_explicit_background_even_when_it_matches_theme_background() {
+        let snapshot = snapshot_from_ansi(b"\x1b[48;2;13;16;22m  \x1b[0m");
+        let line = &snapshot.lines[0];
+        let background_span = line
+            .background_spans
+            .iter()
+            .find(|span| span.color == rgb(0x0d1016).into())
+            .expect("expected explicit terminal background span");
+
+        assert_eq!(background_span.column, 0);
+        assert!(background_span.width >= 2);
+    }
+
+    #[test]
+    fn snapshot_preserves_reverse_video_blank_row_background() {
+        let snapshot = snapshot_from_ansi(b"\x1b[7m> Explain this codebase      \x1b[0m");
+        let line = &snapshot.lines[0];
+        let background_span = line
+            .background_spans
+            .iter()
+            .find(|span| span.column == 0)
+            .expect("expected reverse-video row background span");
+
+        assert!(background_span.width >= 26);
+    }
+
+    #[test]
     fn snapshot_preserves_indexed_and_underlined_runs() {
         let snapshot = snapshot_from_ansi(b"\x1b[38;5;141;4mansi\x1b[0m");
         let line = &snapshot.lines[0];
@@ -1505,5 +1632,94 @@ mod tests {
         assert!(line.text.starts_with("ansi"));
         assert!(styled_run.underline.is_some());
         assert_eq!(styled_run.color, rgb(0xaf87ff).into());
+    }
+
+    fn rgb_hex(rgb: Rgb) -> u32 {
+        ((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32
+    }
+
+    fn rgb_hexes(colors: [Rgb; 8]) -> [u32; 8] {
+        colors.map(rgb_hex)
+    }
+
+    #[test]
+    fn ayu_dark_terminal_palette_matches_zed() {
+        let palette = terminal_palette(crate::theme::ResolvedTheme::Dark);
+
+        assert_eq!(rgb_hex(palette.background), 0x0d1016);
+        assert_eq!(rgb_hex(palette.foreground), 0xbfbdb6);
+        assert_eq!(rgb_hex(palette.cursor), 0x5ac1fe);
+        assert_eq!(rgb_hex(palette.bright_foreground), 0xbfbdb6);
+        assert_eq!(rgb_hex(palette.dim_foreground), 0x85847f);
+        assert_eq!(
+            rgb_hexes(palette.normal),
+            [0x0d1016, 0xef7177, 0xaad84c, 0xfeb454, 0x5ac1fe, 0x39bae5, 0x95e5cb, 0xbfbdb6,]
+        );
+        assert_eq!(
+            rgb_hexes(palette.bright),
+            [0x545557, 0x83353b, 0x567627, 0x92582b, 0x27618c, 0x205a78, 0x4c806f, 0xfafafa,]
+        );
+        assert_eq!(
+            rgb_hexes(palette.dim),
+            [0x3a3b3c, 0xa74f53, 0x769735, 0xb17d3a, 0x3e87b1, 0x2782a0, 0x68a08e, 0x85847f,]
+        );
+    }
+
+    #[test]
+    fn ayu_light_terminal_palette_matches_zed() {
+        let palette = terminal_palette(crate::theme::ResolvedTheme::Light);
+
+        assert_eq!(rgb_hex(palette.background), 0xfcfcfc);
+        assert_eq!(rgb_hex(palette.foreground), 0x5c6166);
+        assert_eq!(rgb_hex(palette.cursor), 0x3b9ee5);
+        assert_eq!(rgb_hex(palette.bright_foreground), 0x5c6166);
+        assert_eq!(rgb_hex(palette.dim_foreground), 0xfcfcfc);
+        assert_eq!(
+            rgb_hexes(palette.normal),
+            [0x5c6166, 0xef7271, 0x85b304, 0xf1ad49, 0x3b9ee5, 0x55b4d3, 0x4dbf99, 0xfcfcfc,]
+        );
+        assert_eq!(
+            rgb_hexes(palette.bright),
+            [0x3b9ee5, 0xfebab6, 0xc7d98f, 0xfed5a3, 0xabcdf2, 0xb1d8e8, 0xace0cb, 0xffffff,]
+        );
+        assert_eq!(
+            rgb_hexes(palette.dim),
+            [0x9c9fa2, 0x833538, 0x445613, 0x8a5227, 0x214c76, 0x2f5669, 0x2a5f4a, 0xbcbec0,]
+        );
+    }
+
+    #[test]
+    fn light_terminal_contrast_darkens_low_contrast_named_foreground() {
+        let adjusted = ensure_light_terminal_foreground_contrast(
+            rgb(0xfcfcfc).into(),
+            rgb(0xececed).into(),
+            false,
+            crate::theme::ResolvedTheme::Light,
+        );
+
+        assert_eq!(
+            adjusted,
+            crate::theme::terminal_foreground_for_theme(crate::theme::ResolvedTheme::Light)
+        );
+    }
+
+    #[test]
+    fn light_terminal_contrast_preserves_truecolor_foreground() {
+        let foreground = rgb(0xfcfcfc).into();
+        let adjusted = ensure_light_terminal_foreground_contrast(
+            foreground,
+            rgb(0xececed).into(),
+            true,
+            crate::theme::ResolvedTheme::Light,
+        );
+
+        assert_eq!(adjusted, foreground);
+    }
+
+    #[test]
+    fn default_indexed_color_includes_xterm_gray_ramp() {
+        assert_eq!(default_indexed_color(232), vte_rgb(0x080808));
+        assert_eq!(default_indexed_color(244), vte_rgb(0x808080));
+        assert_eq!(default_indexed_color(255), vte_rgb(0xeeeeee));
     }
 }

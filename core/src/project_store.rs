@@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 use crate::agents::{
-    effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig, DEFAULT_AGENT_ID,
+    agent_executable_available, effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig,
+    DEFAULT_AGENT_ID,
 };
 use crate::git_actions::{
     default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
@@ -21,6 +25,116 @@ use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 use daemon_proto::TerminalRestoreStatus;
 
 const STORE_VERSION: u8 = 3;
+
+// ---------------------------------------------------------------
+// Background save writer (fix for #129; referenced from #125).
+// ---------------------------------------------------------------
+//
+// `ProjectStore::save()` used to `serde_json::to_string_pretty` the
+// full `StoreFile` inline on the caller's thread — which in the GUI
+// is the GPUI render thread. Under sustained sub-agent PTY output
+// (notably browser-tools / chrome-devtools MCP workloads) the
+// section-state persist path fires dozens of times per second, and
+// the render thread stalled for >2 s rebuilding JSON it had
+// rebuilt 80 ms earlier. The lockup watchdog in `app::leakscope`
+// caught four captures all rooted here.
+//
+// The writer owns a single-slot mailbox: each `save()` overwrites
+// the pending slot with its latest snapshot and signals the
+// condvar. The worker wakes, waits out a short debounce window so
+// a storm of saves collapses into one write, takes whatever
+// snapshot is most recent, and writes it synchronously on its own
+// thread. Lost intermediate snapshots are fine — the on-disk store
+// is a cache of the latest state, not an event log.
+//
+// Drop of the final `ProjectStore` flushes the mailbox once more
+// so the last save before process exit doesn't race the worker's
+// debounce sleep. Tests use the sync path via `#[cfg(test)]` so
+// assertions on file contents remain deterministic.
+
+struct SaveWorker {
+    pending: Mutex<Option<(PathBuf, StoreFile)>>,
+    cvar: Condvar,
+}
+
+static SAVE_WORKER: OnceLock<&'static SaveWorker> = OnceLock::new();
+
+/// Collapse a storm of saves this wide into one disk write. 50 ms
+/// is short enough to be invisible to the user (the next load still
+/// sees the latest state if they close the app immediately) and
+/// long enough to absorb the 100+ Hz `persist_section_state` flurry
+/// a CDP sub-agent produces. See Drop impl for the end-of-life
+/// flush that covers the "exit inside the debounce window" race.
+const SAVE_DEBOUNCE: Duration = Duration::from_millis(50);
+
+fn save_worker() -> &'static SaveWorker {
+    SAVE_WORKER.get_or_init(|| {
+        // Leak the worker so it has a 'static lifetime without a
+        // heap indirection on every access. Cost is one allocation
+        // for the lifetime of the process.
+        let worker: &'static SaveWorker = Box::leak(Box::new(SaveWorker {
+            pending: Mutex::new(None),
+            cvar: Condvar::new(),
+        }));
+        thread::Builder::new()
+            .name("project-store-save".into())
+            .spawn(move || save_worker_loop(worker))
+            .expect("spawn project-store save thread");
+        worker
+    })
+}
+
+fn save_worker_loop(worker: &'static SaveWorker) {
+    loop {
+        // Wait for at least one pending snapshot.
+        {
+            let mut guard = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
+            while guard.is_none() {
+                guard = worker
+                    .cvar
+                    .wait(guard)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+        }
+        // Let the burst settle. Any saves during this sleep land in
+        // the same mailbox slot and we'll pick up the latest below.
+        thread::sleep(SAVE_DEBOUNCE);
+        let snapshot = worker
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some((path, store)) = snapshot {
+            write_store_sync(&path, &store);
+        }
+    }
+}
+
+/// Drain the mailbox on the caller's thread. Used by
+/// [`ProjectStore::drop`] so the last save before app shutdown
+/// isn't lost to the debounce sleep, and reusable by tests that
+/// want to force a flush without relying on `#[cfg(test)]`.
+fn flush_pending_save() {
+    if let Some(worker) = SAVE_WORKER.get().copied() {
+        let snapshot = worker
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some((path, store)) = snapshot {
+            write_store_sync(&path, &store);
+        }
+    }
+}
+
+fn write_store_sync(path: &Path, store: &StoreFile) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(store) {
+        let _ = std::fs::write(path, json);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepoDefaultCommitAction {
@@ -525,10 +639,21 @@ pub struct ArchivedProjectActions {
     pub actions: Vec<ProjectAction>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default = "default_left_sidebar_open")]
     pub left_sidebar_open: bool,
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
     #[serde(default)]
     pub expanded_repo_ids: HashSet<String>,
     #[serde(default)]
@@ -569,6 +694,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             left_sidebar_open: default_left_sidebar_open(),
+            theme_mode: ThemeMode::System,
             expanded_repo_ids: HashSet::new(),
             repo_default_commit_actions: HashMap::new(),
             pinned_task_ids: HashSet::new(),
@@ -592,6 +718,36 @@ impl Default for UiState {
 
 fn default_left_sidebar_open() -> bool {
     true
+}
+
+fn initial_default_agent_id(enabled: &[&'static str]) -> Option<&'static str> {
+    initial_default_agent_id_with_claude_availability(
+        enabled,
+        agent_executable_available(AgentProviderKind::ClaudeCode),
+    )
+}
+
+fn initial_default_agent_id_with_claude_availability(
+    enabled: &[&'static str],
+    claude_code_available: bool,
+) -> Option<&'static str> {
+    if claude_code_available {
+        enabled
+            .iter()
+            .copied()
+            .find(|agent_id| *agent_id == "claude-code")
+            .or_else(|| {
+                enabled
+                    .iter()
+                    .copied()
+                    .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
+            })
+    } else {
+        enabled
+            .iter()
+            .copied()
+            .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
+    }
 }
 
 pub fn project_action_agent_launch_args(action: &ProjectAction) -> Result<Vec<String>, String> {
@@ -771,6 +927,18 @@ pub struct ProjectStore {
     pub terminal_sections: HashMap<String, PersistedSectionState>,
     pub ui: UiState,
     file_path: PathBuf,
+}
+
+impl Drop for ProjectStore {
+    fn drop(&mut self) {
+        // Synchronously drain any pending save so the final state
+        // before process/teardown is on disk. Cheap no-op when the
+        // background writer has already consumed the mailbox, and
+        // compiled out under `#[cfg(test)]` because tests use the
+        // direct sync-write path in `save()`.
+        #[cfg(not(test))]
+        flush_pending_save();
+    }
 }
 
 impl ProjectStore {
@@ -1520,7 +1688,42 @@ impl ProjectStore {
 
     #[hotpath::measure]
     pub fn save(&self) {
-        let store = StoreFile {
+        let store = self.snapshot_for_save();
+        // Tests assert on file contents immediately after save(),
+        // so we keep the write synchronous under `#[cfg(test)]`.
+        // Production builds hand off to a background writer thread
+        // so save() doesn't stall the GPUI render thread (see #129):
+        // a CDP-heavy sub-agent produces enough PTY output to fire
+        // `persist_section_state` → `update_task_tabs` → `save()`
+        // dozens of times per second, and each synchronous
+        // `serde_json::to_string_pretty` over the full StoreFile was
+        // blocking render for >2s (captured by the #125 watchdog).
+        #[cfg(test)]
+        {
+            write_store_sync(&self.file_path, &store);
+        }
+        #[cfg(not(test))]
+        {
+            let worker = save_worker();
+            let mut pending = worker
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // Single-slot mailbox: if a save was already queued, the
+            // newer snapshot wins — callers only care that the latest
+            // state is on disk, not that every intermediate revision
+            // is. That's the coalescing that makes a CDP burst cheap.
+            *pending = Some((self.file_path.clone(), store));
+            worker.cvar.notify_one();
+        }
+    }
+
+    /// Assemble the on-disk representation from the in-memory store.
+    /// Separated from [`save`] so the same snapshot can be handed to
+    /// the background writer without leaking `StoreFile` (a private
+    /// type) into callers.
+    fn snapshot_for_save(&self) -> StoreFile {
+        StoreFile {
             version: STORE_VERSION,
             repos: self.repos.clone(),
             projects: self.projects_by_id.clone(),
@@ -1529,12 +1732,6 @@ impl ProjectStore {
             task_ids_by_root_project: self.task_ids_by_root_project.clone(),
             sections: self.terminal_sections.clone(),
             ui: self.ui.clone(),
-        };
-        if let Some(parent) = self.file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = std::fs::write(&self.file_path, json);
         }
     }
 
@@ -1754,6 +1951,15 @@ impl ProjectStore {
         self.save();
     }
 
+    pub fn set_theme_mode(&mut self, mode: ThemeMode) {
+        // Save even when the in-memory value is already selected. Older
+        // store files may not contain `ui.theme_mode`; clicking the selected
+        // option should still materialize the preference on disk so the next
+        // launch does not fall back through serde's default.
+        self.ui.theme_mode = mode;
+        self.save();
+    }
+
     pub fn set_expanded_repos(&mut self, expanded_repo_ids: &HashSet<String>) {
         self.ui.expanded_repo_ids = expanded_repo_ids.clone();
         self.save();
@@ -1932,12 +2138,7 @@ impl ProjectStore {
                     .copied()
                     .find(|enabled_id| *enabled_id == agent_id)
             })
-            .or_else(|| {
-                enabled
-                    .iter()
-                    .copied()
-                    .find(|agent_id| *agent_id == DEFAULT_AGENT_ID)
-            })
+            .or_else(|| initial_default_agent_id(&enabled))
             .or_else(|| enabled.first().copied())
     }
 
@@ -5212,6 +5413,7 @@ mod tests {
             ]),
             ui: super::UiState {
                 left_sidebar_open: false,
+                theme_mode: super::ThemeMode::System,
                 expanded_repo_ids: HashSet::from(["repo".to_string()]),
                 repo_default_commit_actions: HashMap::from([(
                     "repo".to_string(),
@@ -6217,6 +6419,70 @@ mod tests {
     }
 
     #[test]
+    fn theme_mode_persists_to_store_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: file_path.clone(),
+        };
+
+        store.set_theme_mode(super::ThemeMode::Dark);
+
+        let saved: StoreFile = serde_json::from_str(
+            &fs::read_to_string(&file_path).expect("saved config should exist"),
+        )
+        .expect("saved config should deserialize");
+        assert_eq!(saved.ui.theme_mode, super::ThemeMode::Dark);
+        assert!(
+            fs::read_to_string(&file_path)
+                .expect("saved config should exist")
+                .contains("\"theme_mode\""),
+            "saved config should materialize the theme preference field"
+        );
+
+        let reloaded = super::ProjectStore::read_from_disk(&file_path);
+        assert_eq!(reloaded.ui.theme_mode, super::ThemeMode::Dark);
+    }
+
+    #[test]
+    fn theme_mode_persists_when_setting_default_system() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        let mut store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            file_path: file_path.clone(),
+        };
+
+        store.set_theme_mode(super::ThemeMode::System);
+
+        let saved_json = fs::read_to_string(&file_path).expect("saved config should exist");
+        let saved: StoreFile =
+            serde_json::from_str(&saved_json).expect("saved config should deserialize");
+        assert_eq!(saved.ui.theme_mode, super::ThemeMode::System);
+        assert!(
+            saved_json.contains("\"theme_mode\""),
+            "setting the already-selected default should still persist the field"
+        );
+    }
+
+    #[test]
     fn git_commit_generation_script_helpers_persist_and_reset() {
         let temp_dir = tempfile::tempdir().expect("temp dir should exist");
         let file_path = temp_dir.path().join("projects.json");
@@ -6463,7 +6729,44 @@ mod tests {
         assert!(crate::agents::AGENTS
             .iter()
             .all(|agent| store.agent_enabled(agent.id)));
-        assert_eq!(store.default_agent_id(), Some(DEFAULT_AGENT_ID));
+        let expected_default = if crate::agents::agent_executable_available(
+            crate::agents::AgentProviderKind::ClaudeCode,
+        ) {
+            "claude-code"
+        } else {
+            DEFAULT_AGENT_ID
+        };
+        assert_eq!(store.default_agent_id(), Some(expected_default));
+    }
+
+    #[test]
+    fn initial_default_agent_prefers_claude_code_when_available() {
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(
+                &["claude-code", "codex", "pi"],
+                true,
+            ),
+            Some("claude-code")
+        );
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(
+                &["claude-code", "codex", "pi"],
+                false,
+            ),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn initial_default_agent_respects_enabled_agents() {
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(&["codex", "pi"], true),
+            Some("codex")
+        );
+        assert_eq!(
+            super::initial_default_agent_id_with_claude_availability(&["pi"], false),
+            None
+        );
     }
 
     #[test]

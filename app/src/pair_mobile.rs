@@ -20,6 +20,7 @@ use gpui::{
 };
 
 use crate::app::AnotherOneApp;
+use crate::theme;
 
 const MODAL_WIDTH: f32 = 520.;
 const QR_SIZE: f32 = 320.;
@@ -33,10 +34,11 @@ impl AnotherOneApp {
     /// [`Self::pair_mobile_modal_open`].
     pub fn titlebar_pair_mobile_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let open = self.pair_mobile_modal_open;
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let bg = if open {
-            gpui::white().opacity(0.10)
+            app_theme.overlay_active
         } else {
-            gpui::white().opacity(0.05)
+            app_theme.overlay_rest
         };
 
         div()
@@ -51,9 +53,9 @@ impl AnotherOneApp {
             .rounded(px(11.))
             .bg(bg)
             .border_1()
-            .border_color(gpui::white().opacity(0.08))
+            .border_color(app_theme.border)
             .cursor_pointer()
-            .hover(|style| style.bg(gpui::white().opacity(0.08)))
+            .hover(move |style| style.bg(app_theme.overlay_hover_strong))
             .tooltip(move |_window, cx| {
                 Self::action_tooltip_view("Pair a mobile device with the embedded daemon", cx)
             })
@@ -72,7 +74,7 @@ impl AnotherOneApp {
                 svg()
                     .path("assets/icons/icons__qr-code.svg")
                     .size(px(16.))
-                    .text_color(gpui::white().opacity(0.92)),
+                    .text_color(app_theme.text_primary),
             )
             .into_any_element()
     }
@@ -107,12 +109,14 @@ impl AnotherOneApp {
         // Build the modal body from the current daemon handle. A
         // missing handle (daemon still booting, or it failed to
         // start) yields the "not ready" empty state.
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let body = match self.daemon_handle.as_ref() {
             Some(handle) => modal_body_ready(
                 std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, handle.qr_png_bytes())),
                 handle.pairing_url(),
+                app_theme.text_muted,
             ),
-            None => modal_body_daemon_not_ready(),
+            None => modal_body_daemon_not_ready(app_theme.text_primary, app_theme.text_muted),
         };
 
         div()
@@ -121,7 +125,7 @@ impl AnotherOneApp {
             .top_0()
             .left_0()
             .size_full()
-            .bg(gpui::black().opacity(0.55))
+            .bg(app_theme.scrim_bg)
             .flex()
             .items_center()
             .justify_center()
@@ -137,10 +141,10 @@ impl AnotherOneApp {
                 div()
                     .id("pair-mobile-body")
                     .w(px(MODAL_WIDTH))
-                    .bg(gpui::rgb(0x202024))
+                    .bg(app_theme.card_bg)
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(gpui::white().opacity(0.12))
+                    .border_color(app_theme.border)
                     .p(px(24.))
                     .flex()
                     .flex_col()
@@ -153,7 +157,7 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(16. / 16.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(gpui::white())
+                            .text_color(app_theme.text_primary)
                             .child("Pair mobile device"),
                     )
                     .child(body)
@@ -209,9 +213,9 @@ impl AnotherOneApp {
                                     .px(px(16.))
                                     .py(px(6.))
                                     .rounded(px(8.))
-                                    .bg(gpui::white().opacity(0.08))
+                                    .bg(app_theme.overlay_rest)
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(gpui::white().opacity(0.12)))
+                                    .hover(move |s| s.bg(app_theme.overlay_hover_strong))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
@@ -223,7 +227,7 @@ impl AnotherOneApp {
                                     .child(
                                         div()
                                             .text_size(rems(12. / 16.))
-                                            .text_color(gpui::white().opacity(0.86))
+                                            .text_color(app_theme.text_secondary)
                                             .child("Close"),
                                     ),
                             ),
@@ -233,7 +237,11 @@ impl AnotherOneApp {
     }
 }
 
-fn modal_body_ready(qr: std::sync::Arc<Image>, pairing_url: String) -> AnyElement {
+fn modal_body_ready(
+    qr: std::sync::Arc<Image>,
+    pairing_url: String,
+    url_text_col: gpui::Hsla,
+) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -257,13 +265,13 @@ fn modal_body_ready(qr: std::sync::Arc<Image>, pairing_url: String) -> AnyElemen
                 .max_w(px(MODAL_WIDTH - 48.))
                 .text_size(rems(11. / 16.))
                 .font_family("monospace")
-                .text_color(gpui::white().opacity(0.62))
+                .text_color(url_text_col)
                 .child(pairing_url),
         )
         .into_any_element()
 }
 
-fn modal_body_daemon_not_ready() -> AnyElement {
+fn modal_body_daemon_not_ready(title_col: gpui::Hsla, body_col: gpui::Hsla) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -271,13 +279,13 @@ fn modal_body_daemon_not_ready() -> AnyElement {
         .child(
             div()
                 .text_size(rems(13. / 16.))
-                .text_color(gpui::white().opacity(0.92))
+                .text_color(title_col)
                 .child("Mobile daemon is still starting…"),
         )
         .child(
             div()
                 .text_size(rems(12. / 16.))
-                .text_color(gpui::white().opacity(0.68))
+                .text_color(body_col)
                 .child(
                     "The embedded iroh endpoint boots on app start. Close and reopen this dialog in a moment.",
                 ),

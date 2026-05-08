@@ -8,6 +8,7 @@ use gpui::{
 use crate::agent_icons::branded_icon;
 use crate::agents::{terminal_launch_config_for_selected_agent, AgentDef, AGENTS};
 use crate::app::{AnotherOneApp, SectionId};
+use crate::theme::{self, ResolvedTheme};
 
 #[derive(Clone)]
 pub(crate) struct AddAgentModalState {
@@ -25,43 +26,75 @@ enum AddAgentModalFocus {
     CancelButton,
 }
 
-const CARD_BG: u32 = 0x2b2d31;
 const CLI_ONLY_ICON: &str = "assets/icons/icons__terminal.svg";
 const CLI_ONLY_LABEL: &str = "Terminal";
-const TITLE_COL: (f32, f32, f32, f32) = (0., 0., 0.92, 1.);
-const BODY_COL: (f32, f32, f32, f32) = (0., 0., 0.78, 1.);
-const MUTED_COL: (f32, f32, f32, f32) = (0., 0., 0.58, 1.);
+
+fn add_agent_theme() -> theme::AppTheme {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => theme::light_theme(),
+        ResolvedTheme::Dark => theme::dark_theme(),
+    }
+}
+
+fn card_bg() -> gpui::Hsla {
+    add_agent_theme().card_bg
+}
+
+fn scrim_bg() -> gpui::Hsla {
+    add_agent_theme().scrim_bg
+}
 
 fn title_col() -> gpui::Hsla {
-    hsla(TITLE_COL.0, TITLE_COL.1, TITLE_COL.2, TITLE_COL.3)
+    add_agent_theme().text_primary
 }
 
 fn body_col() -> gpui::Hsla {
-    hsla(BODY_COL.0, BODY_COL.1, BODY_COL.2, BODY_COL.3)
+    add_agent_theme().text_secondary
 }
 
 fn muted_col() -> gpui::Hsla {
-    hsla(MUTED_COL.0, MUTED_COL.1, MUTED_COL.2, MUTED_COL.3)
+    add_agent_theme().text_muted
 }
 
 fn border_col() -> gpui::Hsla {
-    gpui::white().opacity(0.08)
+    add_agent_theme().border
 }
 
 fn hover_bg() -> gpui::Hsla {
-    gpui::white().opacity(0.06)
+    add_agent_theme().overlay_hover
 }
 
 fn subtle_bg() -> gpui::Hsla {
-    gpui::white().opacity(0.04)
+    add_agent_theme().overlay_rest
 }
 
 fn active_bg() -> gpui::Hsla {
-    gpui::white().opacity(0.10)
+    add_agent_theme().overlay_active
 }
 
 fn focus_col() -> gpui::Hsla {
-    hsla(220. / 360., 0.55, 0.60, 1.)
+    add_agent_theme().focus_ring
+}
+
+fn primary_button_bg() -> gpui::Hsla {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => rgb(0x1f2328).into(),
+        ResolvedTheme::Dark => gpui::white(),
+    }
+}
+
+fn primary_button_hover_bg() -> gpui::Hsla {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => rgb(0x374151).into(),
+        ResolvedTheme::Dark => hsla(0., 0., 0.90, 1.),
+    }
+}
+
+fn primary_button_text_col() -> gpui::Hsla {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => gpui::white(),
+        ResolvedTheme::Dark => rgb(0x1e1f22).into(),
+    }
 }
 
 fn resolved_add_agent_selection(
@@ -256,7 +289,7 @@ impl AnotherOneApp {
             .max_h(relative(0.9))
             .max_w(relative(0.92))
             .rounded_lg()
-            .bg(rgb(CARD_BG))
+            .bg(card_bg())
             .border_1()
             .border_color(border_col())
             .shadow_lg()
@@ -400,7 +433,7 @@ impl AnotherOneApp {
             .flex()
             .items_center()
             .justify_center()
-            .bg(hsla(0., 0., 0., 0.50))
+            .bg(scrim_bg())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
@@ -659,7 +692,7 @@ impl AnotherOneApp {
             .mt(px(4.))
             .h(dropdown_height)
             .rounded_md()
-            .bg(rgb(CARD_BG))
+            .bg(card_bg())
             .border_1()
             .border_color(border_col())
             .shadow_md()
@@ -753,12 +786,12 @@ impl AnotherOneApp {
                     .rounded(px(999.))
                     .border_1()
                     .border_color(if is_selected {
-                        hsla(220. / 360., 0.55, 0.58, 1.)
+                        focus_col()
                     } else {
                         border_col()
                     })
                     .bg(if is_selected {
-                        hsla(220. / 360., 0.55, 0.58, 1.)
+                        focus_col()
                     } else {
                         gpui::transparent_black()
                     })
@@ -794,7 +827,7 @@ impl AnotherOneApp {
             .px(px(20.))
             .py(px(16.))
             .border_t_1()
-            .border_color(gpui::white().opacity(0.06))
+            .border_color(add_agent_theme().divider)
             .mt(px(16.))
             .child(
                 div()
@@ -843,14 +876,14 @@ impl AnotherOneApp {
                         }) {
                             focus_col()
                         } else {
-                            gpui::white()
+                            primary_button_bg()
                         },
                     )
-                    .bg(gpui::white())
-                    .hover(move |s| s.bg(hsla(0., 0., 0.90, 1.)))
+                    .bg(primary_button_bg())
+                    .hover(move |s| s.bg(primary_button_hover_bg()))
                     .text_size(rems(12. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(0x1e1f22))
+                    .text_color(primary_button_text_col())
                     .child("Create")
                     .on_mouse_down(
                         MouseButton::Left,

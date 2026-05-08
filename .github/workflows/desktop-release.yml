@@ -1,11 +1,11 @@
 name: Desktop release
 
-# Each pushed tag (e.g. `v1.2.3`) produces a public release in the
-# `another-one-releases` repo: a DMG and updater payload for macOS
-# (per arch), an AppImage for Linux x86_64, a SHA256SUMS file, a
-# signed `latest.json` manifest, and the matching `latest.json.sig`.
-# The desktop app polls the resulting GitHub Release URL on a 10
-# minute cadence (see `app/src/updater.rs`).
+# Each pushed tag (e.g. `v1.2.3`) produces a GitHub Release in this
+# repository: a DMG and updater payload for macOS (per arch), an
+# AppImage for Linux x86_64, a SHA256SUMS file, a signed `latest.json`
+# manifest, and the matching `latest.json.sig`. The desktop app polls
+# this repository's latest release URL on a 10 minute cadence (see
+# `app/src/updater.rs`).
 
 on:
   push:
@@ -14,10 +14,10 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write
 
 env:
-  RELEASE_REPO: ${{ vars.ANOTHER_ONE_RELEASES_REPO || 'RealBigFun/another-one-releases' }}
+  RELEASE_REPO: ${{ github.repository }}
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
@@ -43,10 +43,10 @@ jobs:
           COMMIT_SHA="${GITHUB_SHA}"
           SHORT_SHA="${GITHUB_SHA::7}"
           RELEASE_ID="${COMMIT_SHA}"
-          RELEASE_TAG="desktop-${COMMIT_SHA}"
-          RELEASE_NAME="AnotherOne Desktop ${SHORT_SHA}"
           CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' app/Cargo.toml)"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          RELEASE_TAG="v${CARGO_VERSION}"
+          RELEASE_NAME="AnotherOne Desktop v${CARGO_VERSION}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           {
             echo "commit_sha=${COMMIT_SHA}"
@@ -156,8 +156,8 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}-*.dmg
-            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}-*.app.tar.gz
+            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}.dmg
+            dist/macos-${{ matrix.arch }}/AnotherOne-macos-${{ matrix.arch }}.app.tar.gz
 
   build-linux:
     name: Build Linux (x86_64)
@@ -181,6 +181,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfuse2 libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb1
+      - name: Install modern patchelf
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz \
+            -o "$RUNNER_TEMP/patchelf.tar.gz"
+          tar -xzf "$RUNNER_TEMP/patchelf.tar.gz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/bin/patchelf" /usr/local/bin/patchelf
+          patchelf --version
       - name: Run Linux packaging script
         env:
           ALLOW_HOST_BUILD: "1"
@@ -200,7 +209,7 @@ jobs:
         with:
           name: linux-x86_64
           path: |
-            dist/linux-x86_64/AnotherOne-linux-x86_64-*.AppImage
+            dist/linux-x86_64/AnotherOne-linux-x86_64.AppImage
 
   publish:
     name: Publish release
@@ -264,22 +273,25 @@ jobs:
           python3 scripts/release/sign_manifest.py \
             --manifest "${{ steps.stage.outputs.release_dir }}/latest.json" \
             --signature "${{ steps.stage.outputs.release_dir }}/latest.json.sig"
-      - name: Publish to public release repo
+      - name: Publish to this repository release
         env:
-          GH_TOKEN: ${{ secrets.ANOTHER_ONE_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.ANOTHER_ONE_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.identity.outputs.release_name }}
+          CARGO_VERSION: ${{ needs.identity.outputs.cargo_version }}
+          BUILD_NUMBER: ${{ needs.identity.outputs.build_number }}
         run: |
           set -euo pipefail
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "ANOTHER_ONE_RELEASES_TOKEN secret is not set." >&2
+            echo "ANOTHER_ONE_RELEASE_TOKEN secret is not set." >&2
             exit 1
           fi
           RELEASE_DIR="${{ steps.stage.outputs.release_dir }}"
           gh release create "$RELEASE_TAG" \
             --repo "$RELEASE_REPO" \
+            --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
-            --notes "Automated release from ${GITHUB_SHA}." \
+            --notes "AnotherOne Desktop v${CARGO_VERSION} (build ${BUILD_NUMBER}) — ${GITHUB_SHA}." \
             "$RELEASE_DIR"/AnotherOne-* \
             "$RELEASE_DIR"/SHA256SUMS \
             "$RELEASE_DIR"/latest.json \

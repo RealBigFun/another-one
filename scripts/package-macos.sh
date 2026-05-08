@@ -318,8 +318,8 @@ if [[ -n "$RELEASE_ID" ]]; then
     esac
   fi
   PREFIX="${ARTIFACT_PREFIX:-AnotherOne}"
-  RELEASE_DMG="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}-${RELEASE_ID}.dmg"
-  RELEASE_PAYLOAD="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}-${RELEASE_ID}.app.tar.gz"
+  RELEASE_DMG="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}.dmg"
+  RELEASE_PAYLOAD="$PACKAGE_DIR/${PREFIX}-macos-${ARCH_LABEL}.app.tar.gz"
   cp -f "$DMG_PATH" "$RELEASE_DMG"
   cp -f "$UPDATE_PAYLOAD" "$RELEASE_PAYLOAD"
   echo "Release-named copies:"

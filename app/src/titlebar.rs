@@ -1,8 +1,8 @@
 //! Titlebar strip and sidebar toggle button (platform-aware).
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, svg, AnyElement, App, Context, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Window, WindowControlArea,
+    div, hsla, prelude::*, px, rems, svg, AnyElement, App, Context, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, SharedString, Window, WindowControlArea,
 };
 
 use crate::app::AnotherOneApp;
@@ -209,16 +209,22 @@ impl AnotherOneApp {
         window.start_window_move();
     }
 
-    pub fn sidebar_toggle_svg(window: &Window) -> impl IntoElement {
-        let color = theme::toggle_icon_color(window);
+    pub fn sidebar_toggle_svg(
+        window: &Window,
+        mode: crate::project_store::ThemeMode,
+    ) -> impl IntoElement {
+        let color = theme::toggle_icon_color_for_mode(window, mode);
         svg()
             .path("assets/sidebar_toggle.svg")
             .size(px(15.))
             .text_color(color)
     }
 
-    pub fn right_sidebar_toggle_svg(window: &Window) -> impl IntoElement {
-        let color = theme::toggle_icon_color(window);
+    pub fn right_sidebar_toggle_svg(
+        window: &Window,
+        mode: crate::project_store::ThemeMode,
+    ) -> impl IntoElement {
+        let color = theme::toggle_icon_color_for_mode(window, mode);
         svg()
             .path("assets/right_sidebar_toggle.svg")
             .size(px(15.))
@@ -321,12 +327,13 @@ impl AnotherOneApp {
         let selected_action = self.selected_custom_action(cx);
         let has_actions = selected_action.is_some();
         let is_open = self.custom_actions_menu_open;
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let button_bg = if is_open {
-            gpui::white().opacity(0.10)
+            app_theme.overlay_active
         } else {
-            gpui::white().opacity(0.05)
+            app_theme.overlay_rest
         };
-        let hover_bg = gpui::white().opacity(0.08);
+        let hover_bg = app_theme.overlay_hover_strong;
         let label = selected_action
             .as_ref()
             .map(|action| SharedString::from(action.display_name().to_string()))
@@ -349,7 +356,7 @@ impl AnotherOneApp {
             .rounded(px(11.))
             .bg(button_bg)
             .border_1()
-            .border_color(gpui::white().opacity(0.08))
+            .border_color(app_theme.overlay_hover_strong)
             .child(
                 div()
                     .flex()
@@ -361,7 +368,7 @@ impl AnotherOneApp {
                     .h_full()
                     .px(px(9.))
                     .border_r_1()
-                    .border_color(gpui::white().opacity(0.06))
+                    .border_color(app_theme.divider)
                     .cursor_pointer()
                     .hover(move |style| style.bg(hover_bg))
                     .on_mouse_down(
@@ -383,7 +390,7 @@ impl AnotherOneApp {
                         svg()
                             .path(icon_path)
                             .size(px(14.))
-                            .text_color(gpui::white().opacity(0.92)),
+                            .text_color(app_theme.text_primary),
                     )
                     .child(
                         div()
@@ -391,7 +398,7 @@ impl AnotherOneApp {
                             .min_w(px(0.))
                             .text_size(rems(12. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(gpui::white().opacity(0.86))
+                            .text_color(app_theme.text_secondary)
                             .truncate()
                             .child(label),
                     ),
@@ -424,7 +431,7 @@ impl AnotherOneApp {
                         svg()
                             .path("assets/icons/icons__chevron-down.svg")
                             .size(px(11.))
-                            .text_color(gpui::white().opacity(0.68)),
+                            .text_color(app_theme.text_muted),
                     ),
             )
             .into_any_element()
@@ -443,11 +450,12 @@ impl AnotherOneApp {
         };
 
         let actions = self.project_store.project_actions(&project_id);
-        let bg = rgb(0x2b2d31);
-        let text_col = hsla(0., 0., 0.92, 1.);
-        let muted_text = hsla(0., 0., 0.54, 1.);
-        let hover_bg = gpui::white().opacity(0.06);
-        let divider = gpui::white().opacity(0.08);
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+        let bg = app_theme.card_bg;
+        let text_col = app_theme.text_primary;
+        let muted_text = app_theme.text_muted;
+        let hover_bg = app_theme.overlay_hover;
+        let divider = app_theme.divider;
 
         let mut menu = div()
             .id("titlebar-custom-actions-menu")
@@ -467,7 +475,7 @@ impl AnotherOneApp {
             .rounded(px(12.))
             .bg(bg)
             .border_1()
-            .border_color(gpui::white().opacity(0.08))
+            .border_color(app_theme.border)
             .shadow_md()
             .occlude()
             .overflow_hidden()
@@ -550,7 +558,7 @@ impl AnotherOneApp {
                             .justify_center()
                             .rounded_md()
                             .cursor_pointer()
-                            .hover(move |s| s.bg(gpui::white().opacity(0.08)))
+                            .hover(move |s| s.bg(app_theme.overlay_hover_strong))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
@@ -637,15 +645,16 @@ impl AnotherOneApp {
             .map(|app| app.icon_path())
             .unwrap_or("assets/icons/open_in__folder_closed.svg");
         let label = "Open In";
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let button_bg = if menu_open {
-            gpui::white().opacity(0.10)
+            app_theme.overlay_active
         } else {
-            gpui::white().opacity(0.05)
+            app_theme.overlay_rest
         };
         let hover_bg = if has_apps {
-            gpui::white().opacity(0.08)
+            app_theme.overlay_hover_strong
         } else {
-            gpui::white().opacity(0.06)
+            app_theme.divider
         };
         let project_id_for_chevron = project_id.clone();
 
@@ -663,7 +672,7 @@ impl AnotherOneApp {
             .rounded(px(11.))
             .bg(button_bg)
             .border_1()
-            .border_color(gpui::white().opacity(0.08))
+            .border_color(app_theme.overlay_hover_strong)
             .child(
                 div()
                     .flex()
@@ -674,7 +683,7 @@ impl AnotherOneApp {
                     .h_full()
                     .px(px(9.))
                     .border_r_1()
-                    .border_color(gpui::white().opacity(0.06))
+                    .border_color(app_theme.divider)
                     .cursor_pointer()
                     .hover(move |style| style.bg(hover_bg))
                     .on_mouse_down(
@@ -687,13 +696,13 @@ impl AnotherOneApp {
                         svg()
                             .path(primary_icon)
                             .size(px(14.))
-                            .text_color(gpui::white().opacity(0.92)),
+                            .text_color(app_theme.text_primary),
                     )
                     .child(
                         div()
                             .text_size(rems(12. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(gpui::white().opacity(0.86))
+                            .text_color(app_theme.text_secondary)
                             .child(label),
                     ),
             )
@@ -717,7 +726,7 @@ impl AnotherOneApp {
                         svg()
                             .path("assets/icons/icons__chevron-down.svg")
                             .size(px(11.))
-                            .text_color(gpui::white().opacity(0.68)),
+                            .text_color(app_theme.text_muted),
                     ),
             )
             .into_any_element()
@@ -743,6 +752,8 @@ impl AnotherOneApp {
             + TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT
             + TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT;
 
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+
         let mut menu = div()
             .id("titlebar-open-in-menu")
             .absolute()
@@ -750,9 +761,9 @@ impl AnotherOneApp {
             .top(px(TITLEBAR_MENU_OFFSET_TOP))
             .w(px(TITLEBAR_OPEN_IN_MENU_W))
             .rounded(px(12.))
-            .bg(rgb(0x2b2d31))
+            .bg(app_theme.card_bg)
             .border_1()
-            .border_color(gpui::white().opacity(0.08))
+            .border_color(app_theme.border)
             .shadow_md()
             .occlude()
             .overflow_hidden()
@@ -774,7 +785,7 @@ impl AnotherOneApp {
                     .h(px(38.))
                     .px(px(12.))
                     .cursor_pointer()
-                    .hover(|style| style.bg(gpui::white().opacity(0.06)))
+                    .hover(move |style| style.bg(app_theme.overlay_hover))
                     .tooltip(move |_window, cx| Self::action_tooltip_view(app.description(), cx))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -786,13 +797,13 @@ impl AnotherOneApp {
                         svg()
                             .path(app.icon_path())
                             .size(px(16.))
-                            .text_color(gpui::white().opacity(0.92)),
+                            .text_color(app_theme.text_primary),
                     )
                     .child(
                         div()
                             .text_size(rems(13. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(gpui::white().opacity(0.92))
+                            .text_color(app_theme.text_primary)
                             .child(app.label()),
                     ),
             );
@@ -825,6 +836,8 @@ impl AnotherOneApp {
             return div().into_any_element();
         };
 
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+
         div()
             .id(SharedString::from(format!(
                 "titlebar-github-trigger-{project_id}"
@@ -837,11 +850,11 @@ impl AnotherOneApp {
             .h(px(28.))
             .mr(px(TITLEBAR_GITHUB_BUTTON_MARGIN_RIGHT))
             .rounded(px(11.))
-            .bg(gpui::white().opacity(0.05))
+            .bg(app_theme.overlay_rest)
             .border_1()
-            .border_color(gpui::white().opacity(0.08))
+            .border_color(app_theme.border)
             .cursor_pointer()
-            .hover(|style| style.bg(gpui::white().opacity(0.08)))
+            .hover(move |style| style.bg(app_theme.overlay_hover_strong))
             .tooltip(move |_window, cx| Self::action_tooltip_view("Open repository in GitHub", cx))
             .on_mouse_down(
                 MouseButton::Left,
@@ -862,7 +875,7 @@ impl AnotherOneApp {
                 svg()
                     .path("assets/icons/icons__github.svg")
                     .size(px(15.))
-                    .text_color(gpui::white().opacity(0.88)),
+                    .text_color(app_theme.text_primary),
             )
             .into_any_element()
     }
@@ -947,24 +960,25 @@ impl AnotherOneApp {
         let active = active_action.is_some();
         let interactive = !active;
         let is_open = self.git_actions_menu_open;
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let button_bg = if is_open {
-            gpui::white().opacity(0.10)
+            app_theme.overlay_active
         } else {
-            gpui::white().opacity(0.05)
+            app_theme.overlay_rest
         };
-        let hover_bg = gpui::white().opacity(0.08);
-        let border = gpui::white().opacity(0.08);
-        let divider = gpui::white().opacity(0.06);
+        let hover_bg = app_theme.overlay_hover_strong;
+        let border = app_theme.overlay_hover_strong;
+        let divider = app_theme.divider;
         let danger_col = hsla(0., 0.78, 0.72, 1.);
         let text_col = active_presentation
             .filter(|presentation| presentation.danger)
             .map(|_| danger_col)
-            .unwrap_or_else(|| gpui::white().opacity(0.86));
+            .unwrap_or_else(|| app_theme.text_secondary);
         let icon_col = active_presentation
             .filter(|presentation| presentation.danger)
             .map(|_| danger_col)
-            .unwrap_or_else(|| gpui::white().opacity(0.92));
-        let chevron_col = gpui::white().opacity(0.68);
+            .unwrap_or_else(|| app_theme.text_primary);
+        let chevron_col = app_theme.text_muted;
         let trigger_label = active_presentation
             .map(|presentation| SharedString::from(presentation.label))
             .unwrap_or_else(|| primary_action.label());
@@ -1081,13 +1095,14 @@ impl AnotherOneApp {
         let has_changes = !self.active_changed_files(cx).is_empty();
         let can_commit = has_changes;
         let toolbar_enabled = self.active_git_action_for_current_project(cx).is_none();
-        let bg = rgb(0x2b2d31);
-        let border = gpui::white().opacity(0.08);
-        let text_col = hsla(0., 0., 0.92, 1.);
-        let hover_bg = gpui::white().opacity(0.06);
-        let danger_col = hsla(0., 0.78, 0.72, 1.);
-        let danger_hover = hsla(0., 0.45, 0.34, 0.26);
-        let divider = gpui::white().opacity(0.08);
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+        let bg = app_theme.card_bg;
+        let border = app_theme.border;
+        let text_col = app_theme.text_primary;
+        let hover_bg = app_theme.overlay_hover;
+        let danger_col = app_theme.error.text;
+        let danger_hover = app_theme.error.bg;
+        let divider = app_theme.divider;
         let push_label = count_git_action_label("Push", self.active_project_ahead_count(cx));
         let pull_label = count_git_action_label("Pull", self.active_project_behind_count(cx));
         let pull_request_url = self.active_project_pull_request_url(cx);
@@ -1542,7 +1557,8 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
         busy: bool,
     ) -> impl IntoElement {
-        let chrome = theme::chrome_bg(window);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let chrome = app_theme.chrome_bg;
         div()
             .flex()
             .flex_row()
@@ -1552,7 +1568,7 @@ impl AnotherOneApp {
             .flex_shrink_0()
             .bg(chrome)
             .border_b_1()
-            .border_color(rgb(0x27292e))
+            .border_color(app_theme.border)
             .child(
                 div()
                     .w(px(crate::platform::CurrentPlatform::traffic_light_pad_px()))
@@ -1579,7 +1595,10 @@ impl AnotherOneApp {
                             .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     })
                     .when(busy, |d| d.opacity(0.45))
-                    .child(Self::sidebar_toggle_svg(window)),
+                    .child(Self::sidebar_toggle_svg(
+                        window,
+                        self.project_store.ui.theme_mode,
+                    )),
             )
             .child(
                 div()
@@ -1643,7 +1662,10 @@ impl AnotherOneApp {
                             .hover(|s| s.bg(gpui::white().opacity(0.06)))
                     })
                     .when(busy, |d| d.opacity(0.45))
-                    .child(Self::right_sidebar_toggle_svg(window)),
+                    .child(Self::right_sidebar_toggle_svg(
+                        window,
+                        self.project_store.ui.theme_mode,
+                    )),
             )
     }
 }

@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::agent_icons::branded_icon;
 use crate::agents::{AgentDef, AGENTS};
 use crate::app::AnotherOneApp;
+use crate::theme::{self, ResolvedTheme};
 
 #[derive(Clone)]
 pub(crate) struct NewTaskModalState {
@@ -42,54 +43,83 @@ pub(crate) enum NewTaskBranchMode {
     ExistingBranch,
 }
 
-const CARD_BG: u32 = 0x2b2d31;
 const CLI_ONLY_ICON: &str = "assets/icons/icons__terminal.svg";
 const CLI_ONLY_LABEL: &str = "Terminal";
-const TITLE_COL: (f32, f32, f32, f32) = (0., 0., 0.92, 1.);
-const BODY_COL: (f32, f32, f32, f32) = (0., 0., 0.78, 1.);
-const MUTED_COL: (f32, f32, f32, f32) = (0., 0., 0.58, 1.);
-const PLACEHOLDER_COL: (f32, f32, f32, f32) = (0., 0., 0.38, 1.);
-const DANGER_COL: (f32, f32, f32, f32) = (0.0, 0.78, 0.68, 1.);
+
+fn new_task_theme() -> theme::AppTheme {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => theme::light_theme(),
+        ResolvedTheme::Dark => theme::dark_theme(),
+    }
+}
+
+fn card_bg() -> gpui::Hsla {
+    new_task_theme().card_bg
+}
+
+fn scrim_bg() -> gpui::Hsla {
+    new_task_theme().scrim_bg
+}
 
 fn title_col() -> gpui::Hsla {
-    hsla(TITLE_COL.0, TITLE_COL.1, TITLE_COL.2, TITLE_COL.3)
+    new_task_theme().text_primary
 }
 
 fn body_col() -> gpui::Hsla {
-    hsla(BODY_COL.0, BODY_COL.1, BODY_COL.2, BODY_COL.3)
+    new_task_theme().text_secondary
 }
 
 fn muted_col() -> gpui::Hsla {
-    hsla(MUTED_COL.0, MUTED_COL.1, MUTED_COL.2, MUTED_COL.3)
+    new_task_theme().text_muted
 }
 
 fn placeholder_col() -> gpui::Hsla {
-    hsla(
-        PLACEHOLDER_COL.0,
-        PLACEHOLDER_COL.1,
-        PLACEHOLDER_COL.2,
-        PLACEHOLDER_COL.3,
-    )
+    new_task_theme().text_placeholder
 }
 
 fn danger_col() -> gpui::Hsla {
-    hsla(DANGER_COL.0, DANGER_COL.1, DANGER_COL.2, DANGER_COL.3)
+    new_task_theme().error.text
 }
 
 fn border_col() -> gpui::Hsla {
-    gpui::white().opacity(0.08)
+    new_task_theme().border
 }
 
 fn hover_bg() -> gpui::Hsla {
-    gpui::white().opacity(0.06)
+    new_task_theme().overlay_hover
 }
 
 fn subtle_bg() -> gpui::Hsla {
-    gpui::white().opacity(0.04)
+    new_task_theme().overlay_rest
 }
 
 fn active_bg() -> gpui::Hsla {
-    gpui::white().opacity(0.10)
+    new_task_theme().overlay_active
+}
+
+fn focus_col() -> gpui::Hsla {
+    new_task_theme().focus_ring
+}
+
+fn primary_button_bg() -> gpui::Hsla {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => rgb(0x1f2328).into(),
+        ResolvedTheme::Dark => gpui::white(),
+    }
+}
+
+fn primary_button_hover_bg() -> gpui::Hsla {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => rgb(0x374151).into(),
+        ResolvedTheme::Dark => hsla(0., 0., 0.90, 1.),
+    }
+}
+
+fn primary_button_text_col() -> gpui::Hsla {
+    match theme::current_terminal_theme() {
+        ResolvedTheme::Light => gpui::white(),
+        ResolvedTheme::Dark => rgb(0x1e1f22).into(),
+    }
 }
 
 struct SourceBranchSectionProps<'a> {
@@ -264,7 +294,7 @@ impl AnotherOneApp {
             .flex()
             .items_center()
             .justify_center()
-            .bg(hsla(0., 0., 0., 0.50))
+            .bg(scrim_bg())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
@@ -280,7 +310,7 @@ impl AnotherOneApp {
                     .w(px(440.))
                     .max_h(relative(0.9))
                     .rounded_lg()
-                    .bg(rgb(CARD_BG))
+                    .bg(card_bg())
                     .border_1()
                     .border_color(border_col())
                     .shadow_lg()
@@ -954,7 +984,7 @@ impl AnotherOneApp {
                 let list = div()
                     .mt(px(4.))
                     .rounded_md()
-                    .bg(rgb(CARD_BG))
+                    .bg(card_bg())
                     .border_1()
                     .border_color(border_col())
                     .shadow_md()
@@ -1335,7 +1365,7 @@ impl AnotherOneApp {
             .mt(px(4.))
             .h(dropdown_height)
             .rounded_md()
-            .bg(rgb(CARD_BG))
+            .bg(card_bg())
             .border_1()
             .border_color(border_col())
             .shadow_md()
@@ -1378,12 +1408,12 @@ impl AnotherOneApp {
                         .rounded(px(4.))
                         .border_1()
                         .border_color(if selected.is_empty() {
-                            hsla(220. / 360., 0.55, 0.55, 1.)
+                            focus_col()
                         } else {
                             border_col()
                         })
                         .bg(if selected.is_empty() {
-                            hsla(220. / 360., 0.55, 0.55, 1.)
+                            focus_col()
                         } else {
                             gpui::transparent_black()
                         })
@@ -1456,12 +1486,12 @@ impl AnotherOneApp {
                             .rounded(px(4.))
                             .border_1()
                             .border_color(if is_selected {
-                                hsla(220. / 360., 0.55, 0.55, 1.)
+                                focus_col()
                             } else {
                                 border_col()
                             })
                             .bg(if is_selected {
-                                hsla(220. / 360., 0.55, 0.55, 1.)
+                                focus_col()
                             } else {
                                 gpui::transparent_black()
                             })
@@ -1872,7 +1902,7 @@ impl AnotherOneApp {
             .px(px(20.))
             .py(px(16.))
             .border_t_1()
-            .border_color(gpui::white().opacity(0.06))
+            .border_color(new_task_theme().divider)
             .mt(px(16.))
             .child(
                 div()
@@ -1907,12 +1937,12 @@ impl AnotherOneApp {
                     .px(px(16.))
                     .py(px(7.))
                     .rounded_md()
-                    .bg(gpui::white())
+                    .bg(primary_button_bg())
                     .opacity(if submitting { 0.65 } else { 1.0 })
-                    .hover(move |s| s.bg(hsla(0., 0., 0.90, 1.)))
+                    .hover(move |s| s.bg(primary_button_hover_bg()))
                     .text_size(rems(12. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(0x1e1f22))
+                    .text_color(primary_button_text_col())
                     .tooltip(move |_window, cx| {
                         Self::action_tooltip_view("Create the task workspace", cx)
                     })
@@ -2047,7 +2077,7 @@ impl AnotherOneApp {
             row = row.child(
                 div()
                     .px(px(1.))
-                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .bg(new_task_theme().info.muted)
                     .text_color(title_col())
                     .child(middle.clone()),
             );
@@ -2061,7 +2091,7 @@ impl AnotherOneApp {
             row = row.child(
                 div()
                     .px(px(1.))
-                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .bg(new_task_theme().info.muted)
                     .text_color(title_col())
                     .child(middle.clone()),
             );
@@ -2079,7 +2109,7 @@ impl AnotherOneApp {
             row = row.child(
                 div()
                     .px(px(1.))
-                    .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
+                    .bg(new_task_theme().info.muted)
                     .text_color(title_col())
                     .child(middle),
             );

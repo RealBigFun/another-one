@@ -1,6 +1,6 @@
 [package]
 name = "daemon"
-version = "0.1.0"
+version = "0.1.6"
 edition = "2021"
 description = "AnotherOne daemon. Library form is embedded by the desktop app and accepts iroh client connections; the binary form is a standalone PTY sandbox kept around for smoke-testing the daemon protocol in isolation."
 publish = false

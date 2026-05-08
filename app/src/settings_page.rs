@@ -1,26 +1,55 @@
 //! App-level settings page with a sidebar navigation and content area.
 
 use gpui::{
-    div, hsla, point, prelude::*, px, rems, rgb, size, svg, AnyElement, App, Bounds, ClipboardItem,
+    div, hsla, point, prelude::*, px, rems, size, svg, AnyElement, App, Bounds, ClipboardItem,
     Context, Element, ElementId, Entity, GlobalElementId, InspectorElementId, KeyDownEvent,
     LayoutId, MouseButton, MouseDownEvent, Pixels, ShapedLine, SharedString, TextRun, Window,
 };
 
 use crate::agent_icons::branded_icon;
-use crate::agents::{AgentProviderKind, AGENTS};
+use crate::agents::{agent_executable_available, AgentProviderKind, AGENTS};
 use crate::app::{AnotherOneApp, SettingsGitActionLlmDropdown};
 use crate::git_actions::{
     default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
 };
 use crate::layout::TITLEBAR_CHROME_H;
+use crate::project_store::ThemeMode;
 use crate::shortcuts::{
     capture_shortcut, keybinding_token_label, ShortcutAction, ALL_SHORTCUT_ACTIONS,
 };
 use crate::text_edit::{CursorDirection, TextEditState};
 
-const TEXT_PRIMARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.92, 1.);
-const TEXT_SECONDARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.55, 1.);
-const BORDER_SUBTLE: fn() -> gpui::Hsla = || gpui::white().opacity(0.08);
+fn settings_text_primary(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).text_primary
+}
+
+fn settings_text_secondary(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).text_secondary
+}
+
+fn settings_border(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).border
+}
+
+fn settings_panel_bg(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).card_bg
+}
+
+fn settings_row_bg(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).sunken_bg
+}
+
+fn settings_pill_bg(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).overlay_rest
+}
+
+fn settings_button_bg(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).overlay_rest
+}
+
+fn settings_button_hover(mode: ThemeMode) -> gpui::Hsla {
+    crate::theme::app_theme_for_preference(mode).overlay_hover_strong
+}
 
 const SETTINGS_SIDEBAR_W: f32 = 180.;
 const DEFAULT_OPTION: &str = "";
@@ -1162,7 +1191,7 @@ impl AnotherOneApp {
             .flex()
             .flex_row()
             .size_full()
-            .bg(rgb(0x1e1f22))
+            .bg(crate::theme::app_theme(window, self.project_store.ui.theme_mode).sunken_bg)
             .child(self.settings_sidebar(window, cx))
             .child(
                 div()
@@ -1180,16 +1209,18 @@ impl AnotherOneApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let bg = crate::theme::chrome_bg(window);
+        let mode = self.project_store.ui.theme_mode;
+        let app_theme = crate::theme::app_theme(window, mode);
+        let bg = app_theme.chrome_bg;
         let active = self.settings_section;
         let section_active_bg = hsla(215. / 360., 0.60, 0.45, 1.);
-        let back_hover = gpui::white().opacity(0.06);
-        let back_text = hsla(0., 0., 0.55, 1.);
+        let back_hover = app_theme.overlay_hover;
+        let back_text = app_theme.text_secondary;
         div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x1e1f22))
+            .bg(app_theme.sunken_bg)
             .child(
                 // Top bar: back chevron + horizontal section pills.
                 div()
@@ -1287,9 +1318,10 @@ impl AnotherOneApp {
     }
 
     fn settings_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
-        let bg = crate::theme::chrome_bg(window);
-        let back_text = hsla(0., 0., 0.55, 1.);
-        let back_hover = gpui::white().opacity(0.06);
+        let app_theme = crate::theme::app_theme(window, self.project_store.ui.theme_mode);
+        let bg = app_theme.chrome_bg;
+        let back_text = app_theme.text_secondary;
+        let back_hover = app_theme.overlay_hover;
         let section_active_bg = hsla(215. / 360., 0.60, 0.45, 1.);
 
         let active = self.settings_section;
@@ -1370,14 +1402,15 @@ impl AnotherOneApp {
         active_bg: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let mode = self.project_store.ui.theme_mode;
         let is_active = section == active;
         let label = section.label();
         let text_col = if is_active {
             gpui::white()
         } else {
-            TEXT_SECONDARY()
+            settings_text_secondary(mode)
         };
-        let hover_bg = gpui::white().opacity(0.06);
+        let hover_bg = crate::theme::app_theme_for_preference(mode).overlay_hover;
 
         div()
             .id(label)
@@ -1435,12 +1468,13 @@ impl AnotherOneApp {
     }
 
     fn settings_general_content(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let mode = self.project_store.ui.theme_mode;
         use crate::updater::{UpdateState, UpdaterCommand};
 
-        let panel_bg = rgb(0x23252a);
-        let row_bg = rgb(0x1f2125);
-        let button_bg = gpui::white().opacity(0.04);
-        let button_hover = gpui::white().opacity(0.08);
+        let panel_bg = settings_panel_bg(mode);
+        let row_bg = settings_row_bg(mode);
+        let button_bg = settings_button_bg(mode);
+        let button_hover = settings_button_hover(mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
 
         let identity = self.updater.identity();
@@ -1458,8 +1492,85 @@ impl AnotherOneApp {
             self.updater_state.is_checking() || self.updater_state.is_downloading();
         let install_enabled = matches!(self.updater_state, UpdateState::ReadyToInstall { .. });
         let show_sidebar_git_metadata = self.project_store.ui.show_sidebar_git_metadata;
+        let theme_mode = mode;
 
         let copy_full_sha = full_sha.to_string();
+
+        let theme_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(20.))
+            .px(px(18.))
+            .py(px(14.))
+            .bg(row_bg)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .min_w(px(0.))
+                    .child(
+                        div()
+                            .text_size(rems(13. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(settings_text_primary(mode))
+                            .child("Theme"),
+                    )
+                    .child(
+                        div()
+                            .text_size(rems(11. / 16.))
+                            .text_color(settings_text_secondary(mode))
+                            .child("Choose whether the app follows the OS appearance or uses a fixed palette."),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(settings_theme_button(
+                        mode,
+                        "settings-theme-system",
+                        "System",
+                        theme_mode == ThemeMode::System,
+                        button_bg,
+                        button_hover,
+                        active_button_bg,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            this.set_theme_mode(ThemeMode::System, cx);
+                            cx.stop_propagation();
+                        }),
+                    ))
+                    .child(settings_theme_button(
+                        mode,
+                        "settings-theme-light",
+                        "Light",
+                        theme_mode == ThemeMode::Light,
+                        button_bg,
+                        button_hover,
+                        active_button_bg,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            this.set_theme_mode(ThemeMode::Light, cx);
+                            cx.stop_propagation();
+                        }),
+                    ))
+                    .child(settings_theme_button(
+                        mode,
+                        "settings-theme-dark",
+                        "Dark",
+                        theme_mode == ThemeMode::Dark,
+                        button_bg,
+                        button_hover,
+                        active_button_bg,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            this.set_theme_mode(ThemeMode::Dark, cx);
+                            cx.stop_propagation();
+                        }),
+                    )),
+            );
 
         let sidebar_metadata_row = div()
             .flex()
@@ -1489,13 +1600,13 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(13. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(mode))
                             .child("Sidebar git metadata"),
                     )
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .text_color(TEXT_SECONDARY())
+                            .text_color(settings_text_secondary(mode))
                             .child("Show relative commit time and +/- line counts in task rows."),
                     ),
             )
@@ -1512,7 +1623,7 @@ impl AnotherOneApp {
                             .text_color(if show_sidebar_git_metadata {
                                 gpui::white()
                             } else {
-                                TEXT_SECONDARY()
+                                settings_text_secondary(mode)
                             })
                             .child(if show_sidebar_git_metadata {
                                 "Enabled"
@@ -1529,7 +1640,7 @@ impl AnotherOneApp {
                             .border_color(if show_sidebar_git_metadata {
                                 active_button_bg.opacity(0.85)
                             } else {
-                                BORDER_SUBTLE()
+                                settings_border(mode)
                             })
                             .bg(if show_sidebar_git_metadata {
                                 active_button_bg
@@ -1560,7 +1671,7 @@ impl AnotherOneApp {
             .py(px(14.))
             .bg(row_bg)
             .border_t_1()
-            .border_color(BORDER_SUBTLE())
+            .border_color(settings_border(mode))
             .child(
                 div()
                     .flex()
@@ -1570,13 +1681,13 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(13. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(mode))
                             .child("Build"),
                     )
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .text_color(TEXT_SECONDARY())
+                            .text_color(settings_text_secondary(mode))
                             .child(format!("{short_sha} · {profile_label} · v{cargo_version}",)),
                     )
                     .child(
@@ -1585,9 +1696,9 @@ impl AnotherOneApp {
                             .mt(px(2.))
                             .text_size(rems(11. / 16.))
                             .font_family("Lilex Nerd Font Mono")
-                            .text_color(TEXT_SECONDARY())
+                            .text_color(settings_text_secondary(mode))
                             .cursor_pointer()
-                            .hover(|s| s.text_color(TEXT_PRIMARY()))
+                            .hover(|s| s.text_color(settings_text_primary(mode)))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
@@ -1613,7 +1724,7 @@ impl AnotherOneApp {
             .py(px(14.))
             .bg(row_bg)
             .border_t_1()
-            .border_color(BORDER_SUBTLE())
+            .border_color(settings_border(mode))
             .child(
                 div()
                     .flex()
@@ -1625,20 +1736,22 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(13. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(mode))
                             .child("Updates"),
                     )
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                             .child(status_label),
                     )
                     .when_some(status_detail, |container, detail| {
                         container.child(
                             div()
                                 .text_size(rems(11. / 16.))
-                                .text_color(TEXT_SECONDARY())
+                                .text_color(settings_text_secondary(
+                                    self.project_store.ui.theme_mode,
+                                ))
                                 .child(detail),
                         )
                     })
@@ -1646,7 +1759,7 @@ impl AnotherOneApp {
                         div()
                             .mt(px(4.))
                             .text_size(rems(10. / 16.))
-                            .text_color(TEXT_SECONDARY())
+                            .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                             .child(format!("Source: {manifest_url}")),
                     ),
             )
@@ -1657,11 +1770,13 @@ impl AnotherOneApp {
                     .items_center()
                     .gap(px(8.))
                     .child(settings_general_button(
+                        mode,
                         "settings-general-check",
                         "Check for updates",
                         !check_disabled,
                         button_bg,
                         button_hover,
+                        settings_text_primary(mode),
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.updater.send(UpdaterCommand::CheckNow);
                             cx.stop_propagation();
@@ -1669,11 +1784,21 @@ impl AnotherOneApp {
                         }),
                     ))
                     .child(settings_general_button(
+                        mode,
                         "settings-general-install",
                         "Install update",
                         install_enabled,
-                        active_button_bg,
-                        active_button_bg,
+                        if install_enabled {
+                            active_button_bg
+                        } else {
+                            button_bg
+                        },
+                        if install_enabled {
+                            active_button_bg
+                        } else {
+                            button_hover
+                        },
+                        gpui::white(),
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.updater.send(UpdaterCommand::Install);
                             cx.stop_propagation();
@@ -1692,7 +1817,7 @@ impl AnotherOneApp {
                 div()
                     .text_size(rems(18. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                     .child("General"),
             )
             .child(
@@ -1701,7 +1826,7 @@ impl AnotherOneApp {
                     .max_w(px(760.))
                     .text_size(rems(12. / 16.))
                     .line_height(rems(18. / 16.))
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                     .child("Identity for this installed build, plus controls for in-app updates."),
             )
             .child(
@@ -1710,9 +1835,10 @@ impl AnotherOneApp {
                     .max_w(px(860.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(self.project_store.ui.theme_mode))
                     .bg(panel_bg)
                     .overflow_hidden()
+                    .child(theme_row)
                     .child(sidebar_metadata_row)
                     .child(build_row)
                     .child(updates_row),
@@ -1720,20 +1846,26 @@ impl AnotherOneApp {
     }
 
     fn settings_agents_content(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let panel_bg = rgb(0x23252a);
-        let row_bg = rgb(0x1f2125);
-        let pill_bg = rgb(0x2a2d33);
+        let mode = self.project_store.ui.theme_mode;
+        let panel_bg = settings_panel_bg(self.project_store.ui.theme_mode);
+        let row_bg = settings_row_bg(self.project_store.ui.theme_mode);
+        let pill_bg = settings_pill_bg(self.project_store.ui.theme_mode);
         let pill_border = gpui::white().opacity(0.10);
-        let button_bg = gpui::white().opacity(0.04);
-        let button_hover = gpui::white().opacity(0.08);
+        let button_bg = settings_button_bg(self.project_store.ui.theme_mode);
+        let button_hover = settings_button_hover(self.project_store.ui.theme_mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
-        let enabled_agents = self.enabled_agents();
+        let enabled_agents = self
+            .enabled_agents()
+            .into_iter()
+            .filter(|agent| agent.provider.map_or(true, agent_executable_available))
+            .collect::<Vec<_>>();
 
         let mut rows = div().flex().flex_col();
         for (index, agent) in AGENTS.iter().enumerate() {
             let args = self.project_store.agent_launch_args(agent.id);
-            let is_enabled = self.agent_enabled(agent.id);
-            let is_default = self.agent_is_default(agent.id);
+            let is_installed = agent.provider.map_or(true, agent_executable_available);
+            let is_enabled = self.agent_enabled(agent.id) && is_installed;
+            let is_default = self.agent_is_default(agent.id) && is_installed;
             let draft = self
                 .settings_agent_input
                 .drafts
@@ -1756,10 +1888,13 @@ impl AnotherOneApp {
                 .gap(px(20.))
                 .px(px(18.))
                 .py(px(16.))
-                .bg(row_bg);
+                .bg(row_bg)
+                .opacity(if is_installed { 1.0 } else { 0.45 });
 
             if index > 0 {
-                row = row.border_t_1().border_color(BORDER_SUBTLE());
+                row = row
+                    .border_t_1()
+                    .border_color(settings_border(self.project_store.ui.theme_mode));
             }
 
             let mut arg_pills = div().flex().flex_row().flex_wrap().gap(px(8.));
@@ -1774,7 +1909,7 @@ impl AnotherOneApp {
                         .bg(pill_bg)
                         .text_size(rems(12. / 16.))
                         .font_family("Lilex Nerd Font Mono")
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                         .child("No extra args"),
                 );
             } else {
@@ -1796,7 +1931,9 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_family("Lilex Nerd Font Mono")
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(
+                                        self.project_store.ui.theme_mode,
+                                    ))
                                     .child(arg_label),
                             )
                             .child(
@@ -1824,7 +1961,9 @@ impl AnotherOneApp {
                                             .items_center()
                                             .justify_center()
                                             .text_size(rems(11. / 16.))
-                                            .text_color(TEXT_SECONDARY())
+                                            .text_color(settings_text_secondary(
+                                                self.project_store.ui.theme_mode,
+                                            ))
                                             .child("x"),
                                     ),
                             ),
@@ -1864,7 +2003,7 @@ impl AnotherOneApp {
                                                 div().flex_none().child(branded_icon(
                                                     agent.icon,
                                                     18.,
-                                                    Some(TEXT_PRIMARY()),
+                                                    Some(settings_text_primary(self.project_store.ui.theme_mode)),
                                                 )),
                                             )
                                             .child(
@@ -1879,17 +2018,25 @@ impl AnotherOneApp {
                                                             .font_weight(
                                                                 gpui::FontWeight::MEDIUM,
                                                             )
-                                                            .text_color(TEXT_PRIMARY())
+                                                            .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                                                             .child(agent.label),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_size(rems(11. / 16.))
-                                                            .text_color(TEXT_SECONDARY())
-                                                            .child(format!(
-                                                                "Extra argv tokens passed to {} on every launch and resume.",
-                                                                agent.label
-                                                            )),
+                                                            .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
+                                                            .child(if is_installed {
+                                                                format!(
+                                                                    "Extra argv tokens passed to {} on every launch and resume.",
+                                                                    agent.label
+                                                                )
+                                                            } else {
+                                                                format!(
+                                                                    "{} is not installed on your PATH. Install `{}` to enable or make it the default.",
+                                                                    agent.label,
+                                                                    agent.provider.map_or(agent.id, AgentProviderKind::command)
+                                                                )
+                                                            }),
                                                     ),
                                             ),
                                     ),
@@ -1913,7 +2060,7 @@ impl AnotherOneApp {
                                             .border_color(if is_focused {
                                                 active_button_bg.opacity(0.85)
                                             } else {
-                                                BORDER_SUBTLE()
+                                                settings_border(self.project_store.ui.theme_mode)
                                             })
                                             .bg(button_bg)
                                             .pl(px(10.))
@@ -1933,6 +2080,7 @@ impl AnotherOneApp {
                                                 ),
                                             )
                                             .child(render_settings_agent_input_content(
+                                                mode,
                                                 &draft,
                                                 is_focused,
                                                 self.settings_agent_input.cursor,
@@ -1946,7 +2094,7 @@ impl AnotherOneApp {
                                             .px(px(12.))
                                             .rounded(px(8.))
                                             .border_1()
-                                            .border_color(BORDER_SUBTLE())
+                                            .border_color(settings_border(self.project_store.ui.theme_mode))
                                             .bg(button_bg)
                                             .cursor_pointer()
                                             .hover(move |style| style.bg(button_hover))
@@ -1968,7 +2116,7 @@ impl AnotherOneApp {
                                                     .font_weight(
                                                         gpui::FontWeight::MEDIUM,
                                                     )
-                                                    .text_color(TEXT_PRIMARY())
+                                                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                                                     .child("Add"),
                                             ),
                                     )
@@ -1981,26 +2129,29 @@ impl AnotherOneApp {
                                             .border_color(if is_default {
                                                 active_button_bg.opacity(0.85)
                                             } else {
-                                                BORDER_SUBTLE()
+                                                settings_border(self.project_store.ui.theme_mode)
                                             })
                                             .bg(if is_default { active_button_bg } else { button_bg })
-                                            .cursor_pointer()
-                                            .hover(move |style| {
-                                                style.bg(if is_default {
-                                                    active_button_bg
-                                                } else {
-                                                    button_hover
-                                                })
+                                            .when(is_installed, |button| {
+                                                button
+                                                    .cursor_pointer()
+                                                    .hover(move |style| {
+                                                        style.bg(if is_default {
+                                                            active_button_bg
+                                                        } else {
+                                                            button_hover
+                                                        })
+                                                    })
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(
+                                                            move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                                this.set_default_agent(agent.id, cx);
+                                                                cx.stop_propagation();
+                                                            },
+                                                        ),
+                                                    )
                                             })
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(
-                                                    move |this, _ev: &MouseDownEvent, _window, cx| {
-                                                        this.set_default_agent(agent.id, cx);
-                                                        cx.stop_propagation();
-                                                    },
-                                                ),
-                                            )
                                             .child(
                                                 div()
                                                     .h_full()
@@ -2017,7 +2168,7 @@ impl AnotherOneApp {
                                                             .text_color(if is_default {
                                                                 gpui::white()
                                                             } else {
-                                                                TEXT_SECONDARY()
+                                                                settings_text_secondary(self.project_store.ui.theme_mode)
                                                             })
                                                             .child(if is_default {
                                                                 "Default"
@@ -2034,7 +2185,7 @@ impl AnotherOneApp {
                                                             .border_color(if is_default {
                                                                 gpui::white().opacity(0.85)
                                                             } else {
-                                                                BORDER_SUBTLE()
+                                                                settings_border(self.project_store.ui.theme_mode)
                                                             })
                                                             .bg(if is_default {
                                                                 gpui::white().opacity(0.16)
@@ -2062,23 +2213,26 @@ impl AnotherOneApp {
                                             .px(px(10.))
                                             .rounded(px(8.))
                                             .border_1()
-                                            .border_color(BORDER_SUBTLE())
+                                            .border_color(settings_border(self.project_store.ui.theme_mode))
                                             .bg(button_bg)
-                                            .cursor_pointer()
-                                            .hover(move |style| style.bg(button_hover))
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(
-                                                    move |this, _ev: &MouseDownEvent, _window, cx| {
-                                                        this.set_agent_enabled(
-                                                            agent.id,
-                                                            !is_enabled,
-                                                            cx,
-                                                        );
-                                                        cx.stop_propagation();
-                                                    },
-                                                ),
-                                            )
+                                            .when(is_installed, |button| {
+                                                button
+                                                    .cursor_pointer()
+                                                    .hover(move |style| style.bg(button_hover))
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(
+                                                            move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                                this.set_agent_enabled(
+                                                                    agent.id,
+                                                                    !is_enabled,
+                                                                    cx,
+                                                                );
+                                                                cx.stop_propagation();
+                                                            },
+                                                        ),
+                                                    )
+                                            })
                                             .child(
                                                 div()
                                                     .h_full()
@@ -2093,11 +2247,13 @@ impl AnotherOneApp {
                                                                 gpui::FontWeight::MEDIUM,
                                                             )
                                                             .text_color(if is_enabled {
-                                                                gpui::white()
+                                                                settings_text_primary(self.project_store.ui.theme_mode)
                                                             } else {
-                                                                TEXT_SECONDARY()
+                                                                settings_text_secondary(self.project_store.ui.theme_mode)
                                                             })
-                                                            .child(if is_enabled {
+                                                            .child(if !is_installed {
+                                                                "Not installed"
+                                                            } else if is_enabled {
                                                                 "Enabled"
                                                             } else {
                                                                 "Disabled"
@@ -2112,7 +2268,7 @@ impl AnotherOneApp {
                                                             .border_color(if is_enabled {
                                                                 active_button_bg.opacity(0.85)
                                                             } else {
-                                                                BORDER_SUBTLE()
+                                                                settings_border(self.project_store.ui.theme_mode)
                                                             })
                                                             .bg(if is_enabled {
                                                                 active_button_bg
@@ -2151,7 +2307,7 @@ impl AnotherOneApp {
                 div()
                     .text_size(rems(18. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                     .child("Agents"),
             )
             .child(
@@ -2160,7 +2316,7 @@ impl AnotherOneApp {
                     .max_w(px(760.))
                     .text_size(rems(12. / 16.))
                     .line_height(rems(18. / 16.))
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                     .child(
                         "Manage per-agent argv tokens and availability. Disabled agents stay here so they can be re-enabled, but they are hidden from New Task and Add Agent pickers. Changes save immediately.",
                     ),
@@ -2177,7 +2333,7 @@ impl AnotherOneApp {
                     .gap(px(16.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(self.project_store.ui.theme_mode))
                     .bg(panel_bg)
                     .px(px(16.))
                     .py(px(14.))
@@ -2190,13 +2346,13 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                                     .child("Availability"),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(TEXT_SECONDARY())
+                                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                                     .child(
                                         "Choose which enabled agent is used first for new tasks and new agent tabs. Disabled agents can still be re-enabled and edited here.",
                                     ),
@@ -2206,7 +2362,7 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(11. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                             .child(format!("{} enabled", enabled_agents.len())),
                     ),
             )
@@ -2217,7 +2373,7 @@ impl AnotherOneApp {
                     .max_w(px(860.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(self.project_store.ui.theme_mode))
                     .bg(panel_bg)
                     .px(px(16.))
                     .py(px(14.))
@@ -2230,13 +2386,13 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                                     .child("Token rules"),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(TEXT_SECONDARY())
+                                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                                     .child(
                                         "Whitespace is rejected because spaces would create multiple argv tokens. Reorder by removing and re-adding.",
                                     ),
@@ -2248,7 +2404,7 @@ impl AnotherOneApp {
                     .max_w(px(860.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(self.project_store.ui.theme_mode))
                     .bg(panel_bg)
                     .overflow_hidden()
                     .child(rows),
@@ -2256,10 +2412,11 @@ impl AnotherOneApp {
     }
 
     fn settings_open_in_content(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let panel_bg = rgb(0x23252a);
-        let row_bg = rgb(0x1f2125);
-        let button_bg = gpui::white().opacity(0.04);
-        let button_hover = gpui::white().opacity(0.08);
+        let mode = self.project_store.ui.theme_mode;
+        let panel_bg = settings_panel_bg(mode);
+        let row_bg = settings_row_bg(mode);
+        let button_bg = settings_button_bg(mode);
+        let button_hover = settings_button_hover(mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
         let enabled_apps = self.enabled_open_in_apps();
 
@@ -2288,7 +2445,7 @@ impl AnotherOneApp {
                 );
 
             if index > 0 {
-                row = row.border_t_1().border_color(BORDER_SUBTLE());
+                row = row.border_t_1().border_color(settings_border(mode));
             }
 
             rows = rows.child(
@@ -2302,7 +2459,7 @@ impl AnotherOneApp {
                             svg()
                                 .path(app.icon_path())
                                 .size(px(16.))
-                                .text_color(TEXT_PRIMARY()),
+                                .text_color(settings_text_primary(mode)),
                         )
                         .child(
                             div()
@@ -2313,13 +2470,13 @@ impl AnotherOneApp {
                                     div()
                                         .text_size(rems(13. / 16.))
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(TEXT_PRIMARY())
+                                        .text_color(settings_text_primary(mode))
                                         .child(app.label()),
                                 )
                                 .child(
                                     div()
                                         .text_size(rems(11. / 16.))
-                                        .text_color(TEXT_SECONDARY())
+                                        .text_color(settings_text_secondary(mode))
                                         .child(app.description()),
                                 ),
                         ),
@@ -2335,9 +2492,9 @@ impl AnotherOneApp {
                                 .text_size(rems(11. / 16.))
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .text_color(if is_enabled {
-                                    gpui::white()
+                                    settings_text_primary(mode)
                                 } else {
-                                    TEXT_SECONDARY()
+                                    settings_text_secondary(mode)
                                 })
                                 .child(if is_enabled { "Enabled" } else { "Disabled" }),
                         )
@@ -2350,7 +2507,7 @@ impl AnotherOneApp {
                                 .border_color(if is_enabled {
                                     active_button_bg.opacity(0.85)
                                 } else {
-                                    BORDER_SUBTLE()
+                                    settings_border(mode)
                                 })
                                 .bg(if is_enabled {
                                     active_button_bg
@@ -2396,7 +2553,7 @@ impl AnotherOneApp {
                 div()
                     .text_size(rems(18. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(settings_text_primary(mode))
                     .child("Open In"),
             )
             .child(
@@ -2405,7 +2562,7 @@ impl AnotherOneApp {
                     .max_w(px(760.))
                     .text_size(rems(12. / 16.))
                     .line_height(rems(18. / 16.))
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(mode))
                     .child(
                         "Choose which detected apps appear in the project header's Open In menu.",
                     ),
@@ -2422,7 +2579,7 @@ impl AnotherOneApp {
                     .gap(px(16.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(mode))
                     .bg(panel_bg)
                     .px(px(16.))
                     .py(px(14.))
@@ -2435,13 +2592,13 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(mode))
                                     .child("Detected apps"),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(TEXT_SECONDARY())
+                                    .text_color(settings_text_secondary(mode))
                                     .child(availability_note),
                             ),
                     )
@@ -2449,7 +2606,7 @@ impl AnotherOneApp {
                         div()
                             .text_size(rems(11. / 16.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(mode))
                             .child(format!("{} enabled", enabled_apps.len())),
                     ),
             )
@@ -2459,7 +2616,7 @@ impl AnotherOneApp {
                         .max_w(px(860.))
                         .rounded(px(12.))
                         .border_1()
-                        .border_color(BORDER_SUBTLE())
+                        .border_color(settings_border(mode))
                         .bg(panel_bg)
                         .px(px(20.))
                         .py(px(18.))
@@ -2467,7 +2624,7 @@ impl AnotherOneApp {
                             div()
                                 .text_size(rems(12. / 16.))
                                 .line_height(rems(18. / 16.))
-                                .text_color(TEXT_SECONDARY())
+                                .text_color(settings_text_secondary(mode))
                                 .child(
                                     "Install Cursor, Zed, VS Code, Ghostty, WezTerm, or use your system file manager, then restart the app to refresh the menu.",
                                 ),
@@ -2480,7 +2637,7 @@ impl AnotherOneApp {
                         .max_w(px(860.))
                         .rounded(px(12.))
                         .border_1()
-                        .border_color(BORDER_SUBTLE())
+                        .border_color(settings_border(mode))
                         .bg(panel_bg)
                         .overflow_hidden()
                         .child(rows),
@@ -2499,7 +2656,7 @@ impl AnotherOneApp {
                 div()
                     .text_size(rems(18. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                     .child("Git Actions"),
             )
             .child(
@@ -2508,7 +2665,7 @@ impl AnotherOneApp {
                     .max_w(px(760.))
                     .text_size(rems(12. / 16.))
                     .line_height(rems(18. / 16.))
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                     .child(
                         "Customize the instructions sent to the LLM when the app generates commit messages and pull request title/body content. The app appends the relevant git context automatically. Changes save immediately, and you can reset back to the built-in instructions at any time.",
                     ),
@@ -2560,7 +2717,7 @@ impl AnotherOneApp {
             .px(px(18.))
             .py(px(14.))
             .border_b_1()
-            .border_color(BORDER_SUBTLE())
+            .border_color(settings_border(self.project_store.ui.theme_mode))
             .child(
                 div()
                     .flex()
@@ -2658,7 +2815,7 @@ impl AnotherOneApp {
                 div()
                     .text_size(rems(11. / 16.))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                     .child(label),
             )
             .child(dropdown)
@@ -2685,7 +2842,7 @@ impl AnotherOneApp {
                 .border_color(if open {
                     active_button_bg.opacity(0.85)
                 } else {
-                    BORDER_SUBTLE()
+                    settings_border(self.project_store.ui.theme_mode)
                 })
                 .bg(button_bg)
                 .flex()
@@ -2707,7 +2864,7 @@ impl AnotherOneApp {
                         .min_w_0()
                         .text_size(rems(12. / 16.))
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                         .truncate()
                         .child(selected_label),
                 )
@@ -2715,7 +2872,7 @@ impl AnotherOneApp {
                     svg()
                         .path("assets/icons/icons__chevron-down.svg")
                         .size(px(14.))
-                        .text_color(TEXT_SECONDARY()),
+                        .text_color(settings_text_secondary(self.project_store.ui.theme_mode)),
                 ),
         );
 
@@ -2723,8 +2880,8 @@ impl AnotherOneApp {
             let mut list = div()
                 .rounded(px(8.))
                 .border_1()
-                .border_color(BORDER_SUBTLE())
-                .bg(rgb(0x2b2d31))
+                .border_color(settings_border(self.project_store.ui.theme_mode))
+                .bg(settings_panel_bg(self.project_store.ui.theme_mode))
                 .shadow_md()
                 .overflow_hidden();
             for option in option_elements {
@@ -2773,11 +2930,15 @@ impl AnotherOneApp {
                             cx.stop_propagation();
                         }),
                     )
-                    .child(branded_icon(icon_path, 16., Some(TEXT_PRIMARY())))
+                    .child(branded_icon(
+                        icon_path,
+                        16.,
+                        Some(settings_text_primary(self.project_store.ui.theme_mode)),
+                    ))
                     .child(
                         div()
                             .text_size(rems(12. / 16.))
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                             .child(git_action_provider_label(provider)),
                     )
                     .into_any_element()
@@ -2830,7 +2991,7 @@ impl AnotherOneApp {
                     .child(
                         div()
                             .text_size(rems(12. / 16.))
-                            .text_color(TEXT_PRIMARY())
+                            .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                             .child(option.label),
                     )
                     .into_any_element()
@@ -2848,11 +3009,13 @@ impl AnotherOneApp {
         element_id_prefix: &'static str,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let panel_bg = rgb(0x23252a);
-        let button_bg = gpui::white().opacity(0.04);
-        let button_hover = gpui::white().opacity(0.08);
+        let mode = self.project_store.ui.theme_mode;
+        let panel_bg = settings_panel_bg(self.project_store.ui.theme_mode);
+        let button_bg = settings_button_bg(self.project_store.ui.theme_mode);
+        let button_hover = settings_button_hover(self.project_store.ui.theme_mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
-        let editor_bg = rgb(0x191b1f);
+        let editor_bg =
+            crate::theme::app_theme_for_preference(self.project_store.ui.theme_mode).terminal_bg;
         let using_default = match kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
                 self.project_store.ui.git_commit_generation_script.is_none()
@@ -2871,7 +3034,7 @@ impl AnotherOneApp {
             .max_w(px(960.))
             .rounded(px(12.))
             .border_1()
-            .border_color(BORDER_SUBTLE())
+            .border_color(settings_border(self.project_store.ui.theme_mode))
             .bg(panel_bg)
             .overflow_hidden()
             .child(
@@ -2884,7 +3047,7 @@ impl AnotherOneApp {
                     .px(px(18.))
                     .py(px(14.))
                     .border_b_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(self.project_store.ui.theme_mode))
                     .child(
                         div()
                             .flex()
@@ -2894,13 +3057,17 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(13. / 16.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(
+                                        self.project_store.ui.theme_mode,
+                                    ))
                                     .child(title),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(TEXT_SECONDARY())
+                                    .text_color(settings_text_secondary(
+                                        self.project_store.ui.theme_mode,
+                                    ))
                                     .child(if using_default {
                                         default_label
                                     } else {
@@ -2916,7 +3083,7 @@ impl AnotherOneApp {
                             .rounded(px(8.))
                             .border_1()
                             .border_color(if using_default {
-                                BORDER_SUBTLE()
+                                settings_border(self.project_store.ui.theme_mode)
                             } else {
                                 active_button_bg.opacity(0.85)
                             })
@@ -2948,7 +3115,7 @@ impl AnotherOneApp {
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(if using_default {
-                                        TEXT_PRIMARY()
+                                        settings_text_primary(self.project_store.ui.theme_mode)
                                     } else {
                                         gpui::white()
                                     })
@@ -2977,7 +3144,7 @@ impl AnotherOneApp {
                         .border_color(if is_focused {
                             active_button_bg.opacity(0.85)
                         } else {
-                            BORDER_SUBTLE()
+                            settings_border(self.project_store.ui.theme_mode)
                         })
                         .bg(editor_bg)
                         .px(px(14.))
@@ -3002,6 +3169,7 @@ impl AnotherOneApp {
                                     kind,
                                     draft.to_string(),
                                     render_settings_multiline_input_content(
+                                        mode,
                                         draft,
                                         is_focused,
                                         input.cursor,
@@ -3015,13 +3183,14 @@ impl AnotherOneApp {
     }
 
     fn settings_keybindings_content(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let panel_bg = rgb(0x23252a);
-        let row_bg = rgb(0x1f2125);
+        let mode = self.project_store.ui.theme_mode;
+        let panel_bg = settings_panel_bg(mode);
+        let row_bg = settings_row_bg(mode);
         let table_header = hsla(0., 0., 0.45, 1.);
-        let pill_bg = rgb(0x2a2d33);
+        let pill_bg = settings_pill_bg(mode);
         let pill_border = gpui::white().opacity(0.10);
-        let button_bg = gpui::white().opacity(0.04);
-        let button_hover = gpui::white().opacity(0.08);
+        let button_bg = settings_button_bg(mode);
+        let button_hover = settings_button_hover(mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
         let destructive_text = hsla(0.0, 0.73, 0.67, 1.);
 
@@ -3041,7 +3210,7 @@ impl AnotherOneApp {
                 .bg(row_bg);
 
             if index > 0 {
-                row = row.border_t_1().border_color(BORDER_SUBTLE());
+                row = row.border_t_1().border_color(settings_border(mode));
             }
 
             let shortcut_display = if is_capturing {
@@ -3059,18 +3228,18 @@ impl AnotherOneApp {
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .text_color(TEXT_SECONDARY())
+                            .text_color(settings_text_secondary(mode))
                             .child("Esc cancels. Delete clears."),
                     )
             } else {
-                self.render_shortcut_pills(shortcut, pill_bg, pill_border)
+                self.render_shortcut_pills(shortcut, pill_bg.into(), pill_border)
             };
 
             let capture_label = if is_capturing { "Listening…" } else { "Edit" };
             let capture_text = if is_capturing {
                 gpui::white()
             } else {
-                TEXT_PRIMARY()
+                settings_text_primary(mode)
             };
 
             rows = rows.child(
@@ -3083,7 +3252,7 @@ impl AnotherOneApp {
                             div()
                                 .text_size(rems(13. / 16.))
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(TEXT_PRIMARY())
+                                .text_color(settings_text_primary(mode))
                                 .child(action.label()),
                         )
                         .child(shortcut_display),
@@ -3104,7 +3273,7 @@ impl AnotherOneApp {
                                 .border_color(if is_capturing {
                                     active_button_bg.opacity(0.85)
                                 } else {
-                                    BORDER_SUBTLE()
+                                    settings_border(mode)
                                 })
                                 .bg(if is_capturing {
                                     active_button_bg
@@ -3144,7 +3313,7 @@ impl AnotherOneApp {
                                 .px(px(12.))
                                 .rounded(px(8.))
                                 .border_1()
-                                .border_color(BORDER_SUBTLE())
+                                .border_color(settings_border(mode))
                                 .bg(button_bg)
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(button_hover))
@@ -3162,7 +3331,7 @@ impl AnotherOneApp {
                                         .items_center()
                                         .text_size(rems(12. / 16.))
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(TEXT_PRIMARY())
+                                        .text_color(settings_text_primary(mode))
                                         .child("Reset"),
                                 ),
                         )
@@ -3173,7 +3342,7 @@ impl AnotherOneApp {
                                 .px(px(12.))
                                 .rounded(px(8.))
                                 .border_1()
-                                .border_color(BORDER_SUBTLE())
+                                .border_color(settings_border(mode))
                                 .bg(button_bg)
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(button_hover))
@@ -3209,7 +3378,7 @@ impl AnotherOneApp {
                 div()
                     .text_size(rems(18. / 16.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(settings_text_primary(mode))
                     .child("Keybindings"),
             )
             .child(
@@ -3218,7 +3387,7 @@ impl AnotherOneApp {
                     .max_w(px(720.))
                     .text_size(rems(12. / 16.))
                     .line_height(rems(18. / 16.))
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(mode))
                     .child(
                         "Choose Edit on a command, then press the new key combination. Changes save immediately and apply to tab and navigation shortcuts across the app.",
                     ),
@@ -3235,7 +3404,7 @@ impl AnotherOneApp {
                     .gap(px(16.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(mode))
                     .bg(panel_bg)
                     .px(px(16.))
                     .py(px(14.))
@@ -3248,13 +3417,13 @@ impl AnotherOneApp {
                                 div()
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(mode))
                                     .child("Capture rules"),
                             )
                             .child(
                                 div()
                                     .text_size(rems(11. / 16.))
-                                    .text_color(TEXT_SECONDARY())
+                                    .text_color(settings_text_secondary(mode))
                                     .child("Use at least one modifier key. Duplicate shortcuts are blocked."),
                             ),
                     )
@@ -3265,7 +3434,7 @@ impl AnotherOneApp {
                             .px(px(12.))
                             .rounded(px(8.))
                             .border_1()
-                            .border_color(BORDER_SUBTLE())
+                            .border_color(settings_border(mode))
                             .bg(button_bg)
                             .cursor_pointer()
                             .hover(move |s| s.bg(button_hover))
@@ -3283,7 +3452,7 @@ impl AnotherOneApp {
                                     .items_center()
                                     .text_size(rems(12. / 16.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(TEXT_PRIMARY())
+                                    .text_color(settings_text_primary(mode))
                                     .child("Reset All"),
                             ),
                     ),
@@ -3297,7 +3466,7 @@ impl AnotherOneApp {
                     .max_w(px(860.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER_SUBTLE())
+                    .border_color(settings_border(mode))
                     .bg(panel_bg)
                     .overflow_hidden()
                     .child(
@@ -3309,7 +3478,7 @@ impl AnotherOneApp {
                             .px(px(18.))
                             .h(px(38.))
                             .border_b_1()
-                            .border_color(BORDER_SUBTLE())
+                            .border_color(settings_border(mode))
                             .text_size(rems(11. / 16.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(table_header)
@@ -3337,7 +3506,7 @@ impl AnotherOneApp {
                     .bg(pill_bg)
                     .text_size(rems(12. / 16.))
                     .font_family("Lilex Nerd Font Mono")
-                    .text_color(TEXT_SECONDARY())
+                    .text_color(settings_text_secondary(self.project_store.ui.theme_mode))
                     .child("Unassigned"),
             );
         }
@@ -3354,7 +3523,7 @@ impl AnotherOneApp {
                     .bg(pill_bg)
                     .text_size(rems(12. / 16.))
                     .font_family("Lilex Nerd Font Mono")
-                    .text_color(TEXT_PRIMARY())
+                    .text_color(settings_text_primary(self.project_store.ui.theme_mode))
                     .child(keybinding_token_label(token)),
             );
         }
@@ -3650,11 +3819,13 @@ fn shape_settings_input_line(
 }
 
 fn settings_general_button<F>(
+    mode: ThemeMode,
     id: &'static str,
     label: &'static str,
     enabled: bool,
     bg: gpui::Hsla,
     hover_bg: gpui::Hsla,
+    enabled_text: gpui::Hsla,
     on_click: F,
 ) -> impl IntoElement
 where
@@ -3666,14 +3837,14 @@ where
         .py(px(7.))
         .rounded(px(8.))
         .border_1()
-        .border_color(BORDER_SUBTLE())
+        .border_color(settings_border(mode))
         .bg(bg)
         .text_size(rems(12. / 16.))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(if enabled {
-            TEXT_PRIMARY()
+            enabled_text
         } else {
-            TEXT_SECONDARY()
+            settings_text_secondary(mode)
         })
         .child(label);
 
@@ -3685,6 +3856,44 @@ where
     } else {
         base.into_any_element()
     }
+}
+
+fn settings_theme_button<F>(
+    mode: ThemeMode,
+    id: &'static str,
+    label: &'static str,
+    selected: bool,
+    bg: gpui::Hsla,
+    hover_bg: gpui::Hsla,
+    selected_bg: gpui::Hsla,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut gpui::Window, &mut App) + 'static,
+{
+    div()
+        .id(id)
+        .px(px(12.))
+        .py(px(7.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(if selected {
+            selected_bg.opacity(0.85)
+        } else {
+            settings_border(mode)
+        })
+        .bg(if selected { selected_bg } else { bg })
+        .text_size(rems(12. / 16.))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(if selected {
+            gpui::white()
+        } else {
+            settings_text_primary(mode)
+        })
+        .child(label)
+        .cursor_pointer()
+        .hover(move |s| s.bg(if selected { selected_bg } else { hover_bg }))
+        .on_mouse_down(MouseButton::Left, on_click)
 }
 
 fn updater_status_strings(state: &crate::updater::UpdateState) -> (String, Option<String>) {
@@ -3785,6 +3994,7 @@ fn move_settings_multiline_cursor_to_line_edge(
 }
 
 fn render_settings_agent_input_content(
+    mode: ThemeMode,
     text: &str,
     focused: bool,
     cursor: usize,
@@ -3802,11 +4012,19 @@ fn render_settings_agent_input_content(
             .text_size(rems(12. / 16.))
             .font_family("Lilex Nerd Font Mono")
             .child(if focused {
-                div().w(px(1.)).h(px(16.)).mr(px(1.)).bg(TEXT_PRIMARY())
+                div()
+                    .w(px(1.))
+                    .h(px(16.))
+                    .mr(px(1.))
+                    .bg(settings_text_primary(mode))
             } else {
                 div().w(px(0.))
             })
-            .child(div().text_color(TEXT_SECONDARY()).child("argv-token"));
+            .child(
+                div()
+                    .text_color(settings_text_secondary(mode))
+                    .child("argv-token"),
+            );
     }
 
     let selected = selection.filter(|range| range.start < range.end);
@@ -3854,11 +4072,11 @@ fn render_settings_agent_input_content(
     let trailing = visible_text[trailing_start..].to_string();
 
     if !prefix.is_empty() {
-        row = row.child(div().text_color(TEXT_PRIMARY()).child(prefix));
+        row = row.child(div().text_color(settings_text_primary(mode)).child(prefix));
     }
 
     if focused {
-        row = row.child(div().w(px(1.)).h(px(16.)).bg(TEXT_PRIMARY()));
+        row = row.child(div().w(px(1.)).h(px(16.)).bg(settings_text_primary(mode)));
     }
 
     if !middle.is_empty() {
@@ -3866,19 +4084,24 @@ fn render_settings_agent_input_content(
             div()
                 .px(px(1.))
                 .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
-                .text_color(TEXT_PRIMARY())
+                .text_color(settings_text_primary(mode))
                 .child(middle),
         );
     }
 
     if !trailing.is_empty() {
-        row = row.child(div().text_color(TEXT_PRIMARY()).child(trailing));
+        row = row.child(
+            div()
+                .text_color(settings_text_primary(mode))
+                .child(trailing),
+        );
     }
 
     row
 }
 
 fn render_settings_multiline_input_content(
+    mode: ThemeMode,
     text: &str,
     focused: bool,
     cursor: usize,
@@ -3906,13 +4129,17 @@ fn render_settings_multiline_input_content(
                 .items_center()
                 .gap(px(0.))
                 .child(if focused {
-                    div().w(px(1.)).h(px(16.)).mr(px(1.)).bg(TEXT_PRIMARY())
+                    div()
+                        .w(px(1.))
+                        .h(px(16.))
+                        .mr(px(1.))
+                        .bg(settings_text_primary(mode))
                 } else {
                     div().w(px(0.))
                 })
                 .child(
                     div()
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(settings_text_secondary(mode))
                         .child(placeholder.to_string()),
                 ),
         );
@@ -3944,13 +4171,17 @@ fn render_settings_multiline_input_content(
                 let middle = &line_text[range.clone()];
                 let suffix = &line_text[range.end..];
                 if !prefix.is_empty() {
-                    row = row.child(div().text_color(TEXT_PRIMARY()).child(prefix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(prefix.to_string()),
+                    );
                 }
                 row = row.child(
                     div()
                         .px(px(1.))
                         .bg(hsla(220. / 360., 0.55, 0.55, 0.35))
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(settings_text_primary(mode))
                         .child(if middle.is_empty() {
                             " ".to_string()
                         } else {
@@ -3958,30 +4189,46 @@ fn render_settings_multiline_input_content(
                         }),
                 );
                 if !suffix.is_empty() {
-                    row = row.child(div().text_color(TEXT_PRIMARY()).child(suffix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(suffix.to_string()),
+                    );
                 }
             }
             (None, Some(local_cursor)) => {
                 let prefix = &line_text[..local_cursor.min(line_text.len())];
                 let suffix = &line_text[local_cursor.min(line_text.len())..];
                 if !prefix.is_empty() {
-                    row = row.child(div().text_color(TEXT_PRIMARY()).child(prefix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(prefix.to_string()),
+                    );
                 }
-                row = row.child(div().w(px(1.)).h(px(16.)).bg(TEXT_PRIMARY()));
+                row = row.child(div().w(px(1.)).h(px(16.)).bg(settings_text_primary(mode)));
                 if !suffix.is_empty() {
-                    row = row.child(div().text_color(TEXT_PRIMARY()).child(suffix.to_string()));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode))
+                            .child(suffix.to_string()),
+                    );
                 }
                 if prefix.is_empty() && suffix.is_empty() {
-                    row = row.child(div().text_color(TEXT_PRIMARY().opacity(0.)).child(" "));
+                    row = row.child(
+                        div()
+                            .text_color(settings_text_primary(mode).opacity(0.))
+                            .child(" "),
+                    );
                 }
             }
             (None, None) => {
                 row = row.child(
                     div()
                         .text_color(if line_text.is_empty() {
-                            TEXT_PRIMARY().opacity(0.)
+                            settings_text_primary(mode).opacity(0.)
                         } else {
-                            TEXT_PRIMARY()
+                            settings_text_primary(mode)
                         })
                         .child(if line_text.is_empty() {
                             " ".to_string()

@@ -753,6 +753,14 @@ pub(crate) struct TerminalTabMenuState {
     pub(crate) anchor_y: f32,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct TerminalTabRenameState {
+    pub(crate) section_id: SectionId,
+    pub(crate) tab_id: String,
+    pub(crate) draft: String,
+    pub(crate) cursor: usize,
+}
+
 /// Per-frame hover hint for a terminal link. Carries the link target
 /// (so the tooltip can show what's about to open) and the cursor
 /// screen position (so the tooltip renders next to the cursor without
@@ -951,6 +959,7 @@ pub(crate) struct WorkspacePane {
     pub(crate) section_states: HashMap<SectionId, SectionState>,
     /// Context menu for a terminal tab.
     pub(crate) terminal_tab_menu: Option<TerminalTabMenuState>,
+    pub(crate) terminal_tab_rename: Option<TerminalTabRenameState>,
     /// Tooltip state for the link the cursor is currently over inside a
     /// terminal pane. Populated on `on_mouse_move`; cleared on
     /// mouse-leave. The tooltip itself renders alongside the canvas in
@@ -989,6 +998,7 @@ impl WorkspacePane {
             project_page_pr_query_draft: String::new(),
             section_states,
             terminal_tab_menu: None,
+            terminal_tab_rename: None,
             terminal_context_menu: None,
             terminal_link_hover: None,
             pinned_tab_close_confirm: None,
@@ -1411,6 +1421,155 @@ impl WorkspacePane {
         let removed = self.close_tab_ids(&confirm.section_id, tab_ids, cx);
         cx.notify();
         removed.into_iter().next()
+    }
+
+    pub(crate) fn begin_tab_rename(
+        &mut self,
+        section_id: &SectionId,
+        tab_id: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(title) = self
+            .section_states
+            .get(section_id)
+            .and_then(|state| state.tabs.iter().find(|tab| tab.id == tab_id))
+            .map(|tab| tab.title.clone())
+        else {
+            return false;
+        };
+
+        self.terminal_tab_menu = None;
+        self.terminal_tab_rename = Some(TerminalTabRenameState {
+            section_id: section_id.clone(),
+            tab_id: tab_id.to_string(),
+            cursor: title.len(),
+            draft: title,
+        });
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn cancel_tab_rename(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_tab_rename.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn commit_tab_rename(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(rename) = self.terminal_tab_rename.take() else {
+            return false;
+        };
+        let title = rename.draft.trim().to_string();
+        if title.is_empty() {
+            cx.notify();
+            return false;
+        }
+
+        let changed = self
+            .section_states
+            .get_mut(&rename.section_id)
+            .and_then(|state| state.tabs.iter_mut().find(|tab| tab.id == rename.tab_id))
+            .is_some_and(|tab| {
+                if tab.title == title && tab.fixed_title.as_deref() == Some(title.as_str()) {
+                    return false;
+                }
+                tab.title = title.clone();
+                tab.fixed_title = Some(title);
+                true
+            });
+        if changed {
+            self.persist_section_state(&rename.section_id, cx);
+        }
+        cx.notify();
+        changed
+    }
+
+    pub(crate) fn handle_tab_rename_key_down(
+        &mut self,
+        ev: &gpui::KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(rename) = self.terminal_tab_rename.as_mut() else {
+            return false;
+        };
+        cx.stop_propagation();
+        let modifiers = ev.keystroke.modifiers;
+        match ev.keystroke.key.as_str() {
+            "escape" => self.cancel_tab_rename(cx),
+            "enter" => {
+                self.commit_tab_rename(cx);
+            }
+            "backspace" => {
+                if rename.cursor > 0 {
+                    let start = if modifiers.platform {
+                        0
+                    } else if modifiers.control || modifiers.alt {
+                        word_start_before(&rename.draft, rename.cursor)
+                    } else {
+                        rename.draft[..rename.cursor]
+                            .char_indices()
+                            .next_back()
+                            .map_or(0, |(index, _)| index)
+                    };
+                    rename.draft.replace_range(start..rename.cursor, "");
+                    rename.cursor = start;
+                    cx.notify();
+                }
+            }
+            "delete" => {
+                if rename.cursor < rename.draft.len() {
+                    let end = rename.draft[rename.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map_or(rename.draft.len(), |(index, _)| rename.cursor + index);
+                    rename.draft.replace_range(rename.cursor..end, "");
+                    cx.notify();
+                }
+            }
+            "left" => {
+                if rename.cursor > 0 {
+                    rename.cursor = rename.draft[..rename.cursor]
+                        .char_indices()
+                        .next_back()
+                        .map_or(0, |(index, _)| index);
+                    cx.notify();
+                }
+            }
+            "right" => {
+                if rename.cursor < rename.draft.len() {
+                    rename.cursor = rename.draft[rename.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map_or(rename.draft.len(), |(index, _)| rename.cursor + index);
+                    cx.notify();
+                }
+            }
+            "home" => {
+                rename.cursor = 0;
+                cx.notify();
+            }
+            "end" => {
+                rename.cursor = rename.draft.len();
+                cx.notify();
+            }
+            _ if modifiers.platform && ev.keystroke.key.as_str() == "v" => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    let text = text.replace(['\n', '\r', '\t'], " ");
+                    rename.draft.insert_str(rename.cursor, &text);
+                    rename.cursor += text.len();
+                    cx.notify();
+                }
+            }
+            _ if modifiers.control || modifiers.platform || modifiers.function => {}
+            _ => {
+                if let Some(key_char) = ev.keystroke.key_char.as_deref() {
+                    rename.draft.insert_str(rename.cursor, key_char);
+                    rename.cursor += key_char.len();
+                    cx.notify();
+                }
+            }
+        }
+        true
     }
 
     pub(crate) fn toggle_tab_pinned(
@@ -3613,6 +3772,35 @@ impl AnotherOneApp {
             .open_in_app_enabled(app, &self.available_open_in_apps)
     }
 
+    pub(crate) fn set_theme_mode(
+        &mut self,
+        mode: crate::project_store::ThemeMode,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_store.set_theme_mode(mode);
+        self.sync_registry_project_store();
+        // Republish a best-guess resolved theme immediately so the
+        // alacritty cell renderer picks up the new defaults before the
+        // next frame. The render path will refine this with the actual
+        // OS appearance once it has a Window in hand.
+        let resolved = match mode {
+            crate::project_store::ThemeMode::Light => crate::theme::ResolvedTheme::Light,
+            crate::project_store::ThemeMode::Dark => crate::theme::ResolvedTheme::Dark,
+            crate::project_store::ThemeMode::System => crate::theme::current_terminal_theme(),
+        };
+        crate::theme::set_terminal_theme(resolved);
+        // Rebuild cached terminal surface snapshots against the new default
+        // fg/bg. Alacritty's grid does not change when the app theme changes,
+        // so the runtime cache must be explicitly invalidated.
+        self.terminal_surface_snapshots.clear();
+        for (key, runtime) in &mut self.live_terminal_runtimes {
+            runtime.invalidate_snapshot();
+            self.terminal_surface_snapshots
+                .insert(key.clone(), runtime.snapshot());
+        }
+        cx.notify();
+    }
+
     pub(crate) fn open_settings_section(
         &mut self,
         section: crate::settings_page::SettingsSection,
@@ -4216,6 +4404,7 @@ impl AnotherOneApp {
     #[hotpath::measure]
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = ProjectStore::load();
+        theme::set_terminal_theme(theme::resolve_theme(window, store.ui.theme_mode));
         let registry_state = Arc::new(Mutex::new(crate::daemon_host::RegistryState::new(
             store.clone(),
         )));
@@ -5511,7 +5700,11 @@ impl AnotherOneApp {
     }
 
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        crate::leakscope::note_drain_call();
+        // RAII guard: increments drain count, times the body, and
+        // bumps the watchdog heartbeat on drop. See issue #125 —
+        // this is the signal that distinguishes drain-starvation
+        // from a true deadlock when the GUI appears frozen.
+        let _drain_guard = crate::leakscope::drain_tick_guard();
         let mut updated = false;
         // Tracks tabs that accumulated VT output during this drain tick. We
         // used to rebuild + clone each tab's surface snapshot on *every*
@@ -5690,7 +5883,10 @@ impl AnotherOneApp {
     }
 
     fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        crate::leakscope::note_drain_call();
+        // Same guard as the hot drain above — warm-launch traffic
+        // lands in its own bounded channel but shares the GPUI main
+        // thread, so it contributes to lockup diagnostics too.
+        let _drain_guard = crate::leakscope::drain_tick_guard();
         let mut updated = false;
 
         loop {
@@ -10665,8 +10861,23 @@ impl AnotherOneApp {
         while let Some(event) = self.updater.try_recv() {
             match event {
                 crate::updater::UpdaterEvent::StateChanged(state) => {
+                    let installing = matches!(state, crate::updater::UpdateState::Installing);
                     self.updater_state = state;
                     should_notify = true;
+                    if installing {
+                        // The install helper is waiting for our
+                        // PID to exit before it swaps the
+                        // bundle/AppImage and relaunches.
+                        // Schedule a quit so the user doesn't
+                        // have to close the app manually.
+                        cx.spawn(async move |_, cx| {
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(250))
+                                .await;
+                            let _ = cx.update(|cx| cx.quit());
+                        })
+                        .detach();
+                    }
                 }
                 crate::updater::UpdaterEvent::Notice { kind, message } => match kind {
                     crate::updater::NoticeKind::Success => self.show_success_toast(message, cx),
@@ -11273,9 +11484,14 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    fn footer_add_project_button(window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let hover_bg = gpui::white().opacity(0.06);
+    fn footer_add_project_button(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let hover_bg = app_theme.overlay_hover;
 
         div()
             .id("footer-add-project-btn")
@@ -11297,9 +11513,10 @@ impl AnotherOneApp {
             )
     }
 
-    fn footer_settings_button(window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let hover_bg = gpui::white().opacity(0.06);
+    fn footer_settings_button(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let hover_bg = app_theme.overlay_hover;
 
         div()
             .id("footer-settings-btn")
@@ -11321,9 +11538,57 @@ impl AnotherOneApp {
             )
     }
 
+    fn footer_install_update_button(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let accent_bg = app_theme.info.bg;
+        let accent_hover_bg = app_theme.info.muted;
+        let text_col = app_theme.text_primary;
+
+        div()
+            .id("footer-install-update-btn")
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .h(px(26.))
+            .px(px(8.))
+            .rounded_md()
+            .bg(accent_bg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(accent_hover_bg))
+            .tooltip(move |_window, cx| Self::action_tooltip_view("Install downloaded update", cx))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                    this.updater.send(crate::updater::UpdaterCommand::Install);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                svg()
+                    .path("assets/icons/icons__tool-download.svg")
+                    .size(px(14.))
+                    .text_color(icon_col),
+            )
+            .child(
+                div()
+                    .text_size(rems(12. / 16.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(text_col)
+                    .child(SharedString::from("Install update")),
+            )
+    }
+
     fn footer_branch_indicator(&self, window: &Window, cx: &App) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let text_col = gpui::white().opacity(0.55);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let text_col = app_theme.text_muted;
 
         if let Some(section) = self.workspace_pane.read(cx).active_section.clone() {
             let name: SharedString = section.branch_name.clone().into();
@@ -11352,8 +11617,9 @@ impl AnotherOneApp {
     }
 
     fn footer_worktree_indicator(&self, window: &Window, cx: &App) -> impl IntoElement {
-        let icon_col = theme::toggle_icon_color(window);
-        let text_col = gpui::white().opacity(0.55);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let icon_col = theme::toggle_icon_color_for_mode(window, self.project_store.ui.theme_mode);
+        let text_col = app_theme.text_muted;
 
         let worktree_name = self
             .workspace_pane
@@ -11657,6 +11923,7 @@ impl AnotherOneApp {
 
     fn toast_visuals(
         kind: ToastKind,
+        app_theme: theme::AppTheme,
     ) -> (
         &'static str,
         gpui::Hsla,
@@ -11667,30 +11934,30 @@ impl AnotherOneApp {
         match kind {
             ToastKind::Success => (
                 "assets/icons/icons__badge-check.svg",
-                hsla(138. / 360., 0.52, 0.66, 1.),
-                hsla(136. / 360., 0.40, 0.24, 0.90),
-                hsla(136. / 360., 0.42, 0.34, 0.55),
+                app_theme.success.icon,
+                app_theme.success.bg,
+                app_theme.success.muted,
                 "Success",
             ),
             ToastKind::Error => (
                 "assets/icons/icons__alert-triangle.svg",
-                hsla(0., 0.68, 0.72, 1.),
-                hsla(0., 0.40, 0.24, 0.90),
-                hsla(0., 0.45, 0.36, 0.58),
+                app_theme.error.icon,
+                app_theme.error.bg,
+                app_theme.error.muted,
                 "Error",
             ),
             ToastKind::Warning => (
                 "assets/icons/icons__badge-alert.svg",
-                hsla(42. / 360., 0.70, 0.68, 1.),
-                hsla(40. / 360., 0.42, 0.24, 0.90),
-                hsla(42. / 360., 0.46, 0.34, 0.58),
+                app_theme.warning.icon,
+                app_theme.warning.bg,
+                app_theme.warning.muted,
                 "Warning",
             ),
             ToastKind::Info => (
                 "assets/icons/icons__file_icons__info.svg",
-                hsla(208. / 360., 0.62, 0.72, 1.),
-                hsla(210. / 360., 0.40, 0.24, 0.90),
-                hsla(208. / 360., 0.42, 0.34, 0.58),
+                app_theme.info.icon,
+                app_theme.info.bg,
+                app_theme.info.muted,
                 "Info",
             ),
         }
@@ -11743,6 +12010,7 @@ impl AnotherOneApp {
         let label_color = hsla(208. / 360., 0.60, 0.72, 1.);
         let text_color = hsla(0., 0., 0.92, 1.);
         let format_color = hsla(0., 0., 0.70, 1.);
+        let terminal_bg = theme::terminal_background_for_theme(theme::ResolvedTheme::Dark);
 
         div()
             .w(px(320.))
@@ -11755,7 +12023,7 @@ impl AnotherOneApp {
             .occlude()
             .opacity(opacity)
             .child(
-                div().h(px(240.)).w_full().bg(rgb(0x17191d)).child(
+                div().h(px(240.)).w_full().bg(terminal_bg).child(
                     img(preview.image.clone())
                         .size_full()
                         .object_fit(ObjectFit::Contain),
@@ -11819,16 +12087,17 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let toast_id = toast.id;
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
         let (icon_path, icon_color, icon_bg, border_color, tone_label) =
-            Self::toast_visuals(toast.kind);
-        let text_col = hsla(0., 0., 0.94, 1.);
-        let card_bg = rgb(0x202329);
-        let copy_hover = gpui::white().opacity(0.06);
+            Self::toast_visuals(toast.kind, app_theme);
+        let text_col = app_theme.text_primary;
+        let card_bg = app_theme.card_bg;
+        let copy_hover = app_theme.overlay_hover;
         let copied = self.toast_copy_feedback_visible(toast_id);
         let copy_icon = if copied {
-            hsla(138. / 360., 0.58, 0.72, 1.)
+            app_theme.success.icon
         } else {
-            hsla(0., 0., 0.72, 1.)
+            app_theme.text_muted
         };
         let message = toast.message.clone();
         let copy_message = toast.copy_message.clone();
@@ -12497,6 +12766,7 @@ mod tests {
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
         TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
     };
+    use crate::theme::{dark_theme, light_theme};
     use daemon_proto::TerminalRestoreStatus;
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, Modifiers, ScrollDelta};
     use std::collections::{HashMap, HashSet};
@@ -12748,6 +13018,28 @@ mod tests {
             event,
             DrainedGitAction::Disconnected { project_id } if project_id == "project-a"
         )));
+    }
+
+    #[test]
+    fn toast_visuals_follow_light_theme_colors() {
+        let light = light_theme();
+        let (_icon_path, icon_color, icon_bg, border_color, _tone_label) =
+            AnotherOneApp::toast_visuals(ToastKind::Info, light);
+
+        assert_eq!(icon_color, light.info.icon);
+        assert_eq!(icon_bg, light.info.bg);
+        assert_eq!(border_color, light.info.muted);
+    }
+
+    #[test]
+    fn toast_visuals_follow_dark_theme_colors() {
+        let dark = dark_theme();
+        let (_icon_path, icon_color, icon_bg, border_color, _tone_label) =
+            AnotherOneApp::toast_visuals(ToastKind::Warning, dark);
+
+        assert_eq!(icon_color, dark.warning.icon);
+        assert_eq!(icon_bg, dark.warning.bg);
+        assert_eq!(border_color, dark.warning.muted);
     }
 
     #[test]
@@ -15042,7 +15334,10 @@ impl AnotherOneApp {
             .w(px(44.))
             .h(px(PHONE_HEADER_H))
             .cursor_pointer()
-            .child(Self::sidebar_toggle_svg(window))
+            .child(Self::sidebar_toggle_svg(
+                window,
+                self.project_store.ui.theme_mode,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _window, cx| {
@@ -15060,6 +15355,7 @@ impl AnotherOneApp {
             .cursor_pointer()
             .child(Self::right_sidebar_toggle_svg(
                 window,
+                self.project_store.ui.theme_mode,
             ))
             .on_mouse_down(
                 MouseButton::Left,
@@ -15101,7 +15397,10 @@ impl AnotherOneApp {
             .w(px(44.))
             .h(px(PHONE_HEADER_H))
             .cursor_pointer()
-            .child(Self::sidebar_toggle_svg(window))
+            .child(Self::sidebar_toggle_svg(
+                window,
+                self.project_store.ui.theme_mode,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _window, cx| {
@@ -15214,7 +15513,7 @@ impl AnotherOneApp {
                 .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))
                 .child(self.sidebar_task_delete_confirm_modal(cx))
-                .child(self.pinned_tab_close_confirm_modal(cx))
+                .child(self.pinned_tab_close_confirm_modal(window, cx))
                 .child(self.pair_mobile_overlay(cx))
                 .child(self.toast_layer(cx)),
             self.focus_handle.clone(),
@@ -15365,6 +15664,23 @@ fn short_id(id: &str) -> String {
     }
 }
 
+fn word_start_before(text: &str, cursor: usize) -> usize {
+    let prefix = &text[..cursor];
+    let trimmed = prefix.trim_end_matches(char::is_whitespace);
+    let after_ws = trimmed.len();
+    match trimmed.rfind(char::is_whitespace) {
+        Some(idx) => {
+            let mut i = idx;
+            while !trimmed.is_char_boundary(i) {
+                i += 1;
+            }
+            let after = trimmed[i..].chars().next().map_or(i, |c| i + c.len_utf8());
+            after.min(after_ws)
+        }
+        None => 0,
+    }
+}
+
 impl Render for AnotherOneApp {
     #[hotpath::measure]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -15444,6 +15760,25 @@ impl Render for AnotherOneApp {
         let scale = self.font_size / 13.0;
         window.set_rem_size(px(16.0 * scale));
 
+        let theme_mode = self.project_store.ui.theme_mode;
+        let chrome_bg = theme::chrome_bg_for_mode(window, theme_mode);
+        // Publish the resolved theme so non-GPUI renderers (terminal cell
+        // resolver) can pick theme-aware default fg/bg colors. If System
+        // resolves differently from the last frame, rebuild snapshots because
+        // their default fg/bg colors are baked into cached TextRuns.
+        let resolved_theme = theme::resolve_theme(window, theme_mode);
+        if theme::current_terminal_theme() != resolved_theme {
+            theme::set_terminal_theme(resolved_theme);
+            self.terminal_surface_snapshots.clear();
+            for (key, runtime) in &mut self.live_terminal_runtimes {
+                runtime.invalidate_snapshot();
+                self.terminal_surface_snapshots
+                    .insert(key.clone(), runtime.snapshot());
+            }
+        } else {
+            theme::set_terminal_theme(resolved_theme);
+        }
+
         // ── Settings page (replaces normal layout) ─────────────
         if self.settings_open {
             let settings = self.render_settings_page(window, cx);
@@ -15456,7 +15791,7 @@ impl Render for AnotherOneApp {
                     .relative()
                     .size_full()
                     .track_focus(&self.focus_handle)
-                    .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                    .when(supports_custom_chrome, |d| d.bg(chrome_bg))
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -15515,7 +15850,7 @@ impl Render for AnotherOneApp {
             .items_center()
             .h(px(FOOTER_H))
             .flex_shrink_0()
-            .bg(theme::chrome_bg(window))
+            .bg(chrome_bg)
             // Left section: fixed width matching sidebar
             .child(
                 div()
@@ -15526,8 +15861,15 @@ impl Render for AnotherOneApp {
                     .pl(px(10.))
                     .flex_shrink_0()
                     .w(px(sw))
-                    .child(Self::footer_settings_button(window, cx))
-                    .child(Self::footer_add_project_button(window, cx)),
+                    .child(self.footer_settings_button(window, cx))
+                    .child(self.footer_add_project_button(window, cx))
+                    .when(
+                        matches!(
+                            self.updater_state,
+                            crate::updater::UpdateState::ReadyToInstall { .. }
+                        ),
+                        |d| d.child(self.footer_install_update_button(window, cx)),
+                    ),
             )
             // Right section: branch + worktree
             .child(
@@ -15558,7 +15900,7 @@ impl Render for AnotherOneApp {
                 .relative()
                 .size_full()
                 .track_focus(&self.focus_handle)
-                .when(supports_custom_chrome, |d| d.bg(theme::chrome_bg(window)))
+                .when(supports_custom_chrome, |d| d.bg(chrome_bg))
                 .on_mouse_move(cx.listener(Self::on_mouse_move))
                 .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -15593,14 +15935,14 @@ impl Render for AnotherOneApp {
                 .child(self.sidebar_task_menu_overlay(window, cx))
                 .child(self.terminal_tab_menu_overlay(window, cx))
                 .child(self.terminal_context_menu_overlay(window, cx))
-                .child(self.terminal_search_bar_overlay(cx))
+                .child(self.terminal_search_bar_overlay(window, cx))
                 .child(self.new_task_modal_overlay(cx))
                 .child(self.create_branch_modal_overlay(cx))
                 .child(self.add_agent_modal_overlay(cx))
                 .child(self.custom_action_modal_overlay(cx))
                 .child(self.project_remove_confirm_modal(cx))
                 .child(self.sidebar_task_delete_confirm_modal(cx))
-                .child(self.pinned_tab_close_confirm_modal(cx))
+                .child(self.pinned_tab_close_confirm_modal(window, cx))
                 .child(self.pair_mobile_overlay(cx))
                 .child(self.toast_layer(cx)),
             self.focus_handle.clone(),

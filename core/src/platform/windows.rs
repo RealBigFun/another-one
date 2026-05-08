@@ -56,7 +56,10 @@ impl HeadlessPlatform for WindowsPlatform {
             OpenInAppKind::Cursor => command_exists(&["cursor"]),
             OpenInAppKind::Zed => command_exists(&["zed"]),
             OpenInAppKind::VsCode => command_exists(&["code"]),
+            OpenInAppKind::PhpStorm => command_exists(&["phpstorm"]),
             OpenInAppKind::Ghostty => command_exists(&["ghostty"]),
+            OpenInAppKind::WezTerm => command_exists(&["wezterm"]),
+            OpenInAppKind::SystemTerminal => command_exists(&["wt"]),
             OpenInAppKind::FileManager => true,
         }
     }
@@ -66,9 +69,15 @@ impl HeadlessPlatform for WindowsPlatform {
             OpenInAppKind::Cursor => Command::new("cursor"),
             OpenInAppKind::Zed => Command::new("zed"),
             OpenInAppKind::VsCode => Command::new("code"),
+            OpenInAppKind::PhpStorm => Command::new("phpstorm"),
             OpenInAppKind::Ghostty => Command::new("ghostty"),
+            OpenInAppKind::WezTerm => Command::new("wezterm"),
+            OpenInAppKind::SystemTerminal => Command::new("wt"),
             OpenInAppKind::FileManager => Command::new("explorer"),
         };
+        if matches!(app, OpenInAppKind::SystemTerminal) {
+            command.arg("-d");
+        }
         command.arg(path);
         command
     }

@@ -105,6 +105,19 @@ impl AgentProviderKind {
     pub fn label(self) -> &'static str {
         harness(self).label()
     }
+
+    pub fn command(self) -> &'static str {
+        harness(self).command()
+    }
+}
+
+pub fn agent_executable_available(provider: AgentProviderKind) -> bool {
+    // Packaged macOS apps launched from Finder get a minimal environment and
+    // often miss the user's shell-initialized PATH. Use the same augmented
+    // command PATH that terminal launches use so Settings availability matches
+    // what a spawned agent tab can actually run.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    crate::command_env::command_available(provider.command(), &cwd)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -190,7 +203,7 @@ pub const AGENTS: &[AgentDef] = &[
     },
 ];
 
-pub const DEFAULT_AGENT_ID: &str = "pi";
+pub const DEFAULT_AGENT_ID: &str = "codex";
 
 pub fn effective_enabled_agents(configured: Option<&HashSet<String>>) -> Vec<&'static AgentDef> {
     AGENTS
@@ -307,9 +320,10 @@ pub(crate) struct OsCommandRunner;
 
 impl CommandRunner for OsCommandRunner {
     fn run(&self, program: &str, args: &[&str], cwd: &Path) -> anyhow::Result<CommandOutput> {
-        let output = Command::new(program)
-            .args(args)
-            .current_dir(cwd)
+        let mut command = Command::new(program);
+        command.args(args).current_dir(cwd);
+        crate::command_env::apply_command_path(&mut command, cwd);
+        let output = command
             .output()
             .with_context(|| format!("failed to execute {program}"))?;
         Ok(CommandOutput {

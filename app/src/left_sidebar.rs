@@ -51,6 +51,7 @@ struct SidebarTaskMenuRequest {
 }
 
 struct ProjectRowState {
+    theme_mode: crate::project_store::ThemeMode,
     github_url: Option<String>,
     active: bool,
     has_children: bool,
@@ -724,6 +725,12 @@ impl AnotherOneApp {
             return;
         }
 
+        if self.workspace_pane.update(cx, |workspace, cx| {
+            workspace.handle_tab_rename_key_down(ev, cx)
+        }) {
+            return;
+        }
+
         // Cmd-F search overlay claims keystrokes first so typed
         // characters extend the query rather than feeding the TUI.
         if self.terminal_search.is_some() {
@@ -1150,7 +1157,7 @@ impl AnotherOneApp {
     fn project_row(
         project: &Project,
         state: ProjectRowState,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let color = theme::project_color(&project.id);
@@ -1165,11 +1172,12 @@ impl AnotherOneApp {
         let pid = project.id.clone();
         let expand_id = project.repo_id.clone();
 
-        let text_col = hsla(0., 0., 0.90, 1.);
-        let hover_bg = gpui::white().opacity(0.06);
-        let active_bg = gpui::white().opacity(0.03);
-        let active_border = gpui::white().opacity(0.18);
-        let chevron_col = hsla(0., 0., 0.55, 1.);
+        let app_theme = theme::app_theme(window, state.theme_mode);
+        let text_col = app_theme.text_primary;
+        let hover_bg = app_theme.overlay_hover;
+        let active_bg = app_theme.overlay_rest;
+        let active_border = app_theme.border;
+        let chevron_col = app_theme.text_muted;
         let pid_row = pid.clone();
         let pid_toggle = expand_id;
         let pid_menu = pid.clone();
@@ -1421,20 +1429,22 @@ impl AnotherOneApp {
         &self,
         entry: &SidebarTaskEntry,
         is_active: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let text_col = hsla(0., 0., 0.80, 1.);
-        let muted_col = hsla(0., 0., 0.50, 1.);
+        let app_theme = crate::theme::app_theme(window, self.project_store.ui.theme_mode);
+        let text_col = app_theme.text_secondary;
+        let muted_col = app_theme.text_muted;
         let green = hsla(138. / 360., 0.50, 0.74, 1.);
         let red = hsla(352. / 360., 0.52, 0.76, 1.);
         let pull_request_open = rgb(0x059669);
         let pull_request_closed = rgb(0x71717a);
         let pull_request_merged = rgb(0x7c3aed);
-        let hover_bg = gpui::white().opacity(0.05);
-        let active_bg = gpui::white().opacity(0.03);
-        let active_border = gpui::white().opacity(0.18);
-        let edit_border = hsla(220. / 360., 0.55, 0.60, 1.);
-        let edit_bg = gpui::black().opacity(0.14);
+        let hover_bg = app_theme.overlay_hover;
+        let active_bg = app_theme.overlay_rest;
+        let active_border = app_theme.border;
+        let edit_border = app_theme.focus_ring;
+        let edit_bg = app_theme.overlay_hover_strong;
         let delete_hover_bg = hsla(0., 0.40, 0.34, 0.24);
         let delete_icon_col = hsla(0., 0.72, 0.72, 1.);
 
@@ -1839,10 +1849,7 @@ impl AnotherOneApp {
                     // as tapping the project row, just with that
                     // task's terminal active. No-op on desktop.
                     if this.is_narrow(window) {
-                        this.mobile_push(
-                            MobileView::Project(left_click_project_id.clone()),
-                            cx,
-                        );
+                        this.mobile_push(MobileView::Project(left_click_project_id.clone()), cx);
                     }
                 }),
             )
@@ -2717,8 +2724,9 @@ impl AnotherOneApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let bg = theme::chrome_bg(window);
-        let header_col = hsla(0., 0., 0.50, 1.);
+        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let bg = app_theme.chrome_bg;
+        let header_col = app_theme.text_muted;
 
         let mut col = div()
             .flex()
@@ -2771,6 +2779,7 @@ impl AnotherOneApp {
                 list_div = list_div.child(div().child(Self::project_row(
                     &group.root_project,
                     ProjectRowState {
+                        theme_mode: self.project_store.ui.theme_mode,
                         github_url: self.project_github_links.get(root_id).cloned(),
                         active,
                         has_children: !group.child_entries.is_empty(),
@@ -2809,7 +2818,8 @@ impl AnotherOneApp {
                         let is_active = active_section.as_ref().is_some_and(|section| {
                             section.task_id.as_deref() == Some(entry.task_id.as_str())
                         });
-                        child_list = child_list.child(self.branch_row(entry, is_active, cx));
+                        child_list =
+                            child_list.child(self.branch_row(entry, is_active, window, cx));
                     }
 
                     children = children.child(child_list);

@@ -6,6 +6,9 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 const SHELL_PATH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 const SHELL_PATH_DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -21,12 +24,42 @@ pub(crate) fn command_path_env(cwd: &Path) -> OsString {
     })
 }
 
-fn command_path_dirs_from_os(cwd: &Path) -> Vec<PathBuf> {
+pub(crate) fn command_path_dirs_from_os(cwd: &Path) -> Vec<PathBuf> {
     command_path_dirs(
         std::env::var_os("PATH").as_deref(),
         shell_initialized_path_dirs(cwd),
         dirs::home_dir().as_deref(),
     )
+}
+
+pub(crate) fn command_available(command: &str, cwd: &Path) -> bool {
+    command_available_in_dirs(command, command_path_dirs_from_os(cwd))
+}
+
+fn command_available_in_dirs(command: &str, dirs: impl IntoIterator<Item = PathBuf>) -> bool {
+    dirs.into_iter()
+        .map(|dir| dir.join(command))
+        .any(|candidate| is_executable_file(&candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 pub(crate) fn command_path_dirs(
@@ -184,9 +217,39 @@ fn default_path() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::command_path_dirs;
+    use super::{command_available_in_dirs, command_path_dirs};
     use std::env;
+    use std::fs;
     use std::path::{Path, PathBuf};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn command_available_in_dirs_requires_executable_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let command_path = temp_dir.path().join("agent-cli");
+        fs::write(&command_path, "#!/bin/sh\n").expect("command should be written");
+
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&command_path)
+                .expect("command metadata should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&command_path, permissions)
+                .expect("command should be made executable");
+        }
+
+        assert!(command_available_in_dirs(
+            "agent-cli",
+            vec![temp_dir.path().to_path_buf()]
+        ));
+        assert!(!command_available_in_dirs(
+            "missing-cli",
+            vec![temp_dir.path().to_path_buf()]
+        ));
+    }
 
     #[test]
     fn command_path_dirs_prefers_worktree_shell_path() {

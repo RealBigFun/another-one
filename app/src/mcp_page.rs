@@ -15,18 +15,18 @@
 //! tracked as a follow-up.
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, rgb, AnyElement, Context, IntoElement, MouseButton,
-    MouseDownEvent,
+    div, hsla, prelude::*, px, rems, AnyElement, Context, IntoElement, MouseButton, MouseDownEvent,
 };
 
 use another_one_core::agents::AgentProviderKind;
 use another_one_core::mcp::{catalog, McpServer, McpSource, McpTransport};
 
 use crate::app::AnotherOneApp;
+use crate::project_store::ThemeMode;
 
-const TEXT_PRIMARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.92, 1.);
-const TEXT_SECONDARY: fn() -> gpui::Hsla = || hsla(0., 0., 0.55, 1.);
-const BORDER_SUBTLE: fn() -> gpui::Hsla = || gpui::white().opacity(0.08);
+fn mcp_theme(mode: ThemeMode) -> crate::theme::AppTheme {
+    crate::theme::app_theme_for_preference(mode)
+}
 
 /// Providers with `supports_mcp_client() == true`. Kept in sync
 /// manually with `AgentHarness::supports_mcp_client` — a future
@@ -42,11 +42,13 @@ const MCP_PROVIDERS: &[(AgentProviderKind, &str)] = &[
 
 impl AnotherOneApp {
     pub(crate) fn settings_mcp_content(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let panel_bg = rgb(0x23252a);
-        let row_bg = rgb(0x1f2125);
+        let mode = self.project_store.ui.theme_mode;
+        let theme = mcp_theme(mode);
+        let panel_bg = theme.card_bg;
+        let row_bg = theme.sunken_bg;
 
         let mut rows = div().flex().flex_col();
-        rows = rows.child(mcp_header_row());
+        rows = rows.child(mcp_header_row(mode));
 
         // Catalog entries first. If already in the registry, render
         // as a registry row (with toggles); otherwise render as an
@@ -91,16 +93,18 @@ impl AnotherOneApp {
             .rounded(px(10.))
             .overflow_hidden()
             .child(rows)
-            .child(mcp_footer_note())
+            .child(mcp_footer_note(mode))
     }
 
     fn render_mcp_catalog_prompt_row(
         &self,
         entry: &'static catalog::CatalogEntry,
-        bg: gpui::Rgba,
+        bg: gpui::Hsla,
         index: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let mode = self.project_store.ui.theme_mode;
+        let theme = mcp_theme(mode);
         let mut row = div()
             .id(("mcp-row-catalog", index))
             .flex()
@@ -111,7 +115,7 @@ impl AnotherOneApp {
             .py(px(14.))
             .bg(bg);
         if index > 0 {
-            row = row.border_t_1().border_color(BORDER_SUBTLE());
+            row = row.border_t_1().border_color(theme.border);
         }
         let label = entry.label;
         let description = entry.description;
@@ -124,13 +128,13 @@ impl AnotherOneApp {
                 .child(
                     div()
                         .text_size(rems(13. / 16.))
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(theme.text_primary)
                         .child(label),
                 )
                 .child(
                     div()
                         .text_size(rems(12. / 16.))
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(theme.text_secondary)
                         .child(description),
                 ),
         )
@@ -140,9 +144,9 @@ impl AnotherOneApp {
                 .px(px(10.))
                 .py(px(6.))
                 .rounded(px(6.))
-                .bg(gpui::white().opacity(0.06))
+                .bg(theme.overlay_hover)
                 .cursor_pointer()
-                .hover(|s| s.bg(gpui::white().opacity(0.10)))
+                .hover(|s| s.bg(theme.overlay_active))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
@@ -152,7 +156,7 @@ impl AnotherOneApp {
                 .child(
                     div()
                         .text_size(rems(12. / 16.))
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(theme.text_primary)
                         .child("Add"),
                 ),
         )
@@ -161,10 +165,12 @@ impl AnotherOneApp {
     fn render_mcp_registry_row(
         &self,
         server: &McpServer,
-        bg: gpui::Rgba,
+        bg: gpui::Hsla,
         index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let mode = self.project_store.ui.theme_mode;
+        let theme = mcp_theme(mode);
         let id = server.id.clone();
         let label = server.label.clone();
         let source_label = match server.source {
@@ -183,7 +189,7 @@ impl AnotherOneApp {
             .py(px(14.))
             .bg(bg);
         if index > 0 {
-            row = row.border_t_1().border_color(BORDER_SUBTLE());
+            row = row.border_t_1().border_color(theme.border);
         }
 
         let mut toggles = div().flex().flex_row().gap(px(6.));
@@ -199,25 +205,27 @@ impl AnotherOneApp {
                 && matches!(server.transport, McpTransport::Http { .. });
 
             let bg_color = if unsupported_transport {
-                gpui::white().opacity(0.03)
+                theme.overlay_rest
             } else if provider_errored {
                 hsla(0. / 360., 0.70, 0.40, 1.)
             } else if is_on {
                 hsla(215. / 360., 0.60, 0.45, 1.)
             } else {
-                gpui::white().opacity(0.06)
+                theme.overlay_hover
             };
             let hover_bg = if unsupported_transport {
-                gpui::white().opacity(0.03)
+                theme.overlay_rest
             } else if is_on {
                 hsla(215. / 360., 0.60, 0.55, 1.)
             } else {
-                gpui::white().opacity(0.10)
+                theme.overlay_active
             };
             let text_color = if unsupported_transport {
-                TEXT_SECONDARY()
+                theme.text_secondary
+            } else if provider_errored || is_on {
+                gpui::white()
             } else {
-                TEXT_PRIMARY()
+                theme.text_primary
             };
             let mut cell = div()
                 .id(("mcp-toggle", index * 16 + pindex))
@@ -256,13 +264,13 @@ impl AnotherOneApp {
                 .child(
                     div()
                         .text_size(rems(13. / 16.))
-                        .text_color(TEXT_PRIMARY())
+                        .text_color(theme.text_primary)
                         .child(label),
                 )
                 .child(
                     div()
                         .text_size(rems(11. / 16.))
-                        .text_color(TEXT_SECONDARY())
+                        .text_color(theme.text_secondary)
                         .child(format!("{}  ·  {}", source_label, id)),
                 ),
         )
@@ -275,9 +283,9 @@ impl AnotherOneApp {
                     .px(px(8.))
                     .py(px(4.))
                     .rounded(px(5.))
-                    .bg(gpui::white().opacity(0.04))
+                    .bg(theme.overlay_rest)
                     .cursor_pointer()
-                    .hover(|s| s.bg(gpui::white().opacity(0.10)))
+                    .hover(|s| s.bg(theme.overlay_active))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
@@ -287,7 +295,7 @@ impl AnotherOneApp {
                     .child(
                         div()
                             .text_size(rems(11. / 16.))
-                            .text_color(TEXT_SECONDARY())
+                            .text_color(theme.text_secondary)
                             .child("Remove"),
                     ),
             )
@@ -354,7 +362,8 @@ impl AnotherOneApp {
     }
 }
 
-fn mcp_header_row() -> impl IntoElement {
+fn mcp_header_row(mode: ThemeMode) -> impl IntoElement {
+    let theme = mcp_theme(mode);
     div()
         .flex()
         .flex_row()
@@ -364,7 +373,7 @@ fn mcp_header_row() -> impl IntoElement {
         .child(
             div()
                 .text_size(rems(12. / 16.))
-                .text_color(TEXT_SECONDARY())
+                .text_color(theme.text_secondary)
                 .child(
                     "Toggle MCP servers on per harness. Toggling syncs the registry into each \
                      agent's native config (preserving entries AnotherOne doesn't own).",
@@ -372,16 +381,17 @@ fn mcp_header_row() -> impl IntoElement {
         )
 }
 
-fn mcp_footer_note() -> impl IntoElement {
+fn mcp_footer_note(mode: ThemeMode) -> impl IntoElement {
+    let theme = mcp_theme(mode);
     div()
         .px(px(18.))
         .py(px(12.))
         .border_t_1()
-        .border_color(BORDER_SUBTLE())
+        .border_color(theme.border)
         .child(
             div()
                 .text_size(rems(11. / 16.))
-                .text_color(TEXT_SECONDARY())
+                .text_color(theme.text_secondary)
                 .child(
                     "Custom transports, env, and headers: edit \
                      ~/.config/another-one/mcp.json. Inline editor is a follow-up.",

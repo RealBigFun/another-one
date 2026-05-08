@@ -1,6 +1,6 @@
 [package]
 name = "another-one-core"
-version = "0.1.0"
+version = "0.1.6"
 edition = "2021"
 description = "Headless domain logic for the AnotherOne desktop app — shared by both the GPUI UI and the (future) sandbox/mobile daemon."
 publish = false

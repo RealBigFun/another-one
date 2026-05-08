@@ -61,7 +61,17 @@ impl HeadlessPlatform for LinuxPlatform {
             }
             None => Command::new(default_binary_name(app)),
         };
-        command.arg(path);
+        match app {
+            OpenInAppKind::WezTerm => {
+                command.args(["start", "--cwd"]).arg(path);
+            }
+            OpenInAppKind::SystemTerminal => {
+                command.current_dir(path);
+            }
+            _ => {
+                command.arg(path);
+            }
+        }
         command
     }
 }
@@ -77,7 +87,10 @@ fn default_binary_name(app: OpenInAppKind) -> &'static str {
         OpenInAppKind::Cursor => "cursor",
         OpenInAppKind::Zed => "zed",
         OpenInAppKind::VsCode => "code",
+        OpenInAppKind::PhpStorm => "phpstorm",
         OpenInAppKind::Ghostty => "ghostty",
+        OpenInAppKind::WezTerm => "wezterm",
+        OpenInAppKind::SystemTerminal => "x-terminal-emulator",
         OpenInAppKind::FileManager => "xdg-open",
     }
 }
@@ -87,7 +100,17 @@ fn binary_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &["cursor"],
         OpenInAppKind::Zed => &["zed", "zeditor"],
         OpenInAppKind::VsCode => &["code", "code-insiders"],
+        OpenInAppKind::PhpStorm => &["phpstorm", "phpstorm.sh"],
         OpenInAppKind::Ghostty => &["ghostty"],
+        OpenInAppKind::WezTerm => &["wezterm"],
+        OpenInAppKind::SystemTerminal => &[
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "konsole",
+            "xfce4-terminal",
+            "kitty",
+            "alacritty",
+        ],
         OpenInAppKind::FileManager => &["xdg-open"],
     }
 }
@@ -97,7 +120,10 @@ fn flatpak_candidates(app: OpenInAppKind) -> &'static [&'static str] {
         OpenInAppKind::Cursor => &[],
         OpenInAppKind::Zed => &["dev.zed.Zed"],
         OpenInAppKind::VsCode => &["com.visualstudio.code"],
+        OpenInAppKind::PhpStorm => &["com.jetbrains.PhpStorm"],
         OpenInAppKind::Ghostty => &["com.mitchellh.ghostty"],
+        OpenInAppKind::WezTerm => &["org.wezfurlong.wezterm"],
+        OpenInAppKind::SystemTerminal => &[],
         OpenInAppKind::FileManager => &[],
     }
 }

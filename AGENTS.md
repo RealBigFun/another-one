@@ -58,3 +58,5 @@ bd close <id>         # Complete work
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 <!-- END BEADS INTEGRATION -->
+
+this app should have a dark and light mode.

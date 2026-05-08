@@ -4,7 +4,7 @@ use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, Context};
 use portable_pty::{native_pty_system, CommandBuilder};
@@ -230,10 +230,18 @@ fn launch_terminal(
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
                     let _ = broadcast_for_reader.send(bytes.clone());
+                    // Time the bounded-channel send so the lockup
+                    // watchdog / sampler can tell us whether this
+                    // reader is being backpressured by a slow or
+                    // deadlocked GPUI drain. See issue #125.
+                    let send_started = Instant::now();
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
                         bytes,
                     });
+                    crate::leakscope::record_pty_send_block_ns(
+                        send_started.elapsed().as_nanos() as u64,
+                    );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
@@ -359,8 +367,15 @@ fn launch_warm_terminal(
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
                     let _ = broadcast_for_reader.send(bytes.clone());
+                    // Same timing shim as the hot launch path above;
+                    // warm tabs share the 2048-cap `SyncSender` so
+                    // they can deadlock/starve identically.
+                    let send_started = Instant::now();
                     let _ =
                         output_sender.send(WarmTerminalLaunchReply::Output { launch_id, bytes });
+                    crate::leakscope::record_pty_send_block_ns(
+                        send_started.elapsed().as_nanos() as u64,
+                    );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
@@ -695,15 +710,12 @@ fn newest_claude_session_id(cwd: &Path) -> Option<String> {
 }
 
 fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
+    builder.env("ZED_TERM", "true");
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
-    builder.env("COLORTERM_BCE", "1");
-    builder.env("TERM_PROGRAM", "WezTerm");
-    builder.env("TERM_PROGRAM_VERSION", "20240203");
+    builder.env("TERM_PROGRAM", "zed");
+    builder.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     builder.env_remove("NO_COLOR");
-    builder.env("CLICOLOR", "1");
-    builder.env("CLICOLOR_FORCE", "1");
-    builder.env("FORCE_COLOR", "1");
     apply_agent_command_path(builder, cwd);
 }
 
@@ -854,14 +866,51 @@ pub(crate) fn prepare_pi_session_capture(env: &HarnessEnv) -> anyhow::Result<PiS
     })
 }
 
+/// Source of truth for the extension contents — embedded at compile time
+/// so release builds don't depend on the workspace path that produced them
+/// (CI runners, packaged `.app`s, end-user installs, etc.).
+const PI_SESSION_START_EXTENSION_SRC: &str =
+    include_str!("../../scripts/pi-session-start-extension.ts");
+
 pub(crate) fn pi_session_capture_extension_path() -> PathBuf {
-    // `terminal_launch.rs` lives in the `core` crate, but the Pi extension is
-    // checked into the workspace-level `scripts/` directory.
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Dev workflow: when the workspace-checked-in script is present at the
+    // path baked in by the compiler, prefer it so edits to the .ts file
+    // take effect without a rebuild. This is the only path that exists for
+    // tests run inside the source tree.
+    let workspace_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
         .join("scripts")
-        .join("pi-session-start-extension.ts")
+        .join("pi-session-start-extension.ts");
+    if workspace_path.is_file() {
+        return workspace_path;
+    }
+
+    // Release / packaged build: the compile-time path lives on the build
+    // machine (`/Users/runner/...` for CI), so we materialize the embedded
+    // copy into a stable per-user location and hand Pi that path. Falling
+    // back to a temp dir keeps things working even if the config dir is
+    // unavailable.
+    let cache_dir = dirs::config_dir()
+        .map(|d| d.join("another-one"))
+        .unwrap_or_else(std::env::temp_dir);
+    let target = cache_dir.join("pi-session-start-extension.ts");
+    let needs_write = match fs::read_to_string(&target) {
+        Ok(existing) => existing != PI_SESSION_START_EXTENSION_SRC,
+        Err(_) => true,
+    };
+    if needs_write {
+        if let Err(err) = fs::create_dir_all(&cache_dir)
+            .and_then(|_| fs::write(&target, PI_SESSION_START_EXTENSION_SRC))
+        {
+            eprintln!(
+                "another-one: failed to materialize pi session-start extension at {}: {err}",
+                target.display()
+            );
+            return workspace_path;
+        }
+    }
+    target
 }
 
 pub(crate) fn create_cursor_chat(env: &HarnessEnv, cwd: &Path) -> anyhow::Result<String> {
@@ -1178,13 +1227,14 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_command, claude_project_dir_name, claude_session_exists, discover_codex_session,
-        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
-        discover_pi_session, discovery_timeout_for_kind, pi_session_capture_extension_path,
-        pi_session_exists, prepare_codex_home_override_from, read_session_capture,
-        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
-        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
-        CLAUDE_BYPASS_PERMISSIONS_ARG, CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
+        apply_terminal_environment, build_command, claude_project_dir_name, claude_session_exists,
+        discover_codex_session, discover_codex_session_from_index,
+        discover_codex_session_from_saved_sessions, discover_pi_session,
+        discovery_timeout_for_kind, pi_session_capture_extension_path, pi_session_exists,
+        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
+        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
+        TerminalSessionKind, TerminalSessionRef, CLAUDE_BYPASS_PERMISSIONS_ARG,
+        CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
     };
     use crate::agents::{AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
@@ -1226,6 +1276,38 @@ mod tests {
             .expect("command should have a file name");
         assert_eq!(command_name, expected[0]);
         assert_eq!(&argv[1..], &expected[1..]);
+    }
+
+    fn command_env(builder: &portable_pty::CommandBuilder, key: &str) -> Option<String> {
+        builder
+            .get_env(key)
+            .and_then(|value| value.to_str())
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn terminal_environment_matches_zed() {
+        let mut builder = portable_pty::CommandBuilder::new("env");
+
+        apply_terminal_environment(&mut builder, Path::new("/tmp/project"));
+
+        assert_eq!(command_env(&builder, "ZED_TERM").as_deref(), Some("true"));
+        assert_eq!(
+            command_env(&builder, "TERM").as_deref(),
+            Some("xterm-256color")
+        );
+        assert_eq!(
+            command_env(&builder, "COLORTERM").as_deref(),
+            Some("truecolor")
+        );
+        assert_eq!(
+            command_env(&builder, "TERM_PROGRAM").as_deref(),
+            Some("zed")
+        );
+        assert_eq!(
+            command_env(&builder, "TERM_PROGRAM_VERSION").as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]
