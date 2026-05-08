@@ -90,6 +90,8 @@ const TOAST_FADE_IN: Duration = Duration::from_millis(220);
 const TOAST_FADE_OUT: Duration = Duration::from_millis(220);
 const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_STACK_LIMIT: usize = 4;
+const TOAST_VISIBLE_MESSAGE_LIMIT: usize = 1_200;
+const TOAST_COPY_MESSAGE_LIMIT: usize = 20_000;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
 const PULL_REQUEST_LOOKUP_TTL: Duration = Duration::from_secs(30);
@@ -878,7 +880,7 @@ impl AppToast {
         shown_at: Instant,
         dismiss_at: Instant,
     ) -> Self {
-        let message = message.into();
+        let message = truncate_toast_text(message.into(), TOAST_VISIBLE_MESSAGE_LIMIT);
         Self {
             id,
             kind,
@@ -900,12 +902,26 @@ impl AppToast {
         Self {
             id,
             kind,
-            message: message.into(),
-            copy_message: copy_message.into(),
+            message: truncate_toast_text(message.into(), TOAST_VISIBLE_MESSAGE_LIMIT),
+            copy_message: truncate_toast_text(copy_message.into(), TOAST_COPY_MESSAGE_LIMIT),
             shown_at,
             dismiss_at,
         }
     }
+}
+
+fn truncate_toast_text(message: SharedString, limit: usize) -> SharedString {
+    let text = message.as_ref();
+    if text.chars().count() <= limit {
+        return message;
+    }
+
+    let truncated: String = text
+        .chars()
+        .take(limit)
+        .chain("…\n\n[truncated]".chars())
+        .collect();
+    SharedString::from(truncated)
 }
 
 #[derive(Debug, Clone)]
@@ -12817,7 +12833,8 @@ mod tests {
         AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
         NewTaskShortcutTarget, SectionId, SectionState, TabCloseScope, TerminalCellPosition,
         TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
-        TerminalSelectionRange, TerminalTab, ToastKind,
+        TerminalSelectionRange, TerminalTab, ToastKind, TOAST_COPY_MESSAGE_LIMIT,
+        TOAST_VISIBLE_MESSAGE_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -13139,6 +13156,47 @@ mod tests {
         assert_eq!(toast.message.as_ref(), "Could not start daemon.");
         assert!(toast.copy_message.as_ref().contains("Caused by:"));
         assert_ne!(toast.message, toast.copy_message);
+    }
+
+    #[test]
+    fn toast_visible_message_is_truncated() {
+        let now = Instant::now();
+        let toast = AppToast::new(
+            1,
+            ToastKind::Error,
+            "x".repeat(TOAST_VISIBLE_MESSAGE_LIMIT + 1),
+            now,
+            now + Duration::from_secs(1),
+        );
+
+        assert!(toast.message.as_ref().ends_with("[truncated]"));
+        assert!(toast.message.as_ref().len() < TOAST_VISIBLE_MESSAGE_LIMIT + 32);
+        assert_eq!(toast.copy_message, toast.message);
+    }
+
+    #[test]
+    fn toast_copy_message_is_truncated_on_char_boundaries() {
+        let now = Instant::now();
+        let toast = AppToast::with_copy_message(
+            1,
+            ToastKind::Error,
+            "Could not run command.",
+            "é".repeat(TOAST_COPY_MESSAGE_LIMIT + 1),
+            now,
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(toast.message.as_ref(), "Could not run command.");
+        assert!(toast.copy_message.as_ref().ends_with("[truncated]"));
+        assert_eq!(
+            toast
+                .copy_message
+                .as_ref()
+                .trim_end_matches("…\n\n[truncated]")
+                .chars()
+                .count(),
+            TOAST_COPY_MESSAGE_LIMIT
+        );
     }
 
     #[test]
