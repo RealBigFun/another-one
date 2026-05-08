@@ -41,8 +41,8 @@
 //! No MCP write path bypasses the broadcast today. If a future MCP
 //! tool mutates `project_store` outside the existing
 //! `client_open_*` / `client_close_*` / `with_store_mut` paths, it
-//! must call `sync_registry_project_store` (or fire
-//! `state.state_change_tx.send(())`) post-persist or mobile clients
+//! must call `sync_registry_project_store` (or
+//! `state.notify_state_changed()`) post-persist or mobile clients
 //! won't see the change.
 //!
 //! ## What's wired today (Phase B + partial C)

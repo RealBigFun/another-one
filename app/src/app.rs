@@ -6555,11 +6555,12 @@ impl AnotherOneApp {
     pub(crate) fn sync_registry_project_store(&self) {
         if let Ok(mut state) = self.registry_state.lock() {
             state.project_store = self.project_store.clone();
-            // Fire the broadcast tick so any connected mobile session
-            // pushes a fresh `WorkerReply::ProjectList` to its peer.
-            // `send` errs only when there are no receivers — fine,
-            // we're just announcing.
-            let _ = state.state_change_tx.send(());
+            // Fire the broadcast tick so any connected session's
+            // push pump sends a fresh `WorkerReply::ProjectList`.
+            // Routes through `RegistryState::notify_state_changed`
+            // so future instrumentation has one place to land —
+            // see #136.
+            state.notify_state_changed();
         }
     }
 
