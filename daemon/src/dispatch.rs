@@ -143,7 +143,16 @@ pub async fn serve_session_with_attach(
     // typed reply because `pair`'s router correlates by
     // request_id and routes unsolicited pushes to
     // `SessionEvent::Push` instead.
-    {
+    //
+    // Gated on `registry.health()`: an unhealthy registry (desktop
+    // app is quitting and the registry's `Weak` has dropped, or
+    // the daemon's sandbox-mode peer is disconnected) must not
+    // pay the `list_projects` cost on a session it can't serve. The
+    // same gate is enforced by `dispatch_call` for every non-Hello
+    // verb, so skipping here means the first real call returns the
+    // canonical `WorkerReply::Err { Internal }` and the session
+    // tears down cleanly from there. Fixes #135.
+    if registry.health().is_ok() {
         let projects = registry.list_projects();
         let repos = registry.list_repos();
         let ui = registry.ui_snapshot();
@@ -161,6 +170,11 @@ pub async fn serve_session_with_attach(
         if let Err(e) = session.push_reply(reply).await {
             return Err(e);
         }
+    } else {
+        info!(
+            viewer_id,
+            "serve_session: skipping initial ProjectList — registry unhealthy"
+        );
     }
 
     // Spawn a state-change pump: any time the registry signals a
@@ -208,6 +222,18 @@ pub async fn serve_session_with_attach(
                     Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
                 }
+            }
+            // Skip the projection rebuild when the registry is
+            // unhealthy — same rationale as the initial-push gate
+            // above. `list_projects`/`list_repos`/`ui_snapshot` may
+            // assume a live backing store; hitting them on an
+            // unhealthy registry is undefined (the
+            // `UnhealthyRegistry` test fixture panics outright).
+            // Dropping a push here is harmless because the peer
+            // will have tried a Control verb by now and received
+            // the canonical `Err { Internal }`.
+            if push_registry.health().is_err() {
+                continue;
             }
             let projects = push_registry.list_projects();
             let repos = push_registry.list_repos();
