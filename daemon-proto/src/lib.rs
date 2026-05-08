@@ -732,6 +732,15 @@ pub enum WorkerReply {
     /// wants a tree rendering later).
     ProjectList {
         projects: Vec<ProjectSummary>,
+        /// Per-repo metadata (branches, common dir) keyed by
+        /// `RepoSummary::id`. Wire-additive: older daemons omit the
+        /// field entirely and clients fall back to the empty-repo
+        /// behaviour they had before. Without this, `absorb_projection`
+        /// on the client side silently wiped locally-resolved branch
+        /// data on every daemon push — see the sidebar-flicker
+        /// regression captured around #125.
+        #[serde(default)]
+        repos: Vec<RepoSummary>,
         /// Per-user UI state — wire-additive on existing daemons
         /// (defaults to `UiSnapshot::default()` when missing).
         #[serde(default)]
@@ -1225,6 +1234,58 @@ pub struct ProjectSummary {
     /// `ProjectActionIcon` / `ProjectActionScope` / etc.
     #[serde(default)]
     pub actions: serde_json::Value,
+}
+
+/// Wire mirror of `core::project_store::RepoRecord`. Carried
+/// alongside [`ProjectSummary`] on [`WorkerReply::ProjectList`] so
+/// the sidebar's repo-grouping data (branch catalog, common git
+/// dir) survives the daemon → client projection roundtrip.
+///
+/// Before this struct existed, `absorb_projection` on the client
+/// side had to synthesise one bare `RepoRecord` per project from
+/// wire fields alone — branches, `common_dir`, and the committed
+/// branch order were all lost. Desktop absorbs its own projection
+/// back through the paired in-memory session on every state
+/// change, so the lossy roundtrip silently wiped locally-resolved
+/// branch metadata dozens of times per second. See the
+/// sidebar-flicker regression surfaced by the #125 watchdog.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RepoSummary {
+    pub id: String,
+    /// Absolute git common dir on the daemon host. `None` when the
+    /// registry hasn't resolved it yet (freshly added repo with no
+    /// git inspection run).
+    #[serde(default)]
+    pub common_dir: Option<String>,
+    /// Branch names in the user-visible sort order the desktop
+    /// sidebar already computed. Clients render in this exact order
+    /// so the same repo looks identical on both sides.
+    #[serde(default)]
+    pub branch_order: Vec<String>,
+    /// Per-branch metadata, one entry per `branch_order` name.
+    /// Emitted as a flat list rather than a map for stable wire
+    /// ordering; clients rebuild the HashMap on absorb.
+    #[serde(default)]
+    pub branches: Vec<RepoBranchSummary>,
+}
+
+/// Wire mirror of `core::project_store::RepoBranchRecord`. Carries
+/// the branch-level data the sidebar needs for its row renderer
+/// (ahead/behind, last-commit text, default-branch flag). Explicit
+/// fields rather than an opaque JSON passthrough because the shape
+/// is stable and mobile's sidebar decides layout from these
+/// numbers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RepoBranchSummary {
+    pub name: String,
+    #[serde(default)]
+    pub last_commit_relative: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub ahead_count: usize,
+    #[serde(default)]
+    pub behind_count: usize,
 }
 
 /// Per-user UI state mirrored from `core::project_store::UiState`.

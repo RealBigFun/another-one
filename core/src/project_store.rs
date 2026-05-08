@@ -193,6 +193,50 @@ impl From<daemon_proto::ProjectKind> for ProjectKind {
     }
 }
 
+/// Rehydrate the repo catalog from wire `RepoSummary`s.
+///
+/// Inverse of `daemon_host::repo_summaries`. The HashMap layout
+/// matches `ProjectStore::repos` so `set_remote_snapshot` can
+/// install it directly. An empty input (older daemon that doesn't
+/// carry repo data yet) produces an empty map, which is the same
+/// lossy behaviour `set_remote_snapshot` used to synthesise
+/// unconditionally — clients fall back to the pre-#125 "no branch
+/// catalog" rendering rather than showing stale or missing data.
+fn repos_from_summaries(
+    summaries: Vec<daemon_proto::RepoSummary>,
+) -> HashMap<String, RepoRecord> {
+    summaries
+        .into_iter()
+        .map(|summary| {
+            let branches_by_name = summary
+                .branches
+                .iter()
+                .map(|branch| {
+                    (
+                        branch.name.clone(),
+                        RepoBranchRecord {
+                            name: branch.name.clone(),
+                            last_commit_relative: branch.last_commit_relative.clone(),
+                            is_default: branch.is_default,
+                            ahead_count: branch.ahead_count,
+                            behind_count: branch.behind_count,
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            (
+                summary.id.clone(),
+                RepoRecord {
+                    id: summary.id,
+                    common_dir: summary.common_dir.map(PathBuf::from),
+                    branch_order: summary.branch_order,
+                    branches_by_name,
+                },
+            )
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCheckoutState {
     #[serde(default)]
@@ -1796,21 +1840,24 @@ impl ProjectStore {
         }
     }
 
-    pub fn set_remote_snapshot(&mut self, projects: Vec<Project>, tasks: Vec<Task>) {
-        self.repos = projects
-            .iter()
-            .map(|p| {
-                (
-                    p.repo_id.clone(),
-                    RepoRecord {
-                        id: p.repo_id.clone(),
-                        common_dir: None,
-                        branch_order: Vec::new(),
-                        branches_by_name: HashMap::new(),
-                    },
-                )
-            })
-            .collect();
+    /// Replace the projects + tasks + repos state with a snapshot
+    /// pushed by the paired daemon (mobile clients receive these
+    /// as `WorkerReply::ProjectList`). The repo map is carried
+    /// explicitly rather than synthesised from projects — the
+    /// earlier synthesising version silently wiped
+    /// locally-resolved branch metadata on every absorb, which the
+    /// desktop's in-memory session pair exercised dozens of times
+    /// per second under sustained PTY output (see the #125
+    /// watchdog sidebar-flicker regression). Does **not** `save()`
+    /// to disk; the daemon is the source of truth, the local
+    /// cache stays ephemeral.
+    pub fn set_remote_snapshot(
+        &mut self,
+        projects: Vec<Project>,
+        tasks: Vec<Task>,
+        repos: HashMap<String, RepoRecord>,
+    ) {
+        self.repos = repos;
         self.projects_by_id = projects.iter().map(|p| (p.id.clone(), p.clone())).collect();
         self.project_order = projects.iter().map(|p| p.id.clone()).collect();
         self.tasks_by_id = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
@@ -1838,6 +1885,7 @@ impl ProjectStore {
     pub fn absorb_projection(
         &mut self,
         summaries: Vec<daemon_proto::ProjectSummary>,
+        repo_summaries: Vec<daemon_proto::RepoSummary>,
         ui: daemon_proto::UiSnapshot,
     ) {
         let mut projects = Vec::with_capacity(summaries.len());
@@ -1931,7 +1979,7 @@ impl ProjectStore {
                 repo_common_dir: None,
             });
         }
-        self.set_remote_snapshot(projects, tasks);
+        self.set_remote_snapshot(projects, tasks, repos_from_summaries(repo_summaries));
         self.absorb_ui_snapshot(ui);
     }
 

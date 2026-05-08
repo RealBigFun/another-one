@@ -187,6 +187,22 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// calls this on every `Control::ListProjects`, so cheap.
     fn list_projects(&self) -> Vec<ProjectSummary>;
 
+    /// Snapshot of per-repo metadata (branches, common git dir)
+    /// alongside [`Self::list_projects`]. Bundled onto
+    /// `WorkerReply::ProjectList` so clients can rebuild the
+    /// sidebar's repo catalog without having to re-run git
+    /// inspection locally — mobile can't, and desktop was silently
+    /// wiping its own catalog on every projection push before this
+    /// landed (see the sidebar-flicker regression around #125).
+    ///
+    /// Default impl returns an empty list for registries that
+    /// don't track repo metadata (e.g. the sandbox binary); those
+    /// clients just render projects without per-repo grouping,
+    /// which is the same behaviour the old projection provided.
+    fn list_repos(&self) -> Vec<daemon_proto::RepoSummary> {
+        Vec::new()
+    }
+
     /// Snapshot of the daemon's per-user UI state — pinned tasks,
     /// expanded sidebar repos, last focused section, etc. Bundled
     /// alongside `list_projects()` in the `WorkerReply::ProjectList`
