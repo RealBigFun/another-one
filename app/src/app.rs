@@ -5327,7 +5327,11 @@ impl AnotherOneApp {
     }
 
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        crate::leakscope::note_drain_call();
+        // RAII guard: increments drain count, times the body, and
+        // bumps the watchdog heartbeat on drop. See issue #125 —
+        // this is the signal that distinguishes drain-starvation
+        // from a true deadlock when the GUI appears frozen.
+        let _drain_guard = crate::leakscope::drain_tick_guard();
         let mut updated = false;
         // Tracks tabs that accumulated VT output during this drain tick. We
         // used to rebuild + clone each tab's surface snapshot on *every*
@@ -5506,7 +5510,10 @@ impl AnotherOneApp {
     }
 
     fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        crate::leakscope::note_drain_call();
+        // Same guard as the hot drain above — warm-launch traffic
+        // lands in its own bounded channel but shares the GPUI main
+        // thread, so it contributes to lockup diagnostics too.
+        let _drain_guard = crate::leakscope::drain_tick_guard();
         let mut updated = false;
 
         loop {
