@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 use crate::agents::{
     agent_executable_available, effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig,
@@ -22,6 +25,116 @@ use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 use daemon_proto::TerminalRestoreStatus;
 
 const STORE_VERSION: u8 = 3;
+
+// ---------------------------------------------------------------
+// Background save writer (fix for #129; referenced from #125).
+// ---------------------------------------------------------------
+//
+// `ProjectStore::save()` used to `serde_json::to_string_pretty` the
+// full `StoreFile` inline on the caller's thread — which in the GUI
+// is the GPUI render thread. Under sustained sub-agent PTY output
+// (notably browser-tools / chrome-devtools MCP workloads) the
+// section-state persist path fires dozens of times per second, and
+// the render thread stalled for >2 s rebuilding JSON it had
+// rebuilt 80 ms earlier. The lockup watchdog in `app::leakscope`
+// caught four captures all rooted here.
+//
+// The writer owns a single-slot mailbox: each `save()` overwrites
+// the pending slot with its latest snapshot and signals the
+// condvar. The worker wakes, waits out a short debounce window so
+// a storm of saves collapses into one write, takes whatever
+// snapshot is most recent, and writes it synchronously on its own
+// thread. Lost intermediate snapshots are fine — the on-disk store
+// is a cache of the latest state, not an event log.
+//
+// Drop of the final `ProjectStore` flushes the mailbox once more
+// so the last save before process exit doesn't race the worker's
+// debounce sleep. Tests use the sync path via `#[cfg(test)]` so
+// assertions on file contents remain deterministic.
+
+struct SaveWorker {
+    pending: Mutex<Option<(PathBuf, StoreFile)>>,
+    cvar: Condvar,
+}
+
+static SAVE_WORKER: OnceLock<&'static SaveWorker> = OnceLock::new();
+
+/// Collapse a storm of saves this wide into one disk write. 50 ms
+/// is short enough to be invisible to the user (the next load still
+/// sees the latest state if they close the app immediately) and
+/// long enough to absorb the 100+ Hz `persist_section_state` flurry
+/// a CDP sub-agent produces. See Drop impl for the end-of-life
+/// flush that covers the "exit inside the debounce window" race.
+const SAVE_DEBOUNCE: Duration = Duration::from_millis(50);
+
+fn save_worker() -> &'static SaveWorker {
+    SAVE_WORKER.get_or_init(|| {
+        // Leak the worker so it has a 'static lifetime without a
+        // heap indirection on every access. Cost is one allocation
+        // for the lifetime of the process.
+        let worker: &'static SaveWorker = Box::leak(Box::new(SaveWorker {
+            pending: Mutex::new(None),
+            cvar: Condvar::new(),
+        }));
+        thread::Builder::new()
+            .name("project-store-save".into())
+            .spawn(move || save_worker_loop(worker))
+            .expect("spawn project-store save thread");
+        worker
+    })
+}
+
+fn save_worker_loop(worker: &'static SaveWorker) {
+    loop {
+        // Wait for at least one pending snapshot.
+        {
+            let mut guard = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
+            while guard.is_none() {
+                guard = worker
+                    .cvar
+                    .wait(guard)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+        }
+        // Let the burst settle. Any saves during this sleep land in
+        // the same mailbox slot and we'll pick up the latest below.
+        thread::sleep(SAVE_DEBOUNCE);
+        let snapshot = worker
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some((path, store)) = snapshot {
+            write_store_sync(&path, &store);
+        }
+    }
+}
+
+/// Drain the mailbox on the caller's thread. Used by
+/// [`ProjectStore::drop`] so the last save before app shutdown
+/// isn't lost to the debounce sleep, and reusable by tests that
+/// want to force a flush without relying on `#[cfg(test)]`.
+fn flush_pending_save() {
+    if let Some(worker) = SAVE_WORKER.get().copied() {
+        let snapshot = worker
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some((path, store)) = snapshot {
+            write_store_sync(&path, &store);
+        }
+    }
+}
+
+fn write_store_sync(path: &Path, store: &StoreFile) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(store) {
+        let _ = std::fs::write(path, json);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepoDefaultCommitAction {
@@ -795,6 +908,18 @@ pub struct ProjectStore {
     file_path: PathBuf,
 }
 
+impl Drop for ProjectStore {
+    fn drop(&mut self) {
+        // Synchronously drain any pending save so the final state
+        // before process/teardown is on disk. Cheap no-op when the
+        // background writer has already consumed the mailbox, and
+        // compiled out under `#[cfg(test)]` because tests use the
+        // direct sync-write path in `save()`.
+        #[cfg(not(test))]
+        flush_pending_save();
+    }
+}
+
 impl ProjectStore {
     #[hotpath::measure]
     pub fn load() -> Self {
@@ -1486,7 +1611,42 @@ impl ProjectStore {
 
     #[hotpath::measure]
     pub fn save(&self) {
-        let store = StoreFile {
+        let store = self.snapshot_for_save();
+        // Tests assert on file contents immediately after save(),
+        // so we keep the write synchronous under `#[cfg(test)]`.
+        // Production builds hand off to a background writer thread
+        // so save() doesn't stall the GPUI render thread (see #129):
+        // a CDP-heavy sub-agent produces enough PTY output to fire
+        // `persist_section_state` → `update_task_tabs` → `save()`
+        // dozens of times per second, and each synchronous
+        // `serde_json::to_string_pretty` over the full StoreFile was
+        // blocking render for >2s (captured by the #125 watchdog).
+        #[cfg(test)]
+        {
+            write_store_sync(&self.file_path, &store);
+        }
+        #[cfg(not(test))]
+        {
+            let worker = save_worker();
+            let mut pending = worker
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // Single-slot mailbox: if a save was already queued, the
+            // newer snapshot wins — callers only care that the latest
+            // state is on disk, not that every intermediate revision
+            // is. That's the coalescing that makes a CDP burst cheap.
+            *pending = Some((self.file_path.clone(), store));
+            worker.cvar.notify_one();
+        }
+    }
+
+    /// Assemble the on-disk representation from the in-memory store.
+    /// Separated from [`save`] so the same snapshot can be handed to
+    /// the background writer without leaking `StoreFile` (a private
+    /// type) into callers.
+    fn snapshot_for_save(&self) -> StoreFile {
+        StoreFile {
             version: STORE_VERSION,
             repos: self.repos.clone(),
             projects: self.projects_by_id.clone(),
@@ -1495,12 +1655,6 @@ impl ProjectStore {
             task_ids_by_root_project: self.task_ids_by_root_project.clone(),
             sections: self.terminal_sections.clone(),
             ui: self.ui.clone(),
-        };
-        if let Some(parent) = self.file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = std::fs::write(&self.file_path, json);
         }
     }
 
