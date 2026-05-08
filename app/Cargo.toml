@@ -24,6 +24,11 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "another-one-core/hotpath-a
 # and don't need this feature. Counter call sites are always compiled
 # in so the sampler always has data when enabled.
 leakscope = ["another-one-core/leakscope"]
+# Exposes a small surface from `app` (the `__test_harness` module
+# re-exporting `RegistryState` + `DesktopTerminalRegistry`) so
+# integration tests in `app/tests/` can wire the daemon dispatch
+# layer against a real registry without building the full GUI.
+test-harness = ["another-one-core/test-harness"]
 
 # GPUI: https://github.com/zed-industries/zed/tree/main/crates/gpui
 # Pinned to the same Zed rev that gpui-mobile pins
@@ -37,6 +42,8 @@ anyhow = "1"
 daemon = { path = "../daemon" }
 daemon-proto = { path = "../daemon-proto" }
 daemon-transport = { path = "../daemon-transport" }
+futures-core = "0.3"
+futures-util = "0.3"
 # `gpui` is the only cross-platform dep here. The wayland / x11 /
 # font-kit features pull in `fontconfig`, `xkbcommon`, and friends
 # which only build on Linux/desktop — listing them unconditionally
@@ -129,3 +136,10 @@ ndk-context = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Daemon dispatch harness: exercises every `Control::*` verb against a
+# real `DesktopTerminalRegistry` over a real `RegistryState` via the
+# `daemon_transport::in_memory::pair`, no GPUI / iroh / mobile spin-up.
+[[test]]
+name = "daemon_dispatch_harness"
+required-features = ["test-harness"]

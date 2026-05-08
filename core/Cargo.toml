@@ -24,6 +24,10 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 # `debug_assertions`. This feature only matters for packaged/CI builds
 # where you want the sampler logs without a dev profile.
 leakscope = []
+# Forwarded from the desktop `test-harness` feature so
+# `app/tests/*` integration tests can build a `ProjectStore` from
+# in-memory fixtures via `ProjectStore::from_projects_for_test`.
+test-harness = []
 
 [dependencies]
 alacritty_terminal = "0.26.0"

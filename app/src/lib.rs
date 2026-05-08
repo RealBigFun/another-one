@@ -7,6 +7,17 @@
 //! divergence is contained to platform construction; the UI code below
 //! (`mod app`, `mod left_sidebar`, …) is identical on both sides.
 
+// Test-harness surface: re-exports the bare minimum integration-test
+// infrastructure (`RegistryState` + `DesktopTerminalRegistry`)
+// without widening crate-wide visibility on the daemon-host module
+// itself. Gated behind `cfg(test)` for in-crate tests AND the
+// `test-harness` feature so `app/tests/*.rs` integration tests can
+// flip the feature on without otherwise altering the build.
+#[cfg(any(test, feature = "test-harness"))]
+pub mod __test_harness {
+    pub use crate::daemon_host::{DesktopTerminalRegistry, RegistryState};
+}
+
 mod add_agent_modal;
 mod agent_icons;
 mod app;
@@ -35,6 +46,7 @@ mod project_workflows;
 mod resource_indicator;
 mod resource_usage;
 mod right_sidebar;
+mod session_host;
 mod settings_page;
 mod shortcuts;
 mod terminal_runtime;

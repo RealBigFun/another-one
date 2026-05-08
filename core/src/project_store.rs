@@ -172,6 +172,27 @@ pub enum ProjectKind {
     Worktree,
 }
 
+// Wire / on-disk format differ (PascalCase on disk via Default
+// serde, lowercase on the wire); two enums stay so we don't have
+// to rewrite persisted project.json's. Conversion is bijective.
+impl From<ProjectKind> for daemon_proto::ProjectKind {
+    fn from(kind: ProjectKind) -> Self {
+        match kind {
+            ProjectKind::Root => daemon_proto::ProjectKind::Root,
+            ProjectKind::Worktree => daemon_proto::ProjectKind::Worktree,
+        }
+    }
+}
+
+impl From<daemon_proto::ProjectKind> for ProjectKind {
+    fn from(kind: daemon_proto::ProjectKind) -> Self {
+        match kind {
+            daemon_proto::ProjectKind::Root => ProjectKind::Root,
+            daemon_proto::ProjectKind::Worktree => ProjectKind::Worktree,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCheckoutState {
     #[serde(default)]
@@ -921,6 +942,62 @@ impl Drop for ProjectStore {
 }
 
 impl ProjectStore {
+    /// Build an in-memory `ProjectStore` seeded with the given
+    /// projects + tasks, no disk involvement. The `file_path` is set
+    /// to a temp path so a stray `save()` call (e.g. via
+    /// `with_store_mut` in test) writes to a unique scratch file
+    /// rather than the user's real `projects.json`. Intended for
+    /// `app/tests/daemon_dispatch_harness.rs` and friends.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn from_projects_for_test(projects: Vec<Project>, tasks: Vec<Task>) -> Self {
+        use std::collections::HashMap;
+        // Seed `repos` with one entry per unique repo_id seen across
+        // the fixture projects. `sanitize` retains projects only when
+        // `repos.contains_key(&project.repo_id)` so an empty `repos`
+        // map silently drops every fixture — exactly the bug that
+        // burned the first round of harness tests.
+        let mut repos: HashMap<String, RepoRecord> = HashMap::new();
+        for project in &projects {
+            repos
+                .entry(project.repo_id.clone())
+                .or_insert_with(|| RepoRecord {
+                    id: project.repo_id.clone(),
+                    common_dir: None,
+                    branch_order: Vec::new(),
+                    branches_by_name: HashMap::new(),
+                });
+        }
+        let mut store = Self {
+            repos,
+            projects_by_id: projects.iter().cloned().map(|p| (p.id.clone(), p)).collect(),
+            projects: Vec::new(),
+            project_order: projects.iter().map(|p| p.id.clone()).collect(),
+            tasks_by_id: tasks.iter().cloned().map(|t| (t.id.clone(), t)).collect(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            // Unique tmpfile-name so concurrent tests don't trample
+            // each other on save(); not actually opened during tests
+            // unless `with_store_mut` is exercised (then a write
+            // succeeds harmlessly into the temp dir).
+            file_path: std::env::temp_dir().join(format!(
+                "another-one-test-store-{}.json",
+                uuid::Uuid::new_v4()
+            )),
+        };
+        for task in &tasks {
+            store
+                .task_ids_by_root_project
+                .entry(task.root_project_id.clone())
+                .or_default()
+                .push(task.id.clone());
+        }
+        store.sanitize();
+        store.rebuild_runtime_views();
+        store
+    }
+
     #[hotpath::measure]
     pub fn load() -> Self {
         let file_path = Self::config_path();
@@ -1668,6 +1745,57 @@ impl ProjectStore {
     /// sidebar render path picks the data up unchanged. Does **not**
     /// `save()` to disk; the daemon is the source of truth, the local
     /// cache stays ephemeral.
+    /// Absorb the user-state half of a daemon projection. Decodes
+    /// the opaque-JSON fields back into their canonical core types
+    /// (None / parse failure → keep current value rather than reset
+    /// to default, so a temporarily-malformed wire frame doesn't
+    /// wipe a known-good UI state). Mirrors the field set populated
+    /// by `daemon_host::DesktopTerminalRegistry::ui_snapshot`.
+    pub fn absorb_ui_snapshot(&mut self, snapshot: daemon_proto::UiSnapshot) {
+        self.ui.expanded_repo_ids = snapshot.expanded_repo_ids.into_iter().collect();
+        self.ui.pinned_task_ids = snapshot
+            .pinned_task_ids
+            .into_iter()
+            .map(|(_project_id, task_id)| task_id)
+            .collect();
+        self.ui.last_active_section_id = snapshot.last_active_section_id;
+        self.ui.left_sidebar_open = snapshot.left_sidebar_open;
+        self.ui.show_sidebar_git_metadata = snapshot.show_sidebar_git_metadata;
+        if let Some(value) = snapshot.shortcuts {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.shortcuts = parsed;
+            }
+        }
+        if let Some(value) = snapshot.agent_launch_args_overrides {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.agent_launch_args = parsed;
+            }
+        }
+        self.ui.default_agent_id = snapshot.default_agent_id;
+        self.ui.enabled_agents = snapshot.enabled_agents.map(|v| v.into_iter().collect());
+        if let Some(value) = snapshot.open_in_apps {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.enabled_open_in_apps = Some(parsed);
+            }
+        }
+        self.ui.preferred_open_in_app = snapshot
+            .preferred_open_in_app
+            .as_deref()
+            .and_then(crate::open_in::OpenInAppKind::from_id);
+        self.ui.git_commit_generation_script = snapshot.git_commit_generation_script;
+        self.ui.git_pr_generation_script = snapshot.git_pr_generation_script;
+        if let Some(value) = snapshot.git_commit_generation_llm {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.git_commit_generation_llm = parsed;
+            }
+        }
+        if let Some(value) = snapshot.git_pr_generation_llm {
+            if let Ok(parsed) = serde_json::from_value(value) {
+                self.ui.git_pr_generation_llm = parsed;
+            }
+        }
+    }
+
     pub fn set_remote_snapshot(&mut self, projects: Vec<Project>, tasks: Vec<Task>) {
         self.repos = projects
             .iter()
@@ -1695,6 +1823,116 @@ impl ProjectStore {
         }
         self.sanitize();
         self.rebuild_runtime_views();
+    }
+
+    /// Single absorb path both clients consume to install a daemon
+    /// projection. Replaces the lossy
+    /// `convert_remote_snapshot` + `set_remote_snapshot` pair —
+    /// pulls every wire field straight into the canonical core
+    /// store (decoding opaque JSON fields like
+    /// `TerminalLaunchConfig` / `ProjectCheckoutState` /
+    /// `ProjectBranchSettings` / `Vec<ProjectAction>` / `TaskKind`
+    /// via `serde_json::from_value`), then layers `UiSnapshot` on
+    /// top via `absorb_ui_snapshot`. The result is byte-equivalent
+    /// state on every client that consumed the same projection.
+    pub fn absorb_projection(
+        &mut self,
+        summaries: Vec<daemon_proto::ProjectSummary>,
+        ui: daemon_proto::UiSnapshot,
+    ) {
+        let mut projects = Vec::with_capacity(summaries.len());
+        let mut tasks = Vec::new();
+        for summary in summaries {
+            let project_id = summary.id.clone();
+            let kind: ProjectKind = summary.kind.into();
+            for task_summary in summary.tasks {
+                let tabs = task_summary
+                    .tabs
+                    .into_iter()
+                    .map(|tab_summary| PersistedTerminalTab {
+                        id: tab_summary.id,
+                        title: tab_summary.title,
+                        pinned: tab_summary.pinned,
+                        fixed_title: tab_summary.fixed_title,
+                        launch_config: tab_summary
+                            .launch_config
+                            .as_ref()
+                            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                        provider: tab_summary
+                            .provider
+                            .and_then(crate::agents::agent_provider_kind_from_wire),
+                        restore_status: tab_summary.restore_status,
+                        failure_message: tab_summary.failure_message,
+                        failure_details: tab_summary.failure_details,
+                    })
+                    .collect::<Vec<_>>();
+                let next_tab_id = if task_summary.next_tab_id > 0 {
+                    task_summary.next_tab_id
+                } else {
+                    tabs.len()
+                };
+                let cwd = task_summary.cwd.map(std::path::PathBuf::from);
+                let target_project_id = if task_summary.target_project_id.is_empty() {
+                    project_id.clone()
+                } else {
+                    task_summary.target_project_id
+                };
+                let root_project_id = if task_summary.root_project_id.is_empty() {
+                    project_id.clone()
+                } else {
+                    task_summary.root_project_id
+                };
+                let kind = task_summary
+                    .kind
+                    .as_ref()
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or(TaskKind::Direct);
+                tasks.push(Task {
+                    id: task_summary.id,
+                    name: task_summary.name,
+                    kind,
+                    root_project_id,
+                    target_project_id,
+                    branch_name: task_summary.branch_name,
+                    section_id: task_summary.section_id,
+                    worktree_project_id: task_summary.worktree_project_id,
+                    tabs,
+                    active_tab_id: task_summary.active_tab_id,
+                    next_tab_id,
+                    cwd,
+                });
+            }
+            let repo_id = if summary.repo_id.is_empty() {
+                project_id.clone()
+            } else {
+                summary.repo_id
+            };
+            let checkout = summary
+                .checkout
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let branch_settings = summary
+                .branch_settings
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let actions = serde_json::from_value(summary.actions).unwrap_or_default();
+            projects.push(Project {
+                id: project_id,
+                repo_id,
+                name: summary.name,
+                path: std::path::PathBuf::from(summary.path),
+                kind,
+                checkout,
+                branch_settings,
+                actions,
+                worktree_name: summary.worktree_name,
+                repo_common_dir: None,
+            });
+        }
+        self.set_remote_snapshot(projects, tasks);
+        self.absorb_ui_snapshot(ui);
     }
 
     pub fn set_left_sidebar_open(&mut self, is_open: bool) {

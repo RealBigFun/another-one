@@ -191,6 +191,8 @@ dependencies = [
  "daemon-transport",
  "dirs 5.0.1",
  "ed25519-dalek 2.2.0",
+ "futures-core",
+ "futures-util",
  "gpui",
  "gpui-mobile",
  "gpui_platform",

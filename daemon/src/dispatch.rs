@@ -38,7 +38,7 @@ use daemon_proto::{Control, ErrKind, WorkerReply};
 use daemon_transport::{ServerSession, TransportError};
 use tokio::sync::broadcast;
 use tokio::task::AbortHandle;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::registry::DaemonRegistry;
 
@@ -133,6 +133,62 @@ pub async fn serve_session_with_attach(
 ) -> Result<(), TransportError> {
     let viewer_id = session.peer_id().to_string();
     let attach_for_loop = Arc::clone(&attach);
+
+    // Initial-projection push: fresh sessions need the current
+    // registry state immediately, without waiting for a mutation
+    // tick. Without this, both desktop's in-memory pair and any
+    // mobile reconnect would see an empty projection until the
+    // user touches something. Idempotent w.r.t. the call-reply
+    // path — `Session::call(ListProjects)` still returns its own
+    // typed reply because `pair`'s router correlates by
+    // request_id and routes unsolicited pushes to
+    // `SessionEvent::Push` instead.
+    {
+        let projects = registry.list_projects();
+        let ui = registry.ui_snapshot();
+        info!(
+            viewer_id,
+            project_count = projects.len(),
+            "serve_session: pushing initial ProjectList"
+        );
+        let reply = WorkerReply::ProjectList { projects, ui };
+        if let Err(e) = session.push_reply(reply).await {
+            return Err(e);
+        }
+    }
+
+    // Spawn a state-change pump: any time the registry signals a
+    // mutation, push a fresh `ProjectList` (with `request_id == 0`)
+    // to the peer. This is how mobile clients learn about desktop
+    // GUI mutations without polling. The pump exits when the
+    // session ends (push_reply returns Err) or the registry's
+    // sender drops.
+    let push_session = Arc::clone(&session);
+    let push_registry = Arc::clone(&registry);
+    let push_handle = tokio::spawn(async move {
+        let mut rx = push_registry.subscribe_state_changes();
+        loop {
+            match rx.recv().await {
+                Ok(()) => {
+                    let projects = push_registry.list_projects();
+                    let ui = push_registry.ui_snapshot();
+                    let reply = WorkerReply::ProjectList { projects, ui };
+                    if push_session.push_reply(reply).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    // Lagged means we missed ticks but the next
+                    // recv will give us the latest — and we always
+                    // re-snapshot fresh so missing intermediate
+                    // ticks is fine. Continue.
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
     let result = loop {
         let next = match session.next_call().await {
             Ok(v) => v,
@@ -157,6 +213,9 @@ pub async fn serve_session_with_attach(
             }
         }
     };
+
+    // Stop the push pump so it doesn't outlive the session.
+    push_handle.abort();
 
     // Tear down any lingering attach state on the way out so the
     // forwarder task doesn't outlive the session.
@@ -224,7 +283,7 @@ async fn dispatch_call(
                 attach_arc,
                 viewer_id,
             );
-            None
+            Some(WorkerReply::Empty)
         }
         Control::DetachTab => {
             if let Some((s, t, had_fwd)) = attach.detach() {
@@ -237,22 +296,23 @@ async fn dispatch_call(
             // re-aggregates to the remaining viewers' min (or lifts
             // the clamp entirely if this was the last viewer).
             registry.viewer_disconnected(viewer_id);
-            None
+            Some(WorkerReply::Empty)
         }
         Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
             if let Some((section_id, tab_id)) = attach.snapshot_target() {
                 registry.tab_resize(viewer_id, &section_id, &tab_id, cols, rows);
             }
-            None
+            Some(WorkerReply::Empty)
         }
         Control::LaunchTab { section_id, tab_id } => {
             registry.launch_tab(&section_id, &tab_id);
-            None
+            Some(WorkerReply::Empty)
         }
 
         // ── Read verbs ───────────────────────────────────────────────
         Control::ListProjects => Some(WorkerReply::ProjectList {
             projects: registry.list_projects(),
+            ui: registry.ui_snapshot(),
         }),
         Control::ListProjectActions { project_id } => Some(WorkerReply::ProjectActionsAck {
             actions: registry.list_project_actions(&project_id),
@@ -381,6 +441,45 @@ async fn dispatch_call(
                 task_id,
                 removed,
             })
+        }
+        Control::PersistSectionState {
+            section_id,
+            persisted,
+        } => {
+            registry.persist_section_state(&section_id, persisted);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetLastActiveSection { section_id } => {
+            registry.set_last_active_section(section_id);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetSidebarGitMetadataVisible { visible } => {
+            registry.set_sidebar_git_metadata_visible(visible);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetRepoDefaultCommitAction { repo_id, action } => {
+            registry.set_repo_default_commit_action(&repo_id, &action);
+            Some(WorkerReply::Empty)
+        }
+        Control::UpdateTaskBranch {
+            task_id,
+            target_project_id,
+            branch_name,
+        } => {
+            registry.update_task_branch(&task_id, &target_project_id, &branch_name);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetExpandedRepos { expanded_repo_ids } => {
+            registry.set_expanded_repos(expanded_repo_ids);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetGitCommitLlm { settings } => {
+            registry.set_git_commit_llm(settings);
+            Some(WorkerReply::Empty)
+        }
+        Control::SetGitPrLlm { settings } => {
+            registry.set_git_pr_llm(settings);
+            Some(WorkerReply::Empty)
         }
 
         // ── Project actions ──────────────────────────────────────────
@@ -958,9 +1057,8 @@ mod tests {
                     id: "p1".into(),
                     name: "p1".into(),
                     path: "/tmp/p1".into(),
-                    kind: daemon_proto::ProjectKind::Root,
                     current_branch: Some("main".into()),
-                    tasks: vec![],
+                    ..Default::default()
                 }]),
                 slugified: Mutex::new(None),
             }
@@ -1009,7 +1107,7 @@ mod tests {
 
         let reply = client.call(Control::ListProjects).await.expect("call");
         match reply {
-            WorkerReply::ProjectList { projects } => {
+            WorkerReply::ProjectList { projects, .. } => {
                 assert_eq!(projects.len(), 1);
                 assert_eq!(projects[0].id, "p1");
             }

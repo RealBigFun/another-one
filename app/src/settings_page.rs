@@ -311,7 +311,7 @@ impl AnotherOneApp {
                     && !ev.keystroke.modifiers.control
                     && !ev.keystroke.modifiers.function =>
             {
-                self.project_store.clear_shortcut_binding(action);
+                self.dispatch_clear_shortcut_binding(action);
                 self.shortcut_capture_action = None;
                 self.show_success_toast(format!("Cleared {}.", action.label()), cx);
                 cx.notify();
@@ -335,7 +335,7 @@ impl AnotherOneApp {
                     return true;
                 }
 
-                self.project_store.set_shortcut_binding(action, binding);
+                self.dispatch_set_shortcut_binding(action, binding.to_string());
                 self.shortcut_capture_action = None;
                 self.show_success_toast(format!("Updated {}.", action.label()), cx);
                 cx.notify();
@@ -354,7 +354,7 @@ impl AnotherOneApp {
     }
 
     fn clear_shortcut_binding(&mut self, action: ShortcutAction, cx: &mut Context<Self>) {
-        self.project_store.clear_shortcut_binding(action);
+        self.dispatch_clear_shortcut_binding(action);
         if self.shortcut_capture_action == Some(action) {
             self.shortcut_capture_action = None;
         }
@@ -363,7 +363,7 @@ impl AnotherOneApp {
     }
 
     fn reset_shortcut_binding(&mut self, action: ShortcutAction, cx: &mut Context<Self>) {
-        self.project_store.reset_shortcut_binding(action);
+        self.dispatch_reset_shortcut_binding(action);
         if self.shortcut_capture_action == Some(action) {
             self.shortcut_capture_action = None;
         }
@@ -372,7 +372,13 @@ impl AnotherOneApp {
     }
 
     fn reset_all_shortcuts(&mut self, cx: &mut Context<Self>) {
-        self.project_store.reset_shortcuts();
+        // Loop-dispatch one ResetShortcutBinding per action — same
+        // end state as ProjectStore::reset_shortcuts(), just routed
+        // through the daemon. The broadcast push lands a single
+        // projection at the end of the burst.
+        for action in another_one_core::shortcuts::ALL_SHORTCUT_ACTIONS {
+            self.dispatch_reset_shortcut_binding(action);
+        }
         self.shortcut_capture_action = None;
         self.show_success_toast("Reset all shortcuts.", cx);
         cx.notify();
@@ -475,14 +481,14 @@ impl AnotherOneApp {
     ) {
         let (draft, message) = match kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
-                let _ = self.project_store.reset_git_commit_generation_script();
+                self.dispatch_reset_git_commit_script();
                 (
                     default_commit_generation_script().to_string(),
                     "Reset the git commit instructions to the default template.",
                 )
             }
             crate::app::SettingsGitActionScriptKind::PullRequest => {
-                let _ = self.project_store.reset_git_pr_generation_script();
+                self.dispatch_reset_git_pr_script();
                 (
                     default_pr_generation_script().to_string(),
                     "Reset the PR title/body instructions to the default template.",
@@ -525,14 +531,19 @@ impl AnotherOneApp {
         settings: GitActionLlmSettings,
         cx: &mut Context<Self>,
     ) {
+        let Ok(value) = serde_json::to_value(&settings) else {
+            log::warn!("set_settings_git_action_llm: failed to serialise settings");
+            return;
+        };
         match kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
-                let _ = self.project_store.set_git_commit_generation_llm(settings);
+                self.dispatch_set_git_commit_llm(value);
             }
             crate::app::SettingsGitActionScriptKind::PullRequest => {
-                let _ = self.project_store.set_git_pr_generation_llm(settings);
+                self.dispatch_set_git_pr_llm(value);
             }
         }
+        let _ = settings; // moved into the JSON value above
         self.settings_git_action_llm_dropdown = None;
         cx.notify();
     }
@@ -750,7 +761,7 @@ impl AnotherOneApp {
 
         let mut args = self.project_store.agent_launch_args(agent_id).to_vec();
         args.push(token.clone());
-        self.project_store.set_agent_launch_args(agent_id, args);
+        self.dispatch_set_agent_launch_args(agent_id.to_string(), args);
         self.settings_agent_input
             .drafts
             .insert(agent_id.to_string(), String::new());
@@ -770,7 +781,7 @@ impl AnotherOneApp {
             return;
         }
         let removed = args.remove(index);
-        self.project_store.set_agent_launch_args(agent_id, args);
+        self.dispatch_set_agent_launch_args(agent_id.to_string(), args);
         self.show_success_toast(format!("Removed {} arg from {}.", removed, agent.label), cx);
         cx.notify();
     }
@@ -1151,12 +1162,10 @@ impl AnotherOneApp {
         let saved_draft = input.draft.clone();
         match kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
-                let _ = self
-                    .project_store
-                    .set_git_commit_generation_script(saved_draft);
+                self.dispatch_set_git_commit_script(saved_draft);
             }
             crate::app::SettingsGitActionScriptKind::PullRequest => {
-                let _ = self.project_store.set_git_pr_generation_script(saved_draft);
+                self.dispatch_set_git_pr_script(saved_draft);
             }
         }
         cx.notify();

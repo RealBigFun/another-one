@@ -327,6 +327,64 @@ pub enum Control {
     /// [`WorkerReply::TaskRemoved`] with `removed = true` if a task
     /// was deleted, `false` for an unknown id (idempotent).
     RemoveTask { project_id: String, task_id: String },
+    /// Persist the desktop's per-section terminal-tab snapshot to
+    /// the daemon. Routes to either `update_task_tabs` (when the
+    /// section belongs to a task — `task_id` set on the wire
+    /// `section_id`) or `set_terminal_section` (project pages /
+    /// standalone shells). The desktop GUI fires this on every
+    /// terminal-state change (tab pinned, title updated, restore
+    /// status changed, etc.) so connected mobile sessions see the
+    /// new tab metadata via the broadcast push.
+    ///
+    /// `persisted` is an opaque JSON-serialised
+    /// `core::project_store::PersistedSectionState` — daemon-proto
+    /// stays free of the section-state structural shape; both
+    /// clients deserialize via `serde_json::from_value` into the
+    /// canonical core type.
+    ///
+    /// Reply is [`WorkerReply::Empty`].
+    PersistSectionState {
+        section_id: String,
+        persisted: serde_json::Value,
+    },
+    /// Update the user's last-active-section pointer so a
+    /// reconnect or restart restores focus to the same section
+    /// across both clients. `None` clears the pointer (no section
+    /// active).
+    ///
+    /// Reply is [`WorkerReply::Empty`].
+    SetLastActiveSection { section_id: Option<String> },
+    /// Toggle whether the projects sidebar shows per-task git
+    /// metadata (lines added/removed, last-commit relative). Mirrors
+    /// `core::project_store::UiState::show_sidebar_git_metadata`.
+    /// Reply is [`WorkerReply::Empty`].
+    SetSidebarGitMetadataVisible { visible: bool },
+    /// Update the per-repo "default commit action" pin (commit vs.
+    /// commit-and-push) — drives which button is the primary on the
+    /// titlebar's Commit dropdown. Mirrors
+    /// `core::project_store::UiState::repo_default_commit_actions`.
+    /// `action` is the string id of the variant (`"commit"`,
+    /// `"commit-and-push"`). Reply is [`WorkerReply::Empty`].
+    SetRepoDefaultCommitAction { repo_id: String, action: String },
+    /// Persist a new branch override on a worktree task — the
+    /// desktop renames the on-disk branch via git, then calls this
+    /// to update the task's record. Reply is [`WorkerReply::Empty`].
+    UpdateTaskBranch {
+        task_id: String,
+        target_project_id: String,
+        branch_name: String,
+    },
+    /// Persist the user's expanded-project / collapsed-project
+    /// state. `expanded_repo_ids` is the full set; the daemon
+    /// replaces its store wholesale. Reply is [`WorkerReply::Empty`].
+    SetExpandedRepos { expanded_repo_ids: Vec<String> },
+    /// Update the LLM settings for the AI commit-message generator.
+    /// `settings` is an opaque JSON-serialised
+    /// `core::project_store::GitActionLlmSettings`. Reply is
+    /// [`WorkerReply::Empty`].
+    SetGitCommitLlm { settings: serde_json::Value },
+    /// Same as `SetGitCommitLlm` but for the PR-generation LLM.
+    SetGitPrLlm { settings: serde_json::Value },
     /// Compute the canonical branch slug for a free-text input.
     /// Powers the Create Branch modal's live `Branch: …` preview.
     /// Pure function — no project state involved. Reply is
@@ -659,12 +717,26 @@ pub enum Control {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkerReply {
+    /// Generic "the daemon handled it, but there's nothing payload-
+    /// worthy to return". Used for fire-and-forget verbs whose
+    /// effects are observable elsewhere (e.g. `AttachTab` — bytes
+    /// flow on the events stream; `LaunchTab` — runtime appears in
+    /// the registry; `DetachTab`/`Resize`/`TabResize` — state
+    /// updates the next pull observes). Lets clients await
+    /// `Session::call` instead of leaking a pending_calls entry.
+    Empty,
     /// Response to [`Control::ListProjects`]. Order matches the
     /// desktop sidebar's `project_order`; worktrees of a root are
     /// emitted as their own entries rather than nested children
     /// (the mobile UI can still group them by `repo_id` if it
     /// wants a tree rendering later).
-    ProjectList { projects: Vec<ProjectSummary> },
+    ProjectList {
+        projects: Vec<ProjectSummary>,
+        /// Per-user UI state — wire-additive on existing daemons
+        /// (defaults to `UiSnapshot::default()` when missing).
+        #[serde(default)]
+        ui: UiSnapshot,
+    },
     /// Response to [`Control::AddProject`] on success. Carries the
     /// inline snapshot of the freshly-inserted project so the
     /// issuing client can splice it into its tree without a
@@ -925,7 +997,7 @@ pub enum WorkerReply {
 /// Wire mirror of the active git-state view and the underlying
 /// `core::project_store::ProjectGitState`. Carries the metadata the
 /// titlebar's idle-primary-action selection needs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActiveGitStateWire {
     pub current_branch: Option<String>,
     pub ahead_count: u32,
@@ -981,7 +1053,7 @@ pub struct RecentCommitsWire {
 /// Wire mirror of one changed-file row. Carries
 /// the raw `git status` chars + diff counts; UI maps them to glyphs
 /// per the desktop's existing `changed_file_status_*` tables.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChangedFileWire {
     pub path: String,
     pub original_path: Option<String>,
@@ -1115,7 +1187,7 @@ pub enum ErrKind {
 /// nested `tasks` + `tabs` so one `ListProjects` response tells the
 /// mobile UI everything it needs to render its home drawer + each
 /// project's task list without follow-up round-trips.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectSummary {
     pub id: String,
     pub name: String,
@@ -1127,12 +1199,110 @@ pub struct ProjectSummary {
     /// `checkout.current_branch`; may be `None` if never read.
     pub current_branch: Option<String>,
     pub tasks: Vec<TaskSummary>,
+    /// Repo grouping id mirroring `core::project_store::Project::repo_id`
+    /// — same-repo worktrees share this. Wire-additive; older daemons
+    /// leave it empty and clients fall back to grouping by `id`.
+    #[serde(default)]
+    pub repo_id: String,
+    /// `core::project_store::Project::worktree_name`. Wire-additive.
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+    /// Opaque JSON-serialised `core::project_store::ProjectCheckoutState`.
+    /// Daemon-proto keeps this opaque so the project schema can
+    /// evolve in `core` without forcing a `daemon-proto` bump for
+    /// every checkout-state extension. Clients deserialize via
+    /// `serde_json::from_value`. `None` for older daemons that
+    /// didn't carry the field.
+    #[serde(default)]
+    pub checkout: Option<serde_json::Value>,
+    /// Opaque JSON-serialised `core::project_store::ProjectBranchSettings`.
+    /// Same opaque-pass-through pattern as `checkout`.
+    #[serde(default)]
+    pub branch_settings: Option<serde_json::Value>,
+    /// Opaque JSON-serialised `Vec<core::project_store::ProjectAction>`.
+    /// Per-project custom actions defined by the user. Carried
+    /// opaquely so daemon-proto doesn't need wire mirrors for
+    /// `ProjectActionIcon` / `ProjectActionScope` / etc.
+    #[serde(default)]
+    pub actions: serde_json::Value,
+}
+
+/// Per-user UI state mirrored from `core::project_store::UiState`.
+/// Wire-additive on `WorkerReply::ProjectList` so both clients render
+/// the same expand/pin/focus state from the daemon's projection
+/// instead of each maintaining their own.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UiSnapshot {
+    /// Repo IDs the user has expanded in the projects sidebar.
+    #[serde(default)]
+    pub expanded_repo_ids: Vec<String>,
+    /// `(project_id, task_id)` of tasks pinned to the top of the
+    /// sidebar.
+    #[serde(default)]
+    pub pinned_task_ids: Vec<(String, String)>,
+    /// Last section the user focused — used to restore focus on
+    /// reconnect.
+    #[serde(default)]
+    pub last_active_section_id: Option<String>,
+    /// Whether the desktop's left sidebar is open. Mobile uses this
+    /// hint to start in the right mobile-view nav state on reconnect.
+    #[serde(default)]
+    pub left_sidebar_open: bool,
+    /// Whether the sidebar shows per-task git metadata (lines added
+    /// / removed, last commit relative). Mirrors
+    /// `core::project_store::UiState::show_sidebar_git_metadata`.
+    /// Wire-additive.
+    #[serde(default)]
+    pub show_sidebar_git_metadata: bool,
+    /// Opaque JSON-serialised `HashMap<ShortcutAction, ShortcutBinding>`
+    /// from `UiState::shortcuts`. Daemon-proto stays free of the
+    /// shortcut enum/binding shapes by passing them through.
+    #[serde(default)]
+    pub shortcuts: Option<serde_json::Value>,
+    /// Opaque JSON-serialised `HashMap<String, AgentLaunchArgs>` from
+    /// `UiState::agent_launch_args_overrides`.
+    #[serde(default)]
+    pub agent_launch_args_overrides: Option<serde_json::Value>,
+    /// `UiState::default_agent_id`. Wire-additive.
+    #[serde(default)]
+    pub default_agent_id: Option<String>,
+    /// `UiState::enabled_agents` — the user-configured allowlist of
+    /// agent ids. `None` means "all agents enabled" (the default);
+    /// `Some(set)` is the explicit allowlist. Carried as a Vec on
+    /// the wire for stable JSON ordering.
+    #[serde(default)]
+    pub enabled_agents: Option<Vec<String>>,
+    /// Opaque JSON-serialised
+    /// `HashMap<OpenInAppKind, OpenInAppKindState>` from
+    /// `UiState::open_in_apps`.
+    #[serde(default)]
+    pub open_in_apps: Option<serde_json::Value>,
+    /// `UiState::preferred_open_in_app`. Carried as the kind's id
+    /// string ("cursor", "zed", …); `None` when no preference set.
+    #[serde(default)]
+    pub preferred_open_in_app: Option<String>,
+    /// `UiState::git_commit_generation_script`. Wire-additive.
+    #[serde(default)]
+    pub git_commit_generation_script: Option<String>,
+    /// `UiState::git_pr_generation_script`. Wire-additive.
+    #[serde(default)]
+    pub git_pr_generation_script: Option<String>,
+    /// Opaque JSON-serialised
+    /// `Option<core::settings::AgentSettingsLlm>` for the git-commit
+    /// generation LLM. Daemon-proto carries it opaquely so we don't
+    /// need a wire mirror for `AgentSettingsLlm`.
+    #[serde(default)]
+    pub git_commit_generation_llm: Option<serde_json::Value>,
+    /// Opaque JSON-serialised same shape as `git_commit_generation_llm`
+    /// but for the PR-generation flow.
+    #[serde(default)]
+    pub git_pr_generation_llm: Option<serde_json::Value>,
 }
 
 /// Lossy wire projection of `core::project_store::Task`. Contains
 /// enough for the mobile task page to render the tab strip and
 /// request an attach; no live PTY state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskSummary {
     pub id: String,
     pub name: String,
@@ -1176,11 +1346,38 @@ pub struct TaskSummary {
     /// callers fall back to the root project id.
     #[serde(default)]
     pub target_project_id: String,
+    /// Working directory the daemon will use when spawning a tab
+    /// under this task. Mirrors `core::project_store::Task::cwd`.
+    /// String form for wire neutrality (paths cross platforms).
+    /// Wire-additive, `None` means "fall back to the project root".
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// `core::project_store::Task.next_tab_id` mirrored so a client
+    /// reasoning about future tab IDs (or sorting tabs by creation
+    /// order) doesn't have to recompute. Wire-additive.
+    #[serde(default)]
+    pub next_tab_id: usize,
+    /// `core::project_store::Task::root_project_id`. The id of the
+    /// task's owning *root* project (worktree tasks point at the
+    /// worktree's own `Project` entry via `target_project_id`; this
+    /// stays at the root). Wire-additive.
+    #[serde(default)]
+    pub root_project_id: String,
+    /// Opaque JSON-serialised `core::project_store::TaskKind`. Carried
+    /// opaquely so daemon-proto stays free of `TaskKind`'s nested
+    /// shape (Direct vs. Worktree variants with payload).
+    #[serde(default)]
+    pub kind: Option<serde_json::Value>,
+    /// `core::project_store::Task::worktree_project_id` — the id of
+    /// the worktree-kind project this task uses, if it's a worktree
+    /// task. `None` for direct tasks. Wire-additive.
+    #[serde(default)]
+    pub worktree_project_id: Option<String>,
 }
 
 /// Lossy wire projection of
 /// `core::project_store::PersistedTerminalTab`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TabSummary {
     pub id: String,
     pub title: String,
@@ -1208,13 +1405,23 @@ pub struct TabSummary {
     /// available.
     #[serde(default)]
     pub failure_details: Option<String>,
+    /// Opaque JSON-serialised `core::agents::TerminalLaunchConfig`.
+    /// Daemon-proto keeps this opaque so the persisted-tab schema can
+    /// evolve in `core` without requiring a `daemon-proto` bump.
+    /// Clients deserialize via `serde_json::from_value` into the
+    /// canonical core type. `None` for tabs that were never
+    /// configured (legacy persisted tabs from before the field
+    /// existed).
+    #[serde(default)]
+    pub launch_config: Option<serde_json::Value>,
 }
 
 /// Mirror of `core::project_store::ProjectKind`. Wire-serialised as
 /// lowercase strings: `"root"` / `"worktree"`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectKind {
+    #[default]
     Root,
     Worktree,
 }
@@ -1223,7 +1430,7 @@ pub enum ProjectKind {
 /// snake_case: `"claude_code"` / `"codex"` / `"cursor_agent"` etc.
 /// `Shell` is the catch-all for tabs launched without an agent
 /// provider set (plain PTY).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProvider {
     ClaudeCode,
@@ -1235,6 +1442,10 @@ pub enum AgentProvider {
     Amp,
     RovoDev,
     Forge,
+    /// Catch-all for tabs launched without an agent provider set.
+    /// `Default` lands here so `..Default::default()` on test
+    /// fixtures yields a benign "plain shell" tab.
+    #[default]
     Shell,
 }
 
@@ -1261,7 +1472,7 @@ pub struct OpenInAppWire {
 /// icon and `enabled_apps` for the chevron dropdown. Actual app
 /// launch stays host-local on the daemon (see `openProjectInApp`'s
 /// docstring in `connection.dart`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OpenInStateWire {
     /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
     /// declares them.

@@ -68,7 +68,7 @@ pub(crate) const DESKTOP_LOCAL_VIEWER_ID: &str = "desktop-local";
 /// negligible at PTY-launch rates (tens per session), whereas keeping
 /// projects/broadcasts/writers in sync would require multiple locks to
 /// be held in order and is fragile to refactor later.
-pub(crate) struct RegistryState {
+pub struct RegistryState {
     /// Snapshot of the desktop's projects/tasks/tabs, refreshed from
     /// `AnotherOneApp::project_store` on every mutation. The daemon's
     /// `ListProjects` handler reads directly from this snapshot so it
@@ -131,10 +131,18 @@ pub(crate) struct RegistryState {
     /// between "spawn kicked off" and "Launched reply observed"
     /// where a second LaunchTab would spawn a duplicate PTY.
     pub(crate) in_flight_launches: HashSet<TerminalRuntimeKey>,
+    /// Stable broadcast sender shared with `DesktopTerminalRegistry`
+    /// so the desktop GUI can fire a state-change tick after every
+    /// `project_store` mutation. Connected mobile sessions push a
+    /// fresh `WorkerReply::ProjectList` to their peer on each tick.
+    pub(crate) state_change_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl RegistryState {
-    pub(crate) fn new(project_store: ProjectStore) -> Self {
+    pub fn new(project_store: ProjectStore) -> Self {
+        // Capacity 16 — server-side push pumps drop duplicates,
+        // a small buffer prevents `Lagged` on bursts of mutations.
+        let (state_change_tx, _) = tokio::sync::broadcast::channel(16);
         Self {
             project_store,
             broadcasts: HashMap::new(),
@@ -149,6 +157,7 @@ impl RegistryState {
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
             effective_sizes: HashMap::new(),
+            state_change_tx,
         }
     }
 
@@ -250,19 +259,58 @@ pub(crate) struct PendingSpawnTerminal {
 /// state onto the wire. Holds a `Weak` so a late-arriving daemon
 /// callback after app shutdown drops out cleanly instead of keeping
 /// the app alive.
-pub(crate) struct DesktopTerminalRegistry {
+pub struct DesktopTerminalRegistry {
     inner: Weak<Mutex<RegistryState>>,
+    /// Stable broadcast sender for state-change notifications.
+    /// Cloned out of `RegistryState::state_change_tx` at construction
+    /// so the trait impl can serve `subscribe_state_changes` /
+    /// `notify_state_changed` without re-taking the inner state lock.
+    state_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl DesktopTerminalRegistry {
-    pub(crate) fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
-        Self { inner }
+    pub fn new(inner: Weak<Mutex<RegistryState>>) -> Self {
+        // Pull the canonical sender out of the shared `RegistryState`
+        // so notifications fired by the GUI's
+        // `sync_registry_project_store` reach our subscribers too.
+        let state_tx = inner
+            .upgrade()
+            .and_then(|arc| arc.lock().ok().map(|guard| guard.state_change_tx.clone()))
+            .unwrap_or_else(|| tokio::sync::broadcast::channel(16).0);
+        Self { inner, state_tx }
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut RegistryState) -> R) -> Option<R> {
         let arc = self.inner.upgrade()?;
         let mut guard = arc.lock().ok()?;
         Some(f(&mut guard))
+    }
+
+    /// Mutator helper for daemon-side store writes: locks state,
+    /// runs `f` with `&mut ProjectStore`, then persists to disk and
+    /// fires the state-change broadcast so connected sessions push
+    /// a fresh `WorkerReply::ProjectList` to peers. Use from every
+    /// `Control::*` handler that mutates the store.
+    ///
+    /// Save errors are logged but not surfaced — keeping them out of
+    /// the trait return type means call-site authors can write
+    /// "match the existing GUI mutator" without worrying about
+    /// per-handler error mapping. A failed save is exotic enough
+    /// (disk full / permissions) that the daemon's `tracing` log is
+    /// the right surface anyway.
+    #[allow(dead_code)] // call-site migrations land in commits 6–9
+    fn with_store_mut<R>(&self, f: impl FnOnce(&mut ProjectStore) -> R) -> Option<R> {
+        self.with_state(|state| {
+            let result = f(&mut state.project_store);
+            // `ProjectStore::save` swallows errors internally
+            // (logs + returns ()); no Result to map here.
+            state.project_store.save();
+            // Fire the broadcast tick so every connected session's
+            // push pump sends a fresh ProjectList. Same channel the
+            // GUI's sync_registry_project_store fires on.
+            let _ = state.state_change_tx.send(());
+            result
+        })
     }
 }
 
@@ -273,14 +321,235 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn list_projects(&self) -> Vec<ProjectSummary> {
+        // Read straight from the in-memory store. Every desktop
+        // direct-mutation reaches `RegistryState.project_store` via
+        // `commit_local_mutation` → `sync_registry_project_store`,
+        // and every daemon-side mutation flows through
+        // `with_store_mut` (also writes here). The legacy
+        // `ProjectStore::load()` reload-from-disk on every
+        // ListProjects was a workaround for the GUI mutating without
+        // syncing; obsolete now that all paths funnel through one of
+        // those two helpers.
+        self.with_state(|state| project_summaries(state))
+            .unwrap_or_default()
+    }
+
+    fn subscribe_state_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
+        self.state_tx.subscribe()
+    }
+
+    fn notify_state_changed(&self) {
+        // `send` returns Err only if there are no receivers. That's
+        // fine — no one's listening yet, no work to do.
+        let _ = self.state_tx.send(());
+    }
+
+    fn remove_project(&self, project_id: &str) -> anyhow::Result<()> {
+        let project_id = project_id.to_string();
+        self.with_store_mut(move |store| {
+            store.remove_project(&project_id);
+        })
+        .ok_or_else(|| anyhow::anyhow!(registry_unavailable()))?;
+        Ok(())
+    }
+
+    fn rename_task(
+        &self,
+        task_id: &str,
+        new_name: &str,
+    ) -> (bool, Option<TaskSummary>) {
+        let task_id = task_id.to_string();
+        let new_name = new_name.to_string();
+        let result = self.with_state(|state| {
+            let changed = state.project_store.rename_task(&task_id, &new_name);
+            if changed {
+                state.project_store.save();
+                let _ = state.state_change_tx.send(());
+            }
+            (changed, task_summary_for(state, &task_id))
+        });
+        result.unwrap_or((false, None))
+    }
+
+    fn set_task_pinned(
+        &self,
+        task_id: &str,
+        pinned: bool,
+    ) -> (bool, Option<TaskSummary>) {
+        let task_id = task_id.to_string();
+        let result = self.with_state(|state| {
+            let changed = state.project_store.set_task_pinned(&task_id, pinned);
+            if changed {
+                state.project_store.save();
+                let _ = state.state_change_tx.send(());
+            }
+            (changed, task_summary_for(state, &task_id))
+        });
+        result.unwrap_or((false, None))
+    }
+
+    fn remove_task(&self, project_id: &str, task_id: &str) -> bool {
+        let project_id = project_id.to_string();
+        let task_id = task_id.to_string();
+        self.with_store_mut(move |store| store.remove_task(&project_id, &task_id).is_some())
+            .unwrap_or(false)
+    }
+
+    fn set_branch_setting(
+        &self,
+        project_id: &str,
+        field: &str,
+        branch_name: Option<&str>,
+    ) -> Result<bool, String> {
+        let project_id = project_id.to_string();
+        let branch_name = branch_name.map(str::to_string);
+        let changed = match field {
+            "default-branch" => self
+                .with_store_mut(move |store| {
+                    store
+                        .update_default_branch(&project_id, branch_name.clone())
+                        .map_err(|e| e.to_string())
+                })
+                .ok_or_else(registry_unavailable)??,
+            "default-target-branch" => self
+                .with_store_mut(move |store| {
+                    store
+                        .update_default_target_branch(&project_id, branch_name.clone())
+                        .map_err(|e| e.to_string())
+                })
+                .ok_or_else(registry_unavailable)??,
+            other => return Err(format!("unknown branch_setting field: {other}")),
+        };
+        Ok(changed)
+    }
+
+    fn persist_section_state(&self, section_id: &str, persisted: serde_json::Value) {
+        let Ok(persisted) = serde_json::from_value::<
+            another_one_core::project_store::PersistedSectionState,
+        >(persisted) else {
+            tracing::warn!(section_id, "PersistSectionState payload failed to decode");
+            return;
+        };
+        let Some(parsed) = SectionId::from_store_key(section_id) else {
+            tracing::warn!(section_id, "PersistSectionState section_id malformed");
+            return;
+        };
+        self.with_store_mut(|store| {
+            if let Some(task_id) = parsed.task_id.as_deref() {
+                store.update_task_tabs(task_id, &persisted);
+            } else {
+                store.set_terminal_section(section_id.to_string(), persisted);
+            }
+        });
+    }
+
+    fn set_last_active_section(&self, section_id: Option<String>) {
+        self.with_store_mut(|store| {
+            store.set_last_active_section_key(section_id);
+        });
+    }
+
+    fn set_sidebar_git_metadata_visible(&self, visible: bool) {
+        self.with_store_mut(|store| {
+            store.set_sidebar_git_metadata_visible(visible);
+        });
+    }
+
+    fn set_repo_default_commit_action(&self, repo_id: &str, action: &str) {
+        let parsed = match action {
+            "commit" => another_one_core::project_store::RepoDefaultCommitAction::Commit,
+            "commit-and-push" => {
+                another_one_core::project_store::RepoDefaultCommitAction::CommitAndPush
+            }
+            other => {
+                tracing::warn!(other, "SetRepoDefaultCommitAction: unknown action id");
+                return;
+            }
+        };
+        let repo_id_owned = repo_id.to_string();
+        self.with_store_mut(move |store| {
+            store.set_repo_default_commit_action(repo_id_owned, parsed);
+        });
+    }
+
+    fn update_task_branch(
+        &self,
+        task_id: &str,
+        target_project_id: &str,
+        branch_name: &str,
+    ) {
+        let task_id = task_id.to_string();
+        let target_project_id = target_project_id.to_string();
+        let branch_name = branch_name.to_string();
+        self.with_store_mut(move |store| {
+            let _ = store.update_task_branch(&task_id, &target_project_id, &branch_name);
+        });
+    }
+
+    fn set_expanded_repos(&self, expanded_repo_ids: Vec<String>) {
+        let set: std::collections::HashSet<String> = expanded_repo_ids.into_iter().collect();
+        self.with_store_mut(move |store| {
+            store.set_expanded_repos(&set);
+        });
+    }
+
+    fn set_git_commit_llm(&self, settings: serde_json::Value) {
+        let Ok(settings) = serde_json::from_value::<
+            another_one_core::git_actions::GitActionLlmSettings,
+        >(settings) else {
+            tracing::warn!("SetGitCommitLlm payload failed to decode");
+            return;
+        };
+        self.with_store_mut(move |store| {
+            let _ = store.set_git_commit_generation_llm(settings);
+        });
+    }
+
+    fn set_git_pr_llm(&self, settings: serde_json::Value) {
+        let Ok(settings) = serde_json::from_value::<
+            another_one_core::git_actions::GitActionLlmSettings,
+        >(settings) else {
+            tracing::warn!("SetGitPrLlm payload failed to decode");
+            return;
+        };
+        self.with_store_mut(move |store| {
+            let _ = store.set_git_pr_generation_llm(settings);
+        });
+    }
+
+    fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
         self.with_state(|state| {
-            // Project/task data lives in the same store as main
-            // (`.../another-one/projects.json`). Refresh here so
-            // daemon clients never read a stale GPUI snapshot after
-            // project/task mutations; live PTY running state is still
-            // layered from this registry's broadcast maps below.
-            state.project_store = ProjectStore::load();
-            project_summaries(state)
+            let ui = &state.project_store.ui;
+            daemon_proto::UiSnapshot {
+                expanded_repo_ids: ui.expanded_repo_ids.iter().cloned().collect(),
+                pinned_task_ids: ui
+                    .pinned_task_ids
+                    .iter()
+                    .map(|id| (String::new(), id.clone()))
+                    .collect(),
+                last_active_section_id: ui.last_active_section_id.clone(),
+                left_sidebar_open: ui.left_sidebar_open,
+                show_sidebar_git_metadata: ui.show_sidebar_git_metadata,
+                shortcuts: serde_json::to_value(&ui.shortcuts).ok(),
+                agent_launch_args_overrides: serde_json::to_value(&ui.agent_launch_args).ok(),
+                default_agent_id: ui.default_agent_id.clone(),
+                enabled_agents: ui
+                    .enabled_agents
+                    .as_ref()
+                    .map(|set| set.iter().cloned().collect()),
+                open_in_apps: ui
+                    .enabled_open_in_apps
+                    .as_ref()
+                    .and_then(|s| serde_json::to_value(s).ok()),
+                preferred_open_in_app: ui
+                    .preferred_open_in_app
+                    .as_ref()
+                    .map(|kind| kind.id().to_string()),
+                git_commit_generation_script: ui.git_commit_generation_script.clone(),
+                git_pr_generation_script: ui.git_pr_generation_script.clone(),
+                git_commit_generation_llm: serde_json::to_value(&ui.git_commit_generation_llm).ok(),
+                git_pr_generation_llm: serde_json::to_value(&ui.git_pr_generation_llm).ok(),
+            }
         })
         .unwrap_or_default()
     }
@@ -617,19 +886,19 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn set_agent_enabled(&self, agent_id: &str, enabled: bool) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_agent_enabled(agent_id, enabled))
+        self.with_store_mut(|store| store.set_agent_enabled(agent_id, enabled))
             .ok_or_else(registry_unavailable)
     }
 
     fn set_default_agent(&self, agent_id: &str) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_default_agent(agent_id))
+        self.with_store_mut(|store| store.set_default_agent(agent_id))
             .ok_or_else(registry_unavailable)
     }
 
     fn set_agent_launch_args(&self, agent_id: &str, args: Vec<String>) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_state(|state| state.project_store.set_agent_launch_args(agent_id, args))
+        self.with_store_mut(|store| store.set_agent_launch_args(agent_id, args))
             .ok_or_else(registry_unavailable)
     }
 
@@ -654,10 +923,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let app =
             open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
         let available = detect_available_open_in_apps();
-        self.with_state(|state| {
-            state
-                .project_store
-                .set_open_in_app_enabled(app, enabled, &available);
+        self.with_store_mut(|store| {
+            store.set_open_in_app_enabled(app, enabled, &available);
         })
         .ok_or_else(registry_unavailable)
     }
@@ -676,10 +943,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .ok_or_else(registry_unavailable)?;
         let path = path.ok_or_else(|| format!("unknown project: {project_id}"))?;
         open_path_in_app(&path, app)?;
-        self.with_state(|state| {
-            state
-                .project_store
-                .set_preferred_open_in_app(app, &available);
+        self.with_store_mut(|store| {
+            store.set_preferred_open_in_app(app, &available);
         })
         .ok_or_else(registry_unavailable)
     }
@@ -713,22 +978,22 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.set_git_commit_generation_script(script))
+        self.with_store_mut(|store| store.set_git_commit_generation_script(script))
             .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_commit_script(&self) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.reset_git_commit_generation_script())
+        self.with_store_mut(|store| store.reset_git_commit_generation_script())
             .ok_or_else(registry_unavailable)
     }
 
     fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.set_git_pr_generation_script(script))
+        self.with_store_mut(|store| store.set_git_pr_generation_script(script))
             .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_pr_script(&self) -> Result<bool, String> {
-        self.with_state(|state| state.project_store.reset_git_pr_generation_script())
+        self.with_store_mut(|store| store.reset_git_pr_generation_script())
             .ok_or_else(registry_unavailable)
     }
 
@@ -757,11 +1022,11 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn set_shortcut_binding(&self, action_id: &str, binding: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_state(|state| {
+        self.with_store_mut(|store| {
             if binding.is_empty() {
-                state.project_store.clear_shortcut_binding(action);
+                store.clear_shortcut_binding(action);
             } else {
-                state.project_store.set_shortcut_binding(action, binding);
+                store.set_shortcut_binding(action, binding);
             }
         })
         .ok_or_else(registry_unavailable)
@@ -770,7 +1035,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_state(|state| state.project_store.reset_shortcut_binding(action))
+        self.with_store_mut(|store| store.reset_shortcut_binding(action))
             .ok_or_else(registry_unavailable)
     }
 
@@ -1083,12 +1348,16 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
     store
         .projects
         .iter()
-        // Mobile drawer mirrors the desktop sidebar's *root* project
-        // list — worktree-kind projects are nested under their root
-        // (via `task.worktree_project_id`) and should never appear at
-        // the top level. Filter them out here.
-        .filter(|project| matches!(project.kind, CoreProjectKind::Root))
+        // Include both Root and Worktree projects: tasks reference
+        // worktree projects via `target_project_id`, and the
+        // client-side `absorb_projection` → `sanitize` drops any task
+        // whose target project isn't in the projection. The sidebar
+        // UI filters to Root entries on its own; the wire format
+        // carries the full graph.
         .map(|project| {
+            // Tasks are keyed by root_project_id, so worktree summaries
+            // naturally carry an empty task list — the task lives on
+            // its root.
             let tasks = store
                 .tasks
                 .get(&project.id)
@@ -1104,9 +1373,29 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 kind: map_project_kind(project.kind),
                 current_branch: project.checkout.current_branch.clone(),
                 tasks,
+                repo_id: project.repo_id.clone(),
+                worktree_name: project.worktree_name.clone(),
+                checkout: serde_json::to_value(&project.checkout).ok(),
+                branch_settings: serde_json::to_value(&project.branch_settings).ok(),
+                actions: serde_json::to_value(&project.actions).unwrap_or_default(),
             }
         })
         .collect()
+}
+
+/// Look up the wire `TaskSummary` for `task_id` in the current
+/// `RegistryState`. Used by mutator trait impls (`rename_task` /
+/// `set_task_pinned`) to return the post-mutation projection inline
+/// per the trait contract.
+fn task_summary_for(state: &RegistryState, task_id: &str) -> Option<TaskSummary> {
+    let task = state
+        .project_store
+        .tasks
+        .values()
+        .flatten()
+        .find(|t| t.id == task_id)
+        .cloned()?;
+    Some(task_to_summary(state, task))
 }
 
 fn task_to_summary(
@@ -1117,6 +1406,14 @@ fn task_to_summary(
     let section_key = task.section_id.clone();
     let parsed_section = SectionId::from_store_key(&section_key);
     let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
+    let cwd = task
+        .cwd
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
+    let next_tab_id = task.next_tab_id;
+    let kind_value = serde_json::to_value(&task.kind).ok();
+    let root_project_id = task.root_project_id.clone();
+    let worktree_project_id = task.worktree_project_id.clone();
     let tabs = task
         .tabs
         .into_iter()
@@ -1139,6 +1436,9 @@ fn task_to_summary(
                 restore_status: tab.restore_status,
                 failure_message: tab.failure_message,
                 failure_details: tab.failure_details,
+                launch_config: tab.launch_config.as_ref().and_then(|cfg| {
+                    serde_json::to_value(cfg).ok()
+                }),
             }
         })
         .collect();
@@ -1162,28 +1462,24 @@ fn task_to_summary(
         lines_added,
         lines_removed,
         target_project_id: task.target_project_id,
+        cwd,
+        next_tab_id,
+        root_project_id,
+        kind: kind_value,
+        worktree_project_id,
     }
 }
 
+// Trivial wrappers retained as call-site readability sugar around
+// the bidirectional `From` impls in `core::project_store` /
+// `core::agents`. Inlining the `.into()` at each site is fine; this
+// is just a one-liner and the indirection is free at codegen time.
 fn map_project_kind(kind: CoreProjectKind) -> ProjectKind {
-    match kind {
-        CoreProjectKind::Root => ProjectKind::Root,
-        CoreProjectKind::Worktree => ProjectKind::Worktree,
-    }
+    kind.into()
 }
 
 fn map_agent_provider(kind: AgentProviderKind) -> AgentProvider {
-    match kind {
-        AgentProviderKind::ClaudeCode => AgentProvider::ClaudeCode,
-        AgentProviderKind::CursorAgent => AgentProvider::CursorAgent,
-        AgentProviderKind::Codex => AgentProvider::Codex,
-        AgentProviderKind::Pi => AgentProvider::Pi,
-        AgentProviderKind::Gemini => AgentProvider::Gemini,
-        AgentProviderKind::OpenCode => AgentProvider::OpenCode,
-        AgentProviderKind::Amp => AgentProvider::Amp,
-        AgentProviderKind::RovoDev => AgentProvider::RovoDev,
-        AgentProviderKind::Forge => AgentProvider::Forge,
-    }
+    kind.into()
 }
 
 fn agent_summary_wire(agent: &another_one_core::agents::AgentDef) -> AgentSummaryWire {
@@ -1239,7 +1535,7 @@ fn open_in_app_from_id(id: &str) -> Option<OpenInAppKind> {
     OpenInAppKind::all().into_iter().find(|app| app.id() == id)
 }
 
-fn shortcut_action_id(action: ShortcutAction) -> &'static str {
+pub(crate) fn shortcut_action_id(action: ShortcutAction) -> &'static str {
     match action {
         ShortcutAction::CycleProjects => "cycle-projects",
         ShortcutAction::NewTabInCurrentTask => "new-tab-in-current-task",
@@ -1346,10 +1642,24 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
         .collect()
 }
 
+/// Bundle of handles the daemon-host thread hands back to the GUI.
+/// `endpoint_rx` carries the iroh `EndpointHandle` once the network
+/// endpoint binds (mobile clients dial this via QR pairing). `session`
+/// is the in-process client half of an `in_memory::pair()` whose
+/// server half the daemon-host drives via `serve_session` — every
+/// daemon interaction the GUI makes on desktop flows through this
+/// session so the network-vs-in-process distinction is opaque to
+/// callers (mobile holds an `IrohSession` on the same trait).
+pub(crate) struct DaemonHostHandles {
+    pub(crate) endpoint_rx: mpsc::Receiver<anyhow::Result<EndpointHandle>>,
+    pub(crate) session: Arc<dyn daemon_transport::Session>,
+}
+
 /// Spawn the embedded daemon on a dedicated OS thread with its own
-/// tokio runtime. Returns a receiver the GPUI render tick polls; the
-/// first `try_recv` that yields the handle caches it on
-/// `AnotherOneApp`.
+/// tokio runtime. Returns the in-process `Session` the GUI uses to
+/// reach the embedded daemon plus a receiver the GPUI render tick
+/// polls for the `EndpointHandle`; the first `try_recv` that yields
+/// the handle caches it on `AnotherOneApp`.
 ///
 /// The thread keeps running until the process exits; dropping the
 /// `EndpointHandle` (which happens when `AnotherOneApp` drops) aborts
@@ -1358,19 +1668,32 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
 pub(crate) fn spawn(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
-) -> mpsc::Receiver<anyhow::Result<EndpointHandle>> {
-    let (tx, rx) = mpsc::channel();
+) -> DaemonHostHandles {
+    let (endpoint_tx, endpoint_rx) = mpsc::channel();
+    // Build the in-memory pair *before* spawning the daemon thread so
+    // we can hand the client half back synchronously. `pair()` itself
+    // needs a tokio context (it `tokio::spawn`s the recv router) — use
+    // the shared session-host runtime which is also what drives every
+    // GUI-issued `session.call(...)`.
+    let (server_session, client_session) = crate::session_host::runtime_handle()
+        .block_on(async { daemon_transport::in_memory::pair("gui:desktop") });
+    let session: Arc<dyn daemon_transport::Session> = Arc::from(client_session);
+    let server_session: Arc<dyn daemon_transport::ServerSession> = Arc::from(server_session);
     thread::Builder::new()
         .name("another-one-daemon".into())
-        .spawn(move || run(registry_state, event_bus, tx))
+        .spawn(move || run(registry_state, event_bus, endpoint_tx, server_session))
         .expect("spawn daemon-host thread");
-    rx
+    DaemonHostHandles {
+        endpoint_rx,
+        session,
+    }
 }
 
 fn run(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
     tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
+    in_process_server: Arc<dyn daemon_transport::ServerSession>,
 ) {
     // Four workers so a single stuck PTY write (child paused /
     // pipe buffer full) + its `block_in_place` scope don't starve
@@ -1473,6 +1796,21 @@ fn run(
         // cleans up the socket transparently to the user.
         std::future::pending::<()>().await;
         drop(listener);
+    });
+
+    // Drive the in-process Session. The GUI on the same process holds
+    // the matched client half (`session: Arc<dyn Session>` on
+    // `AnotherOneApp`) and issues every daemon-equivalent verb through
+    // it; we accept those verbs here on the daemon's own runtime via
+    // the same `serve_session` dispatcher the iroh accept loop drives
+    // for mobile clients. Nothing about handler logic is in-process
+    // vs over the wire — it's the same dispatch path either way, which
+    // is the whole point of the daemon-transport seam.
+    let in_process_registry = registry.clone();
+    runtime.spawn(async move {
+        if let Err(e) = daemon::dispatch::serve_session(in_process_server, in_process_registry).await {
+            log::warn!("in-process serve_session ended with error: {e}");
+        }
     });
 
     let endpoint_result = runtime.block_on(async {

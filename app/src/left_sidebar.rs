@@ -244,13 +244,17 @@ impl AnotherOneApp {
             &project_id_set,
         );
 
-        for project_id in project_ids {
-            self.project_store.remove_project(project_id);
+        for project_id in project_ids.iter() {
+            self.dispatch_remove_project(project_id.clone());
         }
+        // No local mutation — daemon broadcast drives the sidebar
+        // refresh. The `clear_removed_project_references` /
+        // `fallback_section` calls below operate on the current
+        // (still-pre-removal) snapshot for fallback intent; the
+        // active-section adjustment runs once the projection lands.
         self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
         let fallback_section =
             project_workflows::fallback_section_after_project_removal(&self.project_store);
-        self.project_store.save();
 
         self.workspace_pane.update(cx, |workspace, cx| {
             workspace.remove_project_sections(&project_id_set, cx);
@@ -270,11 +274,15 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> Option<Project> {
         let project_id_set = std::collections::HashSet::from([project_id.to_string()]);
+        // Read the snapshot Project before dispatching; the
+        // broadcast push will remove it from the local store soon
+        // after this returns.
+        let removed_project = self.project_store.project(project_id).cloned()?;
         let removed_repo_ids = project_workflows::removed_repo_ids_without_remaining_projects(
             &self.project_store.projects,
             &project_id_set,
         );
-        let removed_project = self.project_store.remove_worktree_project(project_id)?;
+        self.dispatch_remove_project(project_id.to_string());
         self.clear_removed_project_references(&project_id_set, &removed_repo_ids);
 
         self.workspace_pane.update(cx, |workspace, cx| {
@@ -413,11 +421,14 @@ impl AnotherOneApp {
     }
 
     fn set_sidebar_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
-        let changed = self.project_store.set_task_pinned(task_id, pinned);
-        if changed {
-            self.project_store.save();
-        }
-        changed
+        // Dispatch-only — broadcast push drives the local view via
+        // drain_remote_worker_replies → absorb_projection. Returning
+        // `pinned` reflects the *intent*; the rendered pin glyph
+        // updates when the projection lands one render tick later.
+        // No local project_store write — desktop and mobile must
+        // behave identically as clients of the daemon.
+        self.dispatch_set_task_pinned(task_id.to_string(), pinned);
+        true
     }
 
     fn open_sidebar_task_menu(
@@ -520,14 +531,14 @@ impl AnotherOneApp {
         preferred_project_id: &str,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .project_store
-            .remove_task(project_id, task_id)
-            .is_none()
-        {
+        // Sanity-check the task exists before firing the verb — a
+        // tap on a stale row should toast, not silently dispatch.
+        // Read-only check on the current projection.
+        if self.project_store.task(task_id).is_none() {
             self.show_error_toast("Could not find the selected task.", cx);
             return;
         }
+        self.dispatch_remove_task(project_id.to_string(), task_id.to_string());
 
         self.sidebar_task_menu = None;
         self.sidebar_task_last_click = None;
@@ -542,7 +553,6 @@ impl AnotherOneApp {
             workspace.remove_task_sections(task_id, cx);
         });
         self.restore_view_after_task_removal(preferred_project_id, cx);
-        self.project_store.save();
         self.show_success_toast(format!("Deleted task {}.", task_name), cx);
         cx.notify();
     }
@@ -664,18 +674,16 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> String {
         if let Some(task_id) = confirm.task_id.as_deref() {
-            self.project_store
-                .remove_task(&confirm.root_project_id, task_id);
+            // Dispatch-only — broadcast push removes the task from
+            // the local view via absorb_projection.
+            self.dispatch_remove_task(confirm.root_project_id.clone(), task_id.to_string());
             self.workspace_pane.update(cx, |workspace, cx| {
                 workspace.remove_task_sections(task_id, cx);
             });
         }
 
         self.sidebar_task_delete_confirm = None;
-        let removed_worktree_project = self.remove_worktree_project_id(&confirm.project_id, cx);
-        if removed_worktree_project.is_none() {
-            self.project_store.save();
-        }
+        let _removed_worktree_project = self.remove_worktree_project_id(&confirm.project_id, cx);
         if was_active_project
             && self
                 .project_store
@@ -1125,9 +1133,8 @@ impl AnotherOneApp {
         };
 
         if final_name != rename.original_name {
-            if self.project_store.rename_task(&rename.row_id, &final_name) {
-                self.project_store.save();
-            }
+            // Dispatch-only — broadcast push installs the new name.
+            self.dispatch_rename_task(rename.row_id.clone(), final_name);
         }
 
         cx.notify();
@@ -1819,6 +1826,14 @@ impl AnotherOneApp {
                     );
                     let sid_for_state = sid.clone();
                     let project_path = project_path.clone();
+                    // Hydrate the workspace's local section state from
+                    // the persisted task tabs *before* activating, so
+                    // a freshly-tapped task uses the daemon's
+                    // authoritative tab IDs instead of fabricating a
+                    // new one in `SectionState::with_cwd`. Without
+                    // this, mobile's `AttachTab` would target a UUID
+                    // the daemon has never heard of.
+                    this.hydrate_section_state_from_store(&sid, cx);
                     this.workspace_pane.update(cx, |workspace, cx| {
                         workspace.activate_section(
                             sid_for_state,

@@ -622,10 +622,10 @@ mod tests {
                             id: "p1".into(),
                             name: "p1".into(),
                             path: "/tmp/p1".into(),
-                            kind: ProjectKind::Root,
                             current_branch: Some("main".into()),
-                            tasks: vec![],
+                            ..Default::default()
                         }],
+                        ui: Default::default(),
                     },
                 )
                 .await
@@ -634,7 +634,7 @@ mod tests {
 
         let reply = client.call(Control::ListProjects).await.expect("call");
         match reply {
-            WorkerReply::ProjectList { projects } => {
+            WorkerReply::ProjectList { projects, .. } => {
                 assert_eq!(projects.len(), 1);
                 assert_eq!(projects[0].id, "p1");
             }
@@ -666,7 +666,7 @@ mod tests {
             let (id2, _) = server_session.next_call().await.unwrap().unwrap();
             // Reply id2 first.
             server_session
-                .reply(id2, WorkerReply::ProjectList { projects: vec![] })
+                .reply(id2, WorkerReply::ProjectList { projects: vec![], ui: Default::default() })
                 .await
                 .unwrap();
             server_session

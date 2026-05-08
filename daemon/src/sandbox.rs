@@ -94,18 +94,16 @@ impl DaemonRegistry for SandboxRegistry {
                     title: "bash".to_string(),
                     provider: Some(AgentProvider::Shell),
                     running: true,
-                    pinned: false,
-                    fixed_title: None,
                     restore_status: daemon_proto::TerminalRestoreStatus::Ready,
-                    failure_message: None,
-                    failure_details: None,
+                    ..Default::default()
                 }],
-                pinned: false,
-                last_commit_relative: String::new(),
-                lines_added: 0,
-                lines_removed: 0,
                 target_project_id: SANDBOX_PROJECT_ID.to_string(),
+                root_project_id: SANDBOX_PROJECT_ID.to_string(),
+                next_tab_id: 1,
+                ..Default::default()
             }],
+            repo_id: SANDBOX_PROJECT_ID.to_string(),
+            ..Default::default()
         }]
     }
 

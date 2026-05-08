@@ -187,6 +187,88 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// calls this on every `Control::ListProjects`, so cheap.
     fn list_projects(&self) -> Vec<ProjectSummary>;
 
+    /// Snapshot of the daemon's per-user UI state — pinned tasks,
+    /// expanded sidebar repos, last focused section, etc. Bundled
+    /// alongside `list_projects()` in the `WorkerReply::ProjectList`
+    /// reply so both clients render the same state. Default impl
+    /// returns an empty snapshot for registries that don't track UI
+    /// state (e.g. the sandbox binary).
+    fn ui_snapshot(&self) -> daemon_proto::UiSnapshot {
+        daemon_proto::UiSnapshot::default()
+    }
+
+    /// Subscribe to state-change notifications. Each
+    /// `Control::ListProjects` reply is built fresh from
+    /// [`Self::list_projects`], so every fanned-out tick of the
+    /// returned receiver tells server-side session loops "the
+    /// projection has likely changed; push a fresh `ProjectList` to
+    /// the peer". Default impl returns a never-yielding receiver
+    /// for registries that don't track mutations (sandbox).
+    fn subscribe_state_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
+        // Capacity 1 because this is "edge-triggered" — we drop
+        // duplicate ticks; consumers re-snapshot on the leading
+        // edge and ignore the rest.
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        // Keep the sender alive for the lifetime of the receiver
+        // so it doesn't get a `Closed` error immediately. Leak
+        // intentionally for the no-op default — sandbox registries
+        // never send.
+        std::mem::forget(tx);
+        rx
+    }
+
+    /// Notify every subscriber that the daemon's projection may
+    /// have changed (project / task / tab mutation, settings tweak,
+    /// pin toggle, etc.). Default impl is a no-op so registries
+    /// that don't have mutation surfaces (e.g. the sandbox) are
+    /// trivially compliant.
+    fn notify_state_changed(&self) {}
+
+    /// Persist the section's terminal-tab snapshot. `persisted` is
+    /// an opaque JSON-serialised `PersistedSectionState`; the
+    /// concrete registry deserialises and routes to either
+    /// `update_task_tabs` (task-bound section) or
+    /// `set_terminal_section` (project pages / standalone shells).
+    /// Default impl is a no-op for registries that don't track
+    /// section state.
+    fn persist_section_state(&self, _section_id: &str, _persisted: serde_json::Value) {}
+
+    /// Update the user's last-active-section pointer. `None` clears
+    /// it (no active section). Default impl is a no-op for
+    /// registries that don't track UI state.
+    fn set_last_active_section(&self, _section_id: Option<String>) {}
+
+    /// Toggle the sidebar's per-task git-metadata visibility.
+    /// Default impl is a no-op.
+    fn set_sidebar_git_metadata_visible(&self, _visible: bool) {}
+
+    /// Pin a repo's default commit action (`"commit"` /
+    /// `"commit-and-push"`). Default impl is a no-op.
+    fn set_repo_default_commit_action(&self, _repo_id: &str, _action: &str) {}
+
+    /// Update a task's persisted branch name + target-project
+    /// pointer (worktree-task move). Default impl is a no-op.
+    fn update_task_branch(
+        &self,
+        _task_id: &str,
+        _target_project_id: &str,
+        _branch_name: &str,
+    ) {
+    }
+
+    /// Replace the user's expanded-project set wholesale. Default
+    /// impl is a no-op.
+    fn set_expanded_repos(&self, _expanded_repo_ids: Vec<String>) {}
+
+    /// Replace the AI commit-message generation LLM settings.
+    /// `settings` is an opaque JSON-serialised
+    /// `GitActionLlmSettings`. Default impl is a no-op.
+    fn set_git_commit_llm(&self, _settings: serde_json::Value) {}
+
+    /// Same as `set_git_commit_llm` but for PR generation. Default
+    /// impl is a no-op.
+    fn set_git_pr_llm(&self, _settings: serde_json::Value) {}
+
     /// Subscribe to the live PTY byte stream for `(section_id,
     /// tab_id)`. Returns `None` if the tab isn't currently running
     /// (e.g., closed or never launched). Multiple subscribers share

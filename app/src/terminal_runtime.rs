@@ -175,23 +175,33 @@ impl EventListener for RuntimeEventProxy {
     }
 }
 
+/// Local PTY backing for a `LiveTerminalRuntime`. Present when the
+/// renderer owns the PTY directly (desktop's `spawn_terminal_launch`
+/// path); `None` when the renderer is a viewer of a remote PTY (mobile
+/// post-`AttachTab`, where bytes arrive via `SessionEvent::PtyBytes`
+/// and input flows back over `Session::push_data`).
+pub(crate) struct LocalPty {
+    pub master: Box<dyn MasterPty + Send>,
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    pub child_killer: TerminalChildKiller,
+    /// Kept around so `daemon_host` can clone it on attach. The PTY
+    /// reader thread retains its own clone for pushing bytes; this
+    /// copy is read-only from the registry's perspective.
+    pub output_broadcast: tokio::sync::broadcast::Sender<Vec<u8>>,
+}
+
 pub(crate) struct LiveTerminalRuntime {
     term: Term<RuntimeEventProxy>,
     parser: ansi::Processor,
-    master: Box<dyn MasterPty + Send>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    child_killer: TerminalChildKiller,
+    /// `Some` for locally-spawned PTYs (desktop); `None` for
+    /// session-attached viewers (mobile). When `None`, input must
+    /// route through `daemon_transport::Session::push_data` and
+    /// resize requests must travel as `Control::TabResize`.
+    local_pty: Option<LocalPty>,
     event_queue: Arc<Mutex<VecDeque<Event>>>,
     size: TerminalGridSize,
     dirty: bool,
     cached_snapshot: TerminalSurfaceSnapshot,
-    /// Kept around so `daemon_host` can clone it on attach (including
-    /// the deferred warm-launch attach path, where the runtime is
-    /// stashed on the prewarm slot and later moved into the live map
-    /// under a real `TerminalRuntimeKey`). The reader thread retains
-    /// its own clone for pushing bytes; this copy is read-only from
-    /// the registry's perspective.
-    output_broadcast: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl LiveTerminalRuntime {
@@ -204,22 +214,56 @@ impl LiveTerminalRuntime {
         Self {
             term,
             parser: ansi::Processor::default(),
-            master: prepared.master,
-            writer: Arc::new(Mutex::new(prepared.writer)),
-            child_killer: prepared.child_killer,
+            local_pty: Some(LocalPty {
+                master: prepared.master,
+                writer: Arc::new(Mutex::new(prepared.writer)),
+                child_killer: prepared.child_killer,
+                output_broadcast: prepared.output_broadcast,
+            }),
             event_queue,
             size: prepared.size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
-            output_broadcast: prepared.output_broadcast,
+        }
+    }
+
+    /// Construct a viewer-only runtime backed by a remote PTY (i.e.
+    /// the daemon owns the actual shell process; this side just
+    /// applies bytes pushed via `SessionEvent::PtyBytes` into a local
+    /// VT grid). Input must be routed through
+    /// `daemon_transport::Session::push_data` by the caller — the
+    /// runtime's `write_input` is a no-op when there is no local PTY.
+    #[allow(dead_code)] // only constructed on cfg(target_os = "android")
+    pub fn from_remote(size: TerminalGridSize) -> Self {
+        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let event_proxy = RuntimeEventProxy {
+            queue: event_queue.clone(),
+        };
+        let term = Term::new(Config::default(), &size, event_proxy);
+        Self {
+            term,
+            parser: ansi::Processor::default(),
+            local_pty: None,
+            event_queue,
+            size,
+            dirty: true,
+            cached_snapshot: TerminalSurfaceSnapshot::default(),
         }
     }
 
     /// Clone of the PTY byte broadcast sender that
     /// `core::terminal_launch` tees every read into. The embedded
     /// daemon subscribes to this to forward bytes to mobile clients.
-    pub fn output_broadcast(&self) -> tokio::sync::broadcast::Sender<Vec<u8>> {
-        self.output_broadcast.clone()
+    /// `None` for viewer-only runtimes — there is no local PTY to
+    /// broadcast from.
+    pub fn output_broadcast(&self) -> Option<tokio::sync::broadcast::Sender<Vec<u8>>> {
+        self.local_pty.as_ref().map(|p| p.output_broadcast.clone())
+    }
+
+    /// True when this runtime owns a local PTY. False for viewer-only
+    /// (mobile-attached) runtimes.
+    pub fn has_local_pty(&self) -> bool {
+        self.local_pty.is_some()
     }
 
     pub fn resize(&mut self, size: TerminalGridSize) -> anyhow::Result<bool> {
@@ -227,7 +271,9 @@ impl LiveTerminalRuntime {
             return Ok(false);
         }
 
-        self.master.resize(size.as_pty_size())?;
+        if let Some(local) = self.local_pty.as_mut() {
+            local.master.resize(size.as_pty_size())?;
+        }
         self.term.resize(size);
         self.size = size;
         self.dirty = true;
@@ -274,7 +320,15 @@ impl LiveTerminalRuntime {
     }
 
     pub fn write_input(&self, bytes: &[u8]) -> io::Result<()> {
-        let mut writer = self
+        let Some(local) = self.local_pty.as_ref() else {
+            // Viewer-only runtime — caller is expected to route input
+            // through `daemon_transport::Session::push_data`. Return
+            // Ok so existing call sites that don't yet branch on
+            // platform stay quiet; the callers that need to push via
+            // session call `tab_input_via_session` instead.
+            return Ok(());
+        };
+        let mut writer = local
             .writer
             .lock()
             .map_err(|_| io::Error::other("terminal writer lock poisoned"))?;
@@ -416,19 +470,23 @@ impl LiveTerminalRuntime {
     }
 
     pub fn kill(&mut self) {
+        let Some(local) = self.local_pty.as_mut() else {
+            return;
+        };
         #[cfg(unix)]
-        if let Some(process_group_id) = self.master.process_group_leader() {
-            self.child_killer.add_process_group(process_group_id);
+        if let Some(process_group_id) = local.master.process_group_leader() {
+            local.child_killer.add_process_group(process_group_id);
         }
-        let _ = self.child_killer.kill();
+        let _ = local.child_killer.kill();
     }
 
     /// Clone the shared writer handle. The embedded daemon's
     /// `DaemonRegistry` clones this on tab launch so incoming mobile
     /// keystrokes can feed into the same `Arc<Mutex<…>>` the desktop
     /// writes to. See `daemon_host::DesktopTerminalRegistry::tab_input`.
-    pub fn writer_handle(&self) -> Arc<Mutex<Box<dyn Write + Send>>> {
-        self.writer.clone()
+    /// `None` for viewer-only runtimes that have no local PTY to write to.
+    pub fn writer_handle(&self) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
+        self.local_pty.as_ref().map(|p| p.writer.clone())
     }
 }
 

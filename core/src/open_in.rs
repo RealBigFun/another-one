@@ -94,6 +94,20 @@ impl OpenInAppKind {
             Self::FileManager => "file-manager",
         }
     }
+
+    /// Inverse of [`Self::id`]. Used by `ProjectStore::absorb_ui_snapshot`
+    /// to round-trip the user's preferred-app id from the daemon's
+    /// projection back into the typed enum.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "cursor" => Some(Self::Cursor),
+            "zed" => Some(Self::Zed),
+            "vscode" => Some(Self::VsCode),
+            "ghostty" => Some(Self::Ghostty),
+            "file-manager" => Some(Self::FileManager),
+            _ => None,
+        }
+    }
 }
 
 /// Intersect the user-configured enabled set with what's actually

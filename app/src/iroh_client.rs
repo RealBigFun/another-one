@@ -11,10 +11,11 @@
 //! grows beyond a few dozen lines of UI plumbing, the new logic
 //! almost certainly belongs over there.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 pub use daemon_client::{drain_status as drain_dial_status, DialStatus};
+use daemon_transport::Session as AbstractSession;
 
 /// Worker replies received from the active session, queued for the
 /// next render tick to drain. Right now we only forward
@@ -64,6 +65,36 @@ fn store_session(s: daemon_client::Session) -> std::sync::Arc<daemon_client::Ses
     arc
 }
 
+/// Pending session handoff slot. After the legacy QR-pair dial
+/// succeeds, [`dial`] also wraps the legacy session into an abstract
+/// [`AbstractSession`] (via [`daemon_client::wrap_legacy_session`])
+/// and drops it here. The GPUI render tick takes it and calls
+/// `AnotherOneApp::replace_session`, which re-spawns the
+/// session-events pump on the new session — that's how mobile starts
+/// receiving `SessionEvent::PtyBytes` from the daemon's
+/// `AttachTab` forwarder.
+///
+/// Additive on top of the legacy `WORKER_REPLY_QUEUE` flow: the
+/// legacy session keeps pumping `next_worker_reply` for the project
+/// list snapshot; the wrapped abstract session covers PTY bytes via
+/// `next_incoming_bytes` (different mpsc).
+static PENDING_SESSION_HANDOFF: OnceLock<Mutex<Option<Arc<dyn AbstractSession>>>> = OnceLock::new();
+
+fn handoff_slot() -> &'static Mutex<Option<Arc<dyn AbstractSession>>> {
+    PENDING_SESSION_HANDOFF.get_or_init(|| Mutex::new(None))
+}
+
+/// Take any pending session handoff, called by the GPUI render tick.
+pub fn take_pending_session() -> Option<Arc<dyn AbstractSession>> {
+    handoff_slot().lock().ok().and_then(|mut s| s.take())
+}
+
+fn store_pending_session(session: Arc<dyn AbstractSession>) {
+    if let Ok(mut slot) = handoff_slot().lock() {
+        *slot = Some(session);
+    }
+}
+
 /// Kick off a dial against the given pairing URL. Returns immediately;
 /// progress flows through `daemon_client::drain_status` (re-exported
 /// as [`drain_dial_status`]) and worker replies through
@@ -99,6 +130,20 @@ pub fn dial(pairing_url: String) {
                     }
                 };
                 let session = store_session(session);
+
+                // Additionally wrap the legacy session into the
+                // abstract `daemon_transport::Session` shape and hand
+                // it to the GPUI render tick. The renderer's
+                // `replace_session` re-spawns the events pump on the
+                // new session so PTY bytes (delivered via the daemon's
+                // `AttachTab` forwarder → `next_incoming_bytes`) flow
+                // into `drain_session_events`. The legacy
+                // worker-reply pump below still drives the project
+                // list — both can coexist on the same legacy session.
+                let abstract_session: Arc<dyn AbstractSession> = Arc::from(
+                    daemon_client::wrap_legacy_session(std::sync::Arc::clone(&session)),
+                );
+                store_pending_session(abstract_session);
 
                 // Auto-fetch the project tree right after Hello.
                 if let Err(err) = session.list_projects().await {

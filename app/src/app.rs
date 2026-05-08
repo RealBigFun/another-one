@@ -56,7 +56,7 @@ use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
-    ProjectGitState, ProjectStore, RepoBranchRecord, RepoDefaultCommitAction, Task, TaskKind,
+    ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind,
     TaskWorktreeBranchMode,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
@@ -2009,6 +2009,36 @@ pub struct AnotherOneApp {
     /// after that, `pair_mobile_overlay` reads from here. Keeping the
     /// handle alive keeps the endpoint alive — drop aborts it.
     pub(crate) daemon_handle: Option<daemon::EndpointHandle>,
+    /// Session used to reach the daemon. On desktop this is the
+    /// client half of an `in_memory::pair()` whose server half the
+    /// embedded daemon's runtime drives via
+    /// `daemon::dispatch::serve_session`. On mobile this starts as a
+    /// `NoSession` placeholder and swaps to an `IrohSession` once the
+    /// QR pair flow lands a successful dial. Every state-mutating GUI
+    /// call that has a `Control` equivalent routes through here, so
+    /// the desktop/mobile/render-vs-network distinction is opaque to
+    /// callers — both platforms run the same code path.
+    ///
+    /// Stored behind a `parking_lot`-style `Mutex` (using `std::sync`
+    /// here for parity with the rest of the app) so the QR pair flow
+    /// can swap the impl in place without `&mut self` plumbing through
+    /// every call site that reads it.
+    pub(crate) session: Arc<Mutex<Arc<dyn daemon_transport::Session>>>,
+    /// Stable producer side of the session-events fan-in. Cloned by
+    /// `replace_session` to spawn a fresh events pump on the new
+    /// session (post-pair) without touching the receiver. Held for
+    /// the lifetime of the app — its existence keeps `session_events_rx`
+    /// from disconnecting when an old pump task ends.
+    pub(crate) session_events_tx:
+        tokio::sync::mpsc::UnboundedSender<daemon_transport::SessionEvent>,
+    /// Single-consumer side of the session-events fan-in. Drained on
+    /// the GPUI render tick by `drain_session_events`. PTY bytes
+    /// arrive here as `SessionEvent::PtyBytes` from whatever session
+    /// is current — desktop's in-memory pair never pushes (no
+    /// `AttachTab` issued); mobile's wrapped iroh session pushes via
+    /// the legacy session's `next_incoming_bytes` bridge.
+    pub(crate) session_events_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<daemon_transport::SessionEvent>>,
     /// Collapsed resource tree node ids in the resource usage panel.
     pub(crate) resource_collapsed_nodes: HashSet<String>,
     /// Latest sampled resource usage snapshot.
@@ -2139,6 +2169,32 @@ fn open_in_target_path_for_project(
 }
 
 impl AnotherOneApp {
+    /// Snapshot the current `Session` impl. Cheap (`Arc::clone` under
+    /// a brief mutex lock) so call sites can call this on every
+    /// dispatch without worrying about contention; the lock is only
+    /// held for the duration of the clone.
+    #[allow(dead_code)] // wired up by the per-call-site migrations (see another-one-oja sub-issues)
+    pub(crate) fn session_handle(&self) -> Arc<dyn daemon_transport::Session> {
+        self.session
+            .lock()
+            .expect("session slot poisoned")
+            .clone()
+    }
+
+    /// Replace the current `Session` impl. Used by the QR pair flow
+    /// on mobile to swap the `NoSession` placeholder for a live
+    /// `IrohSession` once `daemon_client::iroh_factory().dial(...)`
+    /// returns.
+    #[allow(dead_code)] // wired up by the mobile pair-completion commit
+    pub(crate) fn replace_session(&self, session: Arc<dyn daemon_transport::Session>) {
+        let events = session.events();
+        *self.session.lock().expect("session slot poisoned") = session;
+        let tx = self.session_events_tx.clone();
+        crate::session_host::spawn_event_pump(events, move |event| {
+            let _ = tx.send(event);
+        });
+    }
+
     pub(crate) fn focused_settings_git_action_script_kind(
         &self,
     ) -> Option<SettingsGitActionScriptKind> {
@@ -2432,12 +2488,10 @@ impl EntityInputHandler for AnotherOneApp {
                     };
                     match kind {
                         SettingsGitActionScriptKind::Commit => {
-                            let _ = self
-                                .project_store
-                                .set_git_commit_generation_script(saved_draft);
+                            self.dispatch_set_git_commit_script(saved_draft);
                         }
                         SettingsGitActionScriptKind::PullRequest => {
-                            let _ = self.project_store.set_git_pr_generation_script(saved_draft);
+                            self.dispatch_set_git_pr_script(saved_draft);
                         }
                     }
                 }
@@ -3892,56 +3946,59 @@ impl AnotherOneApp {
         branch_name: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let update = match field {
-            ProjectBranchSettingField::DefaultBranch => self
-                .project_store
-                .update_default_branch(project_id, branch_name.clone()),
-            ProjectBranchSettingField::DefaultTargetBranch => self
-                .project_store
-                .update_default_target_branch(project_id, branch_name.clone()),
+        let field_id = match field {
+            ProjectBranchSettingField::DefaultBranch => "default-branch",
+            ProjectBranchSettingField::DefaultTargetBranch => "default-target-branch",
         };
-
-        match update {
-            Ok(changed) => {
-                self.project_page_config_dropdown = None;
-                self.project_page_config_panel_targeted = false;
-                if !changed {
-                    cx.notify();
-                    return;
+        let session = self.session_handle();
+        let project_id_owned = project_id.to_string();
+        let branch_clone = branch_name.clone();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetBranchSetting {
+                project_id: project_id_owned,
+                field: field_id.to_string(),
+                branch_name: branch_clone,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetBranchSetting failed: {err}");
                 }
-
-                self.clear_branch_sidebar_states_for_project_group(project_id);
-                self.mark_git_refresh_stale();
-
-                match (field, branch_name.as_deref()) {
-                    (ProjectBranchSettingField::DefaultBranch, Some(branch_name)) => {
-                        self.show_success_toast(
-                            format!("Default branch set to {}.", branch_name),
-                            cx,
-                        );
-                    }
-                    (ProjectBranchSettingField::DefaultBranch, None) => {
-                        self.show_success_toast(
-                            "Default branch cleared. New tasks will use automatic branch detection.",
-                            cx,
-                        );
-                    }
-                    (ProjectBranchSettingField::DefaultTargetBranch, Some(branch_name)) => {
-                        self.show_success_toast(
-                            format!("Default target branch set to {}.", branch_name),
-                            cx,
-                        );
-                    }
-                    (ProjectBranchSettingField::DefaultTargetBranch, None) => {
-                        self.show_success_toast("Default target branch cleared.", cx);
-                    }
-                }
-                cx.notify();
+            },
+        );
+        // Dispatch is fire-and-forget; the daemon validates and
+        // applies. UI feedback is optimistic — close the dropdown
+        // and toast success. If the daemon rejects (e.g. unknown
+        // branch name), the broadcast push leaves state unchanged
+        // so the dropdown's selected value will revert on the next
+        // re-render. Validation errors that used to surface
+        // synchronously now surface as "no visible state change" —
+        // good enough for now; a typed reply ack would be cleaner.
+        self.project_page_config_dropdown = None;
+        self.project_page_config_panel_targeted = false;
+        self.clear_branch_sidebar_states_for_project_group(project_id);
+        self.mark_git_refresh_stale();
+        match (field, branch_name.as_deref()) {
+            (ProjectBranchSettingField::DefaultBranch, Some(branch_name)) => {
+                self.show_success_toast(format!("Default branch set to {}.", branch_name), cx);
             }
-            Err(error) => {
-                self.show_error_toast(error, cx);
+            (ProjectBranchSettingField::DefaultBranch, None) => {
+                self.show_success_toast(
+                    "Default branch cleared. New tasks will use automatic branch detection.",
+                    cx,
+                );
+            }
+            (ProjectBranchSettingField::DefaultTargetBranch, Some(branch_name)) => {
+                self.show_success_toast(
+                    format!("Default target branch set to {}.", branch_name),
+                    cx,
+                );
+            }
+            (ProjectBranchSettingField::DefaultTargetBranch, None) => {
+                self.show_success_toast("Default target branch cleared.", cx);
             }
         }
+        cx.notify();
     }
 
     pub(crate) fn set_right_sidebar_mode(
@@ -4090,10 +4147,18 @@ impl AnotherOneApp {
     pub(crate) fn set_sidebar_git_metadata_visible(
         &mut self,
         visible: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
-        self.project_store.set_sidebar_git_metadata_visible(visible);
-        cx.notify();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetSidebarGitMetadataVisible { visible },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetSidebarGitMetadataVisible failed: {err}");
+                }
+            },
+        );
     }
 
     pub(crate) fn set_agent_enabled(
@@ -4102,19 +4167,16 @@ impl AnotherOneApp {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.project_store.set_agent_enabled(agent_id, enabled) {
-            self.sync_new_task_modal_prewarm(cx);
-            self.sync_add_agent_modal_prewarm(cx);
-            cx.notify();
-        }
+        // Dispatch-only — broadcast push will install the new
+        // enabled-set; the prewarm sync re-runs on every render
+        // tick (after the projection lands) so it picks up the
+        // change without needing a synchronous local mutation here.
+        self.dispatch_set_agent_enabled(agent_id.to_string(), enabled);
+        cx.notify();
     }
 
-    pub(crate) fn set_default_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
-        if self.project_store.set_default_agent(agent_id) {
-            self.sync_new_task_modal_prewarm(cx);
-            self.sync_add_agent_modal_prewarm(cx);
-            cx.notify();
-        }
+    pub(crate) fn set_default_agent(&mut self, agent_id: &str, _cx: &mut Context<Self>) {
+        self.dispatch_set_default_agent(agent_id.to_string());
     }
 
     pub(crate) fn open_project_open_in_target_in_app(
@@ -4375,15 +4437,45 @@ impl AnotherOneApp {
         // the QR-scan flow follow-up.) Skipping the spawn also avoids
         // the `HOME is unset` startup error since `daemon-host`'s
         // config-dir lookup uses `dirs::config_dir()`.
+        // Build the daemon-host thread (desktop) or stand up a
+        // `NoSession` placeholder (mobile, until QR pair lands an
+        // `IrohSession`). The `session` field is the only thing
+        // call sites read — they do not care which platform branch
+        // produced it.
         #[cfg(not(target_os = "android"))]
-        let daemon_handle_rx = Some(crate::daemon_host::spawn(
-            registry_state.clone(),
-            event_bus.clone(),
-        ));
+        let (daemon_handle_rx, initial_session) = {
+            let handles = crate::daemon_host::spawn(registry_state.clone(), event_bus.clone());
+            (Some(handles.endpoint_rx), handles.session)
+        };
         #[cfg(target_os = "android")]
-        let daemon_handle_rx: Option<
-            mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>,
-        > = None;
+        let (daemon_handle_rx, initial_session): (
+            Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
+            Arc<dyn daemon_transport::Session>,
+        ) = (
+            None,
+            Arc::new(crate::session_host::NoSession::new(
+                "mobile session not paired yet — scan the desktop's QR code",
+            )),
+        );
+        // Spawn the session-events pump on the boot session BEFORE
+        // moving it into the Mutex, so the pump's stream subscription
+        // doesn't have to take the lock. PTY bytes (and any future
+        // server pushes) flow through `session_events_rx`, drained on
+        // the GPUI render tick by `drain_session_events`. Desktop's
+        // in-memory pair will never push events here (no `AttachTab`
+        // issued from desktop) — the channel just stays quiet. Mobile
+        // gets a fresh pump spawned on the wrapped iroh session via
+        // `replace_session` after the QR pair completes.
+        let (session_events_tx, session_events_rx) =
+            tokio::sync::mpsc::unbounded_channel::<daemon_transport::SessionEvent>();
+        {
+            let tx = session_events_tx.clone();
+            crate::session_host::spawn_event_pump(initial_session.events(), move |event| {
+                let _ = tx.send(event);
+            });
+        }
+        let session_events_rx = Some(session_events_rx);
+        let session = Arc::new(Mutex::new(initial_session));
         let left_sidebar_open = store.ui.left_sidebar_open;
         // Broadcast capacity is a per-channel ring buffer size. 64 is
         // well above the realistic backlog for these low-rate worker
@@ -4662,6 +4754,9 @@ impl AnotherOneApp {
             registry_state,
             daemon_handle_rx,
             daemon_handle: None,
+            session,
+            session_events_tx,
+            session_events_rx,
             resource_collapsed_nodes: HashSet::new(),
             resource_usage: ResourceUsageSnapshot::default(),
             resource_usage_sampler: ResourceUsageSampler::default(),
@@ -4815,16 +4910,39 @@ impl AnotherOneApp {
     }
 
     fn set_last_active_section_key(&mut self, section_key: Option<String>) {
-        self.project_store.set_last_active_section_key(section_key);
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetLastActiveSection {
+                section_id: section_key,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetLastActiveSection failed: {err}");
+                }
+            },
+        );
     }
 
     fn persist_section_state(&mut self, section_id: &SectionId, persisted: PersistedSectionState) {
-        if let Some(task_id) = section_id.task_id.as_deref() {
-            self.project_store.update_task_tabs(task_id, &persisted);
-        } else {
-            self.project_store
-                .set_terminal_section(section_id.store_key(), persisted);
-        }
+        let store_key = section_id.store_key();
+        let Ok(value) = serde_json::to_value(&persisted) else {
+            log::warn!("persist_section_state: failed to serialise PersistedSectionState");
+            return;
+        };
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::PersistSectionState {
+                section_id: store_key,
+                persisted: value,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("PersistSectionState failed: {err}");
+                }
+            },
+        );
     }
 
     fn update_terminal_tab(
@@ -5218,11 +5336,11 @@ impl AnotherOneApp {
         if let Some(mut runtime) = taken_runtime {
             self.terminal_manager.pending_launches.remove(&key);
             self.terminal_manager.errors.remove(&key);
-            self.register_tab_with_registry(
-                &key,
-                runtime.output_broadcast(),
-                runtime.writer_handle(),
-            );
+            if let (Some(broadcast), Some(writer)) =
+                (runtime.output_broadcast(), runtime.writer_handle())
+            {
+                self.register_tab_with_registry(&key, broadcast, writer);
+            }
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
             self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -5258,12 +5376,18 @@ impl AnotherOneApp {
             // a smaller viewport, the PTY + local grid both follow
             // the phone's size so lines wrap consistently.
             use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
+            #[cfg(target_os = "android")]
+            let mut focus_changed = false;
             if let Ok(mut state) = self.registry_state.lock() {
                 // Switching focused tabs on desktop: drop the prior
                 // tab's desktop-local entry (same semantics as a
                 // mobile detach/reattach).
                 if let Some(old_key) = state.viewer_focus.get(DESKTOP_LOCAL_VIEWER_ID).cloned() {
                     if old_key != request.key {
+                        #[cfg(target_os = "android")]
+                        {
+                            focus_changed = true;
+                        }
                         if let Some(map) = state.active_viewers.get_mut(&old_key) {
                             map.remove(DESKTOP_LOCAL_VIEWER_ID);
                             if map.is_empty() {
@@ -5272,6 +5396,11 @@ impl AnotherOneApp {
                             }
                         }
                         state.recompute_effective_size(&old_key);
+                    }
+                } else {
+                    #[cfg(target_os = "android")]
+                    {
+                        focus_changed = true;
                     }
                 }
                 state
@@ -5286,6 +5415,27 @@ impl AnotherOneApp {
                     .viewer_focus
                     .insert(DESKTOP_LOCAL_VIEWER_ID.to_string(), request.key.clone());
                 state.recompute_effective_size(&request.key);
+            }
+            #[cfg(target_os = "android")]
+            if focus_changed {
+                // Re-key the session attach to the focused tab so
+                // the daemon's forwarder pushes bytes for *this* key
+                // into our `SessionEvent::PtyBytes` stream.
+                let session = self.session_handle();
+                let section_id = request.key.section_id.store_key();
+                let tab_id = request.key.tab_id.clone();
+                crate::session_host::dispatch_fire_and_forget(
+                    session,
+                    daemon_proto::Control::AttachTab {
+                        section_id,
+                        tab_id,
+                    },
+                    |result| {
+                        if let Err(err) = result {
+                            log::warn!("focus-change AttachTab failed: {err}");
+                        }
+                    },
+                );
             }
             return;
         }
@@ -5316,6 +5466,87 @@ impl AnotherOneApp {
         self.update_terminal_tab(&request.key, cx, |tab| {
             tab.restore_status = TerminalRestoreStatus::Launching;
         });
+
+        #[cfg(target_os = "android")]
+        {
+            // Mobile: don't spawn a phone-local PTY. Stand up a
+            // viewer-only runtime that renders bytes pushed via
+            // `SessionEvent::PtyBytes`, then ask the daemon to
+            // launch + attach the real PTY on the desktop side.
+            log::info!(
+                "android: ensure_active_terminal_runtime → viewer-only \
+                 section={} tab={} size={}x{}",
+                request.key.section_id.store_key(),
+                request.key.tab_id,
+                request.size.cols,
+                request.size.rows
+            );
+            let mut runtime = LiveTerminalRuntime::from_remote(request.size);
+            self.terminal_surface_snapshots
+                .insert(request.key.clone(), runtime.snapshot());
+            self.live_terminal_runtimes
+                .insert(request.key.clone(), runtime);
+            self.update_terminal_tab(&request.key, cx, |tab| {
+                tab.restore_status = TerminalRestoreStatus::Ready;
+            });
+
+            let session = self.session_handle();
+            let section_id = request.key.section_id.store_key();
+            let tab_id = request.key.tab_id.clone();
+            crate::session_host::dispatch_fire_and_forget(
+                session.clone(),
+                daemon_proto::Control::LaunchTab {
+                    section_id: section_id.clone(),
+                    tab_id: tab_id.clone(),
+                },
+                |result| {
+                    if let Err(err) = result {
+                        log::warn!("session LaunchTab failed: {err}");
+                    }
+                },
+            );
+            // Daemon's handle_attach returns without installing a
+            // forwarder if it arrives before the desktop's render
+            // tick has spawned the PTY (the registry says "no live
+            // runtime yet"). Re-fire AttachTab a few times with
+            // backoff so the forwarder lands once the broadcast is
+            // registered. The daemon ack's each AttachTab with
+            // WorkerReply::Empty so .await resolves cleanly.
+            crate::session_host::runtime_handle().spawn(async move {
+                for (i, delay_ms) in [0_u64, 200, 500, 1000, 2000].iter().enumerate() {
+                    if *delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+                    }
+                    log::info!(
+                        "AttachTab attempt {} (delay={}ms) section={} tab={}",
+                        i + 1,
+                        delay_ms,
+                        section_id,
+                        tab_id
+                    );
+                    match session
+                        .call(daemon_proto::Control::AttachTab {
+                            section_id: section_id.clone(),
+                            tab_id: tab_id.clone(),
+                        })
+                        .await
+                    {
+                        Ok(reply) => log::info!(
+                            "AttachTab attempt {} ack: {:?}",
+                            i + 1,
+                            std::mem::discriminant(&reply)
+                        ),
+                        Err(err) => {
+                            log::warn!("session AttachTab failed: {err}");
+                            return;
+                        }
+                    }
+                }
+            });
+            return;
+        }
+
+        #[cfg(not(target_os = "android"))]
         spawn_terminal_launch(
             self.terminal_launch_sender.clone(),
             request.key,
@@ -5324,6 +5555,148 @@ impl AnotherOneApp {
             request.agent_launch_args,
             request.size,
         );
+    }
+
+    /// Drain any session handoff queued by the QR-pair dial task and
+    /// install it as the active `Session`. `replace_session`
+    /// re-spawns the events pump so PTY bytes from the new session
+    /// land in `session_events_rx`. No-op when the queue is empty
+    /// (every render tick on desktop, every tick on mobile after
+    /// the post-pair handoff has already happened).
+    pub(crate) fn drain_pending_session_handoff(&mut self) -> bool {
+        if let Some(session) = crate::iroh_client::take_pending_session() {
+            log::info!("installing freshly-paired session via replace_session");
+            self.replace_session(session);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Drain `SessionEvent`s the session pump pushed onto
+    /// `session_events_rx`. Mobile gets PTY bytes here once paired;
+    /// desktop never issues `AttachTab` over its in-memory pair so
+    /// this drain stays quiet on desktop.
+    ///
+    /// Mirrors the work the `TerminalLaunchReply::Output` arm does
+    /// (apply bytes to the live VT, mark the tab for snapshot
+    /// rebuild, mirror via `ClientEvent::Output`, retry the
+    /// claude-restore probe when the runtime hasn't materialised
+    /// yet) but keyed by the wire `(section_id, tab_id)` strings the
+    /// session emits rather than a local `TerminalRuntimeKey`.
+    fn drain_session_events(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+        let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        loop {
+            let event = match self.session_events_rx.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(event) => event,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        // Should not occur in practice — `session_events_tx`
+                        // is held as a struct field for the app's
+                        // lifetime, so the channel can't fully close.
+                        log::warn!("session events channel unexpectedly disconnected");
+                        break;
+                    }
+                },
+                None => break,
+            };
+            match event {
+                daemon_transport::SessionEvent::PtyBytes {
+                    section_id,
+                    tab_id,
+                    bytes,
+                } => {
+                    log::info!(
+                        "drain_session_events PtyBytes section={} tab={} bytes={}",
+                        section_id,
+                        tab_id,
+                        bytes.len()
+                    );
+                    let Some(section_id) = SectionId::from_store_key(&section_id) else {
+                        log::warn!("session event PtyBytes with malformed section_id");
+                        continue;
+                    };
+                    let key = TerminalRuntimeKey { section_id, tab_id };
+                    crate::leakscope::note_drain_output(bytes.len());
+                    self.append_terminal_recent_output(&key, &bytes);
+                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                        let terminal_update = runtime.apply_output(&bytes);
+                        output_dirty_keys.insert(key.clone());
+                        if terminal_update.bell {
+                            self.terminal_bell_at.insert(key.clone(), Instant::now());
+                        }
+                        self.update_terminal_tab(&key, cx, |tab| {
+                            apply_terminal_title_update(tab, &terminal_update);
+                        });
+                        self.emit_client_event(ClientEvent::Output {
+                            tab_id: key.tab_id.clone(),
+                            bytes: bytes.clone(),
+                        });
+                        updated = true;
+                    } else if self.maybe_retry_claude_restore(&key, cx) {
+                        updated = true;
+                    }
+                }
+                daemon_transport::SessionEvent::Push(reply) => {
+                    // Daemon broadcasts the registry's projection
+                    // through `serve_session_with_attach`'s push
+                    // pump on every state change (and once at
+                    // session connect). Both clients absorb here —
+                    // same path mobile uses for the legacy iroh
+                    // worker-reply queue, just sourced from the
+                    // events stream instead.
+                    match reply {
+                        daemon_proto::WorkerReply::ProjectList { projects, ui } => {
+                            log::info!(
+                                "drain_session_events: absorbed projection ({} projects, ui pinned={} expanded={})",
+                                projects.len(),
+                                ui.pinned_task_ids.len(),
+                                ui.expanded_repo_ids.len(),
+                            );
+                            self.project_store.absorb_projection(projects, ui);
+                            for project in &self.project_store.projects {
+                                if self
+                                    .project_store
+                                    .tasks
+                                    .get(&project.id)
+                                    .is_some_and(|tasks| !tasks.is_empty())
+                                {
+                                    self.expanded_projects.insert(project.repo_id.clone());
+                                }
+                            }
+                            updated = true;
+                        }
+                        other => {
+                            log::debug!(
+                                "session pushed unsolicited reply: {:?}",
+                                std::mem::discriminant(&other)
+                            );
+                        }
+                    }
+                }
+                daemon_transport::SessionEvent::Lagged { skipped } => {
+                    log::warn!("session events lagged — skipped {skipped} events");
+                }
+                daemon_transport::SessionEvent::Closed { reason } => {
+                    log::info!("session events stream closed (reason: {reason:?})");
+                    // Don't drop the receiver — the next
+                    // `replace_session` will spawn a fresh pump.
+                    break;
+                }
+            }
+        }
+        if !output_dirty_keys.is_empty() {
+            for key in output_dirty_keys {
+                if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                    let snap = runtime.snapshot();
+                    self.terminal_surface_snapshots.insert(key.clone(), snap);
+                }
+            }
+            updated = true;
+        }
+        updated
     }
 
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
@@ -5362,11 +5735,11 @@ impl AnotherOneApp {
                     // Tee the PTY into the embedded daemon's registry
                     // so a mobile `AttachTab` subscriber sees the same
                     // bytes the desktop renders.
-                    self.register_tab_with_registry(
-                        &key,
-                        runtime.output_broadcast(),
-                        runtime.writer_handle(),
-                    );
+                    if let (Some(broadcast), Some(writer)) =
+                        (runtime.output_broadcast(), runtime.writer_handle())
+                    {
+                        self.register_tab_with_registry(&key, broadcast, writer);
+                    }
                     self.terminal_surface_snapshots
                         .insert(key.clone(), runtime.snapshot());
                     self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -5551,11 +5924,11 @@ impl AnotherOneApp {
                         self.terminal_manager.pending_launches.remove(&key);
                         self.clear_terminal_recent_output(&key);
                         self.terminal_manager.errors.remove(&key);
-                        self.register_tab_with_registry(
-                            &key,
-                            runtime.output_broadcast(),
-                            runtime.writer_handle(),
-                        );
+                        if let (Some(broadcast), Some(writer)) =
+                            (runtime.output_broadcast(), runtime.writer_handle())
+                        {
+                            self.register_tab_with_registry(&key, broadcast, writer);
+                        }
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
                         self.live_terminal_runtimes.insert(key.clone(), runtime);
@@ -5785,10 +6158,377 @@ impl AnotherOneApp {
     /// `ListProjects` responses reflect recent renames / new tasks /
     /// tab changes. Cheap (full clone) but called only after state
     /// mutations, not per frame.
+    /// Fire `Control::SetShortcutBinding` over the active session.
+    /// Settings-page handlers and any future shortcut-mutating UI use
+    /// this so the daemon's `set_shortcut_binding` mutator owns the
+    /// write — desktop's local `project_store.ui` updates on the
+    /// broadcast push that follows. Replaces direct
+    /// `self.project_store.set_shortcut_binding` calls.
+    pub(crate) fn dispatch_set_shortcut_binding(
+        &self,
+        action: another_one_core::shortcuts::ShortcutAction,
+        binding: String,
+    ) {
+        let action_id = crate::daemon_host::shortcut_action_id(action).to_string();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetShortcutBinding {
+                action_id,
+                binding,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetShortcutBinding failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Like [`Self::dispatch_set_shortcut_binding`] but clears the
+    /// binding (empty string == "no override; fall back to default").
+    pub(crate) fn dispatch_clear_shortcut_binding(
+        &self,
+        action: another_one_core::shortcuts::ShortcutAction,
+    ) {
+        // Clearing is encoded as an empty binding on the wire — the
+        // daemon's handler routes it to `clear_shortcut_binding`.
+        self.dispatch_set_shortcut_binding(action, String::new());
+    }
+
+    /// Reset a single shortcut to its default. The daemon's
+    /// handler uses `reset_shortcut_binding` which restores the
+    /// hardcoded default rather than the empty/cleared state.
+    pub(crate) fn dispatch_reset_shortcut_binding(
+        &self,
+        action: another_one_core::shortcuts::ShortcutAction,
+    ) {
+        let action_id = crate::daemon_host::shortcut_action_id(action).to_string();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::ResetShortcutBinding { action_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("ResetShortcutBinding failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitCommitScript` over the active session.
+    pub(crate) fn dispatch_set_git_commit_script(&self, script: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitCommitScript { script },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitCommitScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::ResetGitCommitScript` over the active session.
+    pub(crate) fn dispatch_reset_git_commit_script(&self) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::ResetGitCommitScript,
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("ResetGitCommitScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitPrScript` over the active session.
+    pub(crate) fn dispatch_set_git_pr_script(&self, script: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitPrScript { script },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitPrScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::ResetGitPrScript` over the active session.
+    pub(crate) fn dispatch_reset_git_pr_script(&self) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::ResetGitPrScript,
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("ResetGitPrScript failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitCommitLlm` over the active session.
+    pub(crate) fn dispatch_set_git_commit_llm(&self, settings: serde_json::Value) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitCommitLlm { settings },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitCommitLlm failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetGitPrLlm` over the active session.
+    pub(crate) fn dispatch_set_git_pr_llm(&self, settings: serde_json::Value) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetGitPrLlm { settings },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetGitPrLlm failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetAgentEnabled` over the active session.
+    pub(crate) fn dispatch_set_agent_enabled(&self, agent_id: String, enabled: bool) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetAgentEnabled { agent_id, enabled },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetAgentEnabled failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetDefaultAgent` over the active session.
+    pub(crate) fn dispatch_set_default_agent(&self, agent_id: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetDefaultAgent { agent_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetDefaultAgent failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetAgentLaunchArgs` over the active session.
+    pub(crate) fn dispatch_set_agent_launch_args(&self, agent_id: String, args: Vec<String>) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetAgentLaunchArgs { agent_id, args },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetAgentLaunchArgs failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::RemoveProject` over the active session.
+    pub(crate) fn dispatch_remove_project(&self, project_id: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::RemoveProject { project_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("RemoveProject failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetTaskPinned` over the active session.
+    pub(crate) fn dispatch_set_task_pinned(&self, task_id: String, pinned: bool) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetTaskPinned { task_id, pinned },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetTaskPinned failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::RenameTask` over the active session.
+    pub(crate) fn dispatch_rename_task(&self, task_id: String, new_name: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::RenameTask { task_id, new_name },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("RenameTask failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetRepoDefaultCommitAction` over the active
+    /// session. `action` is the variant id (`"commit"` or
+    /// `"commit-and-push"`) — encoded as a string so daemon-proto
+    /// stays free of the `RepoDefaultCommitAction` enum shape.
+    pub(crate) fn dispatch_set_repo_default_commit_action(
+        &self,
+        repo_id: String,
+        action: String,
+    ) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetRepoDefaultCommitAction { repo_id, action },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetRepoDefaultCommitAction failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::UpdateTaskBranch` over the active session.
+    pub(crate) fn dispatch_update_task_branch(
+        &self,
+        task_id: String,
+        target_project_id: String,
+        branch_name: String,
+    ) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::UpdateTaskBranch {
+                task_id,
+                target_project_id,
+                branch_name,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("UpdateTaskBranch failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::RemoveTask` over the active session.
+    pub(crate) fn dispatch_remove_task(&self, project_id: String, task_id: String) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::RemoveTask {
+                project_id,
+                task_id,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("RemoveTask failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Populate `workspace_pane.section_states[section_id]` from the
+    /// matching task's persisted tabs in `project_store.tasks` if it
+    /// isn't already there. Called before `activate_section` on tap
+    /// handlers so the freshly-activated workspace pane uses the
+    /// daemon's tab IDs instead of synthesising a new UUID via
+    /// `SectionState::with_cwd`.
+    ///
+    /// No-op when the section already has a local state (the user
+    /// tapped a task they've already activated this session) or when
+    /// the project_store doesn't carry tabs for that section
+    /// (project page sections, standalone shells).
+    pub(crate) fn hydrate_section_state_from_store(
+        &mut self,
+        section_id: &SectionId,
+        cx: &mut Context<Self>,
+    ) {
+        let already_present = self
+            .workspace_pane
+            .read(cx)
+            .section_states
+            .contains_key(section_id);
+        if already_present {
+            return;
+        }
+        let section_store_key = section_id.store_key();
+        let task = self
+            .project_store
+            .tasks
+            .values()
+            .flatten()
+            .find(|t| t.section_id == section_store_key);
+        let Some(task) = task else {
+            return;
+        };
+        if task.tabs.is_empty() {
+            return;
+        }
+        let persisted = another_one_core::project_store::PersistedSectionState {
+            active_tab_id: task.active_tab_id.clone(),
+            next_tab_id: task.next_tab_id,
+            cwd: task.cwd.clone(),
+            tabs: task.tabs.clone(),
+        };
+        let fallback_cwd = self
+            .project_store
+            .project(&section_id.project_id)
+            .map(|p| p.path.clone());
+        let section_id_for_insert = section_id.clone();
+        self.workspace_pane.update(cx, |workspace, _cx| {
+            workspace
+                .section_states
+                .insert(
+                    section_id_for_insert,
+                    SectionState::from_persisted(persisted, fallback_cwd),
+                );
+        });
+    }
+
     pub(crate) fn sync_registry_project_store(&self) {
         if let Ok(mut state) = self.registry_state.lock() {
             state.project_store = self.project_store.clone();
+            // Fire the broadcast tick so any connected mobile session
+            // pushes a fresh `WorkerReply::ProjectList` to its peer.
+            // `send` errs only when there are no receivers — fine,
+            // we're just announcing.
+            let _ = state.state_change_tx.send(());
         }
+    }
+
+    /// Persist + sync after a direct GUI mutation. Replaces the
+    /// scattered `self.project_store.save();
+    /// self.sync_registry_project_store();` pattern with a single
+    /// call so no callsite forgets the second half (which leaves
+    /// mobile clients seeing stale state until something else
+    /// triggers a sync).
+    ///
+    /// Use this for any direct `self.project_store.<mutator>` write
+    /// site that hasn't yet been migrated to a `Control::*` verb;
+    /// migrated sites flow through `dispatch_fire_and_forget` →
+    /// daemon → `with_store_mut` → save+broadcast and don't need
+    /// this.
+    pub(crate) fn commit_local_mutation(&self) {
+        self.project_store.save();
+        self.sync_registry_project_store();
     }
 
     /// Poll the daemon-host thread for the `EndpointHandle`. Called
@@ -6238,7 +6978,16 @@ impl AnotherOneApp {
         }
 
         let section_store_key = req.section_id.store_key();
-        let (task, persisted_tab) = self
+        // First try the task-bound path: workspace tabs that live
+        // under a task carry their `cwd` + `target_project_id` on the
+        // task. Fall back to the global `terminal_sections` store for
+        // sections that aren't owned by a task (project pages,
+        // standalone shells) — without this fallback, a `LaunchTab` /
+        // `AttachTab` issued via `Session::call` for a global section
+        // gets rejected even though the desktop sidebar would happily
+        // launch the same tab via the direct `spawn_terminal_launch`
+        // path. See another-one-cwn for the migration this enables.
+        let task_match = self
             .project_store
             .tasks
             .values()
@@ -6251,23 +7000,47 @@ impl AnotherOneApp {
                     .iter()
                     .find(|pt| pt.id == req.tab_id)
                     .map(|pt| (t.clone(), pt.clone()))
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no persisted tab for section {} / tab {}",
-                    section_store_key,
-                    req.tab_id
-                )
-            })?;
+            });
+        let (persisted_tab, cwd) = match task_match {
+            Some((task, persisted_tab)) => {
+                let cwd = task
+                    .cwd
+                    .clone()
+                    .or_else(|| self.project_path(&task.target_project_id));
+                (persisted_tab, cwd)
+            }
+            None => {
+                let section = self
+                    .project_store
+                    .terminal_sections
+                    .get(&section_store_key)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no persisted tab for section {} / tab {}",
+                            section_store_key,
+                            req.tab_id
+                        )
+                    })?;
+                let persisted_tab = section
+                    .tabs
+                    .iter()
+                    .find(|pt| pt.id == req.tab_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no persisted tab for section {} / tab {}",
+                            section_store_key,
+                            req.tab_id
+                        )
+                    })?;
+                (persisted_tab, section.cwd.clone())
+            }
+        };
         let launch_config = persisted_tab
             .launch_config
             .clone()
             .ok_or_else(|| anyhow::anyhow!("persisted tab {} has no launch_config", req.tab_id))?;
         let agent_launch_args = self.agent_launch_args_for_launch_config(&launch_config);
-        let cwd = task
-            .cwd
-            .clone()
-            .or_else(|| self.project_path(&task.target_project_id));
         // Default grid; the attaching viewer will follow up with a
         // resize to its actual viewport. Min-across-viewers logic
         // in `RegistryState::recompute_effective_size` drives the
@@ -6698,6 +7471,22 @@ impl AnotherOneApp {
         let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
             return false;
         };
+        // Viewer-only runtimes have no local PTY; route input over
+        // `Session::push_data` instead so the daemon's writer feeds
+        // the real shell.
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            let payload = bytes.to_vec();
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("session push_data failed: {err}");
+                }
+            });
+            self.last_terminal_activity = Instant::now();
+            return true;
+        }
         let wrote = runtime.write_input(bytes).is_ok();
         if wrote {
             self.last_terminal_activity = Instant::now();
@@ -8654,7 +9443,7 @@ impl AnotherOneApp {
             next_tab_id: 0,
             cwd: None,
         });
-        self.project_store.save();
+        self.commit_local_mutation();
 
         if let Some(project) = self.project_store.project(&target_project_id) {
             self.expanded_projects.insert(project.repo_id.clone());
@@ -8883,6 +9672,7 @@ impl AnotherOneApp {
             );
             return;
         }
+        self.commit_local_mutation();
 
         let Some(project) = self.project_store.project(&prepared.project.id).cloned() else {
             self.show_error_toast(
@@ -8911,7 +9701,7 @@ impl AnotherOneApp {
             cx,
         );
         self.create_branch_modal = None;
-        self.project_store.save();
+        self.commit_local_mutation();
         self.show_success_toast(
             format!("Created branch {} in a new worktree.", success.branch_name),
             cx,
@@ -8940,10 +9730,10 @@ impl AnotherOneApp {
 
         let new_section = SectionId::for_task(&section.project_id, &success.branch_name, &task_id);
         self.move_active_task_section(&section, &new_section, cx);
-        let _ = self.project_store.update_task_branch(
-            &task_id,
-            &section.project_id,
-            &success.branch_name,
+        self.dispatch_update_task_branch(
+            task_id.clone(),
+            section.project_id.clone(),
+            success.branch_name.clone(),
         );
         self.refresh_project_git_state(&section.project_id);
         self.create_branch_modal = None;
@@ -9445,16 +10235,15 @@ impl AnotherOneApp {
         let start_message = match &action {
             crate::git_actions::ToolbarGitAction::Commit => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
-                    self.project_store
-                        .set_repo_default_commit_action(repo_id, RepoDefaultCommitAction::Commit);
+                    self.dispatch_set_repo_default_commit_action(repo_id, "commit".to_string());
                 }
                 "Generating an AI commit message for staged changes..."
             }
             crate::git_actions::ToolbarGitAction::CommitAndPush => {
                 if let Some(repo_id) = self.active_toolbar_repo_id(cx) {
-                    self.project_store.set_repo_default_commit_action(
+                    self.dispatch_set_repo_default_commit_action(
                         repo_id,
-                        RepoDefaultCommitAction::CommitAndPush,
+                        "commit-and-push".to_string(),
                     );
                 }
                 "Generating an AI commit message before commit and push..."
@@ -9803,6 +10592,7 @@ impl AnotherOneApp {
                             );
                             return true;
                         }
+                        self.commit_local_mutation();
 
                         let Some(project) =
                             self.project_store.project(&prepared.project.id).cloned()
@@ -9890,7 +10680,7 @@ impl AnotherOneApp {
                         if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
                             self.new_task_modal = None;
                         }
-                        self.project_store.save();
+                        self.commit_local_mutation();
                         self.show_success_toast(
                             format!(
                                 "Created worktree task {} on {}.",
@@ -9984,6 +10774,7 @@ impl AnotherOneApp {
                         let project_id = project.project.id.clone();
                         let added = self.project_store.insert_prepared_project(project.clone());
                         if added {
+                            self.commit_local_mutation();
                             self.workspace_pane.update(cx, |workspace, cx| {
                                 workspace.activate_project_page(project_id.clone(), cx);
                             });
@@ -14779,25 +15570,24 @@ impl AnotherOneApp {
             match reply {
                 daemon_proto::WorkerReply::ProjectList {
                     projects: summaries,
+                    ui,
                 } => {
                     let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
                     log::info!(
-                        "daemon ProjectList: {} project(s), {} task(s) total",
+                        "daemon ProjectList: {} project(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
                         summaries.len(),
-                        task_total
+                        task_total,
+                        ui.pinned_task_ids.len(),
+                        ui.expanded_repo_ids.len(),
+                        ui.last_active_section_id
                     );
-                    for p in &summaries {
-                        log::info!("  project {} ({}) — {} tasks", p.id, p.name, p.tasks.len());
-                    }
-                    let (projects, tasks) = convert_remote_snapshot(summaries);
+                    // Single absorb path — both clients call this same
+                    // method on the same wire types. No more parallel
+                    // convert_remote_snapshot / set_remote_snapshot
+                    // pair; no more lossy fabrication of defaults.
+                    self.project_store.absorb_projection(summaries, ui);
                     log::info!(
-                        "converted: {} core projects, {} core tasks",
-                        projects.len(),
-                        tasks.len()
-                    );
-                    self.project_store.set_remote_snapshot(projects, tasks);
-                    log::info!(
-                        "post-snapshot: store has {} projects and tasks for {} root projects",
+                        "post-absorb: store has {} projects and tasks for {} root projects",
                         self.project_store.projects.len(),
                         self.project_store.tasks.len()
                     );
@@ -14865,60 +15655,6 @@ impl AnotherOneApp {
     }
 }
 
-/// Convert a daemon `WorkerReply::ProjectList` payload (wire types
-/// living in `daemon_client`) into the same `core::project_store`
-/// types the desktop uses, so the same sidebar renderer is the only
-/// renderer. The daemon's wire format doesn't carry repo grouping or
-/// tab state — we synthesize one repo per project (`repo_id == id`)
-/// and skip tab metadata, which the existing renderer treats as
-/// "task with no live tabs," matching how a freshly-loaded desktop
-/// task looks before its terminal launches.
-fn convert_remote_snapshot(
-    summaries: Vec<daemon_proto::ProjectSummary>,
-) -> (
-    Vec<another_one_core::project_store::Project>,
-    Vec<another_one_core::project_store::Task>,
-) {
-    use another_one_core::project_store as ps;
-    let mut projects = Vec::with_capacity(summaries.len());
-    let mut tasks = Vec::new();
-    for summary in summaries {
-        let kind = match summary.kind {
-            daemon_proto::ProjectKind::Root => ps::ProjectKind::Root,
-            daemon_proto::ProjectKind::Worktree => ps::ProjectKind::Worktree,
-        };
-        let project_id = summary.id.clone();
-        for task_summary in summary.tasks {
-            tasks.push(ps::Task {
-                id: task_summary.id,
-                name: task_summary.name,
-                kind: ps::TaskKind::Direct,
-                root_project_id: project_id.clone(),
-                target_project_id: project_id.clone(),
-                branch_name: task_summary.branch_name,
-                section_id: task_summary.section_id,
-                worktree_project_id: None,
-                tabs: Vec::new(),
-                active_tab_id: task_summary.active_tab_id,
-                next_tab_id: 0,
-                cwd: None,
-            });
-        }
-        projects.push(ps::Project {
-            id: project_id.clone(),
-            repo_id: project_id,
-            name: summary.name,
-            path: std::path::PathBuf::from(summary.path),
-            kind,
-            checkout: ps::ProjectCheckoutState::default(),
-            branch_settings: ps::ProjectBranchSettings::default(),
-            actions: Vec::new(),
-            worktree_name: None,
-            repo_common_dir: None,
-        });
-    }
-    (projects, tasks)
-}
 
 fn short_id(id: &str) -> String {
     if id.len() > 12 {
@@ -14975,6 +15711,8 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
                             should_notify |= this.drain_project_check_runs_lookup(cx);
+                            should_notify |= this.drain_pending_session_handoff();
+                            should_notify |= this.drain_session_events(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;
