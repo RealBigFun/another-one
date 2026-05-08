@@ -77,7 +77,9 @@ impl HeadlessPlatform for MacosPlatform {
                 command.args(["-a", "Ghostty"]).arg(path);
             }
             OpenInAppKind::WezTerm => {
-                command.args(["-a", "WezTerm", "--args", "start", "--cwd"]).arg(path);
+                command
+                    .args(["-a", "WezTerm", "--args", "start", "--cwd"])
+                    .arg(path);
             }
             OpenInAppKind::SystemTerminal => {
                 command.args(["-a", "Terminal"]).arg(path);

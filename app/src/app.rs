@@ -11212,6 +11212,7 @@ impl AnotherOneApp {
         let label_color = hsla(208. / 360., 0.60, 0.72, 1.);
         let text_color = hsla(0., 0., 0.92, 1.);
         let format_color = hsla(0., 0., 0.70, 1.);
+        let terminal_bg = theme::terminal_background_for_theme(theme::ResolvedTheme::Dark);
 
         div()
             .w(px(320.))
@@ -11224,7 +11225,7 @@ impl AnotherOneApp {
             .occlude()
             .opacity(opacity)
             .child(
-                div().h(px(240.)).w_full().bg(rgb(0x17191d)).child(
+                div().h(px(240.)).w_full().bg(terminal_bg).child(
                     img(preview.image.clone())
                         .size_full()
                         .object_fit(ObjectFit::Contain),

@@ -273,9 +273,10 @@ pub(crate) struct OsCommandRunner;
 
 impl CommandRunner for OsCommandRunner {
     fn run(&self, program: &str, args: &[&str], cwd: &Path) -> anyhow::Result<CommandOutput> {
-        let output = Command::new(program)
-            .args(args)
-            .current_dir(cwd)
+        let mut command = Command::new(program);
+        command.args(args).current_dir(cwd);
+        crate::command_env::apply_command_path(&mut command, cwd);
+        let output = command
             .output()
             .with_context(|| format!("failed to execute {program}"))?;
         Ok(CommandOutput {

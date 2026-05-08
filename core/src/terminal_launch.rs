@@ -695,15 +695,12 @@ fn newest_claude_session_id(cwd: &Path) -> Option<String> {
 }
 
 fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
+    builder.env("ZED_TERM", "true");
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");
-    builder.env("COLORTERM_BCE", "1");
-    builder.env("TERM_PROGRAM", "WezTerm");
-    builder.env("TERM_PROGRAM_VERSION", "20240203");
+    builder.env("TERM_PROGRAM", "zed");
+    builder.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     builder.env_remove("NO_COLOR");
-    builder.env("CLICOLOR", "1");
-    builder.env("CLICOLOR_FORCE", "1");
-    builder.env("FORCE_COLOR", "1");
     apply_agent_command_path(builder, cwd);
 }
 
@@ -1215,13 +1212,14 @@ fn newest_matching_jsonl(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_command, claude_project_dir_name, claude_session_exists, discover_codex_session,
-        discover_codex_session_from_index, discover_codex_session_from_saved_sessions,
-        discover_pi_session, discovery_timeout_for_kind, pi_session_capture_extension_path,
-        pi_session_exists, prepare_codex_home_override_from, read_session_capture,
-        resolve_claude_session, resolve_pi_session, DiscoveryKind, PiSessionCapture,
-        SessionCaptureState, TerminalSessionKind, TerminalSessionRef,
-        CLAUDE_BYPASS_PERMISSIONS_ARG, CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
+        apply_terminal_environment, build_command, claude_project_dir_name, claude_session_exists,
+        discover_codex_session, discover_codex_session_from_index,
+        discover_codex_session_from_saved_sessions, discover_pi_session,
+        discovery_timeout_for_kind, pi_session_capture_extension_path, pi_session_exists,
+        prepare_codex_home_override_from, read_session_capture, resolve_claude_session,
+        resolve_pi_session, DiscoveryKind, PiSessionCapture, SessionCaptureState,
+        TerminalSessionKind, TerminalSessionRef, CLAUDE_BYPASS_PERMISSIONS_ARG,
+        CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG, CODEX_YOLO_ARG,
     };
     use crate::agents::{AgentProviderKind, HarnessEnv, TerminalLaunchConfig, TerminalLaunchMode};
     use std::env;
@@ -1263,6 +1261,38 @@ mod tests {
             .expect("command should have a file name");
         assert_eq!(command_name, expected[0]);
         assert_eq!(&argv[1..], &expected[1..]);
+    }
+
+    fn command_env(builder: &portable_pty::CommandBuilder, key: &str) -> Option<String> {
+        builder
+            .get_env(key)
+            .and_then(|value| value.to_str())
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn terminal_environment_matches_zed() {
+        let mut builder = portable_pty::CommandBuilder::new("env");
+
+        apply_terminal_environment(&mut builder, Path::new("/tmp/project"));
+
+        assert_eq!(command_env(&builder, "ZED_TERM").as_deref(), Some("true"));
+        assert_eq!(
+            command_env(&builder, "TERM").as_deref(),
+            Some("xterm-256color")
+        );
+        assert_eq!(
+            command_env(&builder, "COLORTERM").as_deref(),
+            Some("truecolor")
+        );
+        assert_eq!(
+            command_env(&builder, "TERM_PROGRAM").as_deref(),
+            Some("zed")
+        );
+        assert_eq!(
+            command_env(&builder, "TERM_PROGRAM_VERSION").as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

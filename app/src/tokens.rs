@@ -50,7 +50,7 @@ pub fn sunken_bg() -> Hsla {
 
 /// Terminal/editor surface. Darker than chrome.
 pub fn terminal_bg() -> Hsla {
-    rgb(0x17191d).into()
+    crate::theme::terminal_background_for_theme(crate::theme::ResolvedTheme::Dark)
 }
 
 /// Modal scrim — translucent black over the full window.

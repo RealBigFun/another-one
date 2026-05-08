@@ -8,6 +8,13 @@ use gpui::{hsla, rgb, Hsla, Window, WindowAppearance};
 
 use crate::project_store::ThemeMode;
 
+const LIGHT_TERMINAL_BACKGROUND_RGB: u32 = 0xfcfcfc;
+const DARK_TERMINAL_BACKGROUND_RGB: u32 = 0x0d1016;
+const LIGHT_TERMINAL_FOREGROUND_RGB: u32 = 0x5c6166;
+const DARK_TERMINAL_FOREGROUND_RGB: u32 = 0xbfbdb6;
+const LIGHT_TERMINAL_CURSOR_RGB: u32 = 0x3b9ee5;
+const DARK_TERMINAL_CURSOR_RGB: u32 = 0x5ac1fe;
+
 /// Globally-visible resolved app theme. Updated by the render path so
 /// code that doesn't have access to the `Window` / `App` can still resolve
 /// `ThemeMode::System` consistently with the current OS appearance. The
@@ -30,18 +37,49 @@ pub fn current_terminal_theme() -> ResolvedTheme {
     }
 }
 
-pub fn terminal_default_background() -> Hsla {
-    match current_terminal_theme() {
-        ResolvedTheme::Light => rgb(0xfafbfc).into(),
-        ResolvedTheme::Dark => rgb(0x1e1f22).into(),
+pub(crate) fn terminal_background_rgb(resolved: ResolvedTheme) -> u32 {
+    match resolved {
+        ResolvedTheme::Light => LIGHT_TERMINAL_BACKGROUND_RGB,
+        ResolvedTheme::Dark => DARK_TERMINAL_BACKGROUND_RGB,
     }
 }
 
-pub fn terminal_default_foreground() -> Hsla {
-    match current_terminal_theme() {
-        ResolvedTheme::Light => rgb(0x1f2328).into(),
-        ResolvedTheme::Dark => rgb(0xd7dae0).into(),
+pub(crate) fn terminal_foreground_rgb(resolved: ResolvedTheme) -> u32 {
+    match resolved {
+        ResolvedTheme::Light => LIGHT_TERMINAL_FOREGROUND_RGB,
+        ResolvedTheme::Dark => DARK_TERMINAL_FOREGROUND_RGB,
     }
+}
+
+pub(crate) fn terminal_cursor_rgb(resolved: ResolvedTheme) -> u32 {
+    match resolved {
+        ResolvedTheme::Light => LIGHT_TERMINAL_CURSOR_RGB,
+        ResolvedTheme::Dark => DARK_TERMINAL_CURSOR_RGB,
+    }
+}
+
+pub(crate) fn terminal_background_for_theme(resolved: ResolvedTheme) -> Hsla {
+    rgb(terminal_background_rgb(resolved)).into()
+}
+
+pub(crate) fn terminal_foreground_for_theme(resolved: ResolvedTheme) -> Hsla {
+    rgb(terminal_foreground_rgb(resolved)).into()
+}
+
+pub(crate) fn terminal_cursor_for_theme(resolved: ResolvedTheme) -> Hsla {
+    rgb(terminal_cursor_rgb(resolved)).into()
+}
+
+pub fn terminal_default_background() -> Hsla {
+    terminal_background_for_theme(current_terminal_theme())
+}
+
+pub fn terminal_default_foreground() -> Hsla {
+    terminal_foreground_for_theme(current_terminal_theme())
+}
+
+pub fn terminal_default_cursor() -> Hsla {
+    terminal_cursor_for_theme(current_terminal_theme())
 }
 
 /// Stable colour palette for project letter avatars (8 hues).
@@ -143,7 +181,7 @@ pub fn dark_theme() -> AppTheme {
         chrome_bg: rgb(0x27292e).into(),
         card_bg: rgb(0x2b2d31).into(),
         sunken_bg: rgb(0x202329).into(),
-        terminal_bg: rgb(0x17191d).into(),
+        terminal_bg: terminal_background_for_theme(ResolvedTheme::Dark),
         scrim_bg: hsla(0., 0., 0., 0.50),
         text_primary: hsla(0., 0., 0.92, 1.),
         text_secondary: hsla(0., 0., 0.78, 1.),
@@ -186,46 +224,45 @@ pub fn dark_theme() -> AppTheme {
 pub fn light_theme() -> AppTheme {
     AppTheme {
         resolved: ResolvedTheme::Light,
-        chrome_bg: rgb(0xf3f4f6).into(),
-        card_bg: rgb(0xffffff).into(),
-        sunken_bg: rgb(0xf6f7f9).into(),
-        // Keep terminals dark for the first light-mode pass; ANSI palettes and many CLIs assume it.
-        terminal_bg: rgb(0xfafbfc).into(),
+        chrome_bg: rgb(0xdcddde).into(),
+        card_bg: rgb(0xfcfcfc).into(),
+        sunken_bg: rgb(0xececed).into(),
+        terminal_bg: terminal_background_for_theme(ResolvedTheme::Light),
         scrim_bg: hsla(0., 0., 0., 0.32),
-        text_primary: rgb(0x1f2328).into(),
-        text_secondary: rgb(0x4b5563).into(),
-        text_muted: rgb(0x6b7280).into(),
-        text_placeholder: rgb(0x9ca3af).into(),
-        border: rgb(0xd8dee4).into(),
-        divider: rgb(0xe5e7eb).into(),
-        overlay_rest: hsla(0., 0., 0., 0.03),
-        overlay_hover: hsla(0., 0., 0., 0.06),
-        overlay_hover_strong: hsla(0., 0., 0., 0.09),
-        overlay_active: hsla(0., 0., 0., 0.12),
-        focus_ring: hsla(220. / 360., 0.70, 0.48, 1.0),
+        text_primary: rgb(0x5c6166).into(),
+        text_secondary: rgb(0x8b8e92).into(),
+        text_muted: rgb(0x8b8e92).into(),
+        text_placeholder: rgb(0xa9acae).into(),
+        border: rgb(0xcfd1d2).into(),
+        divider: rgb(0xdfe0e1).into(),
+        overlay_rest: hsla(0., 0., 0., 0.00),
+        overlay_hover: rgb(0xdfe0e1).into(),
+        overlay_hover_strong: rgb(0xcfd0d2).into(),
+        overlay_active: rgb(0xcfd0d2).into(),
+        focus_ring: rgb(0x3b9ee5).into(),
         success: SemanticColors {
-            icon: hsla(150. / 360., 0.65, 0.32, 1.),
-            bg: hsla(145. / 360., 0.55, 0.92, 1.),
-            muted: hsla(145. / 360., 0.38, 0.76, 1.),
-            text: hsla(150. / 360., 0.65, 0.26, 1.),
+            icon: rgb(0x85b304).into(),
+            bg: rgb(0xe9efd2).into(),
+            muted: rgb(0xd7e3ae).into(),
+            text: rgb(0x85b304).into(),
         },
         error: SemanticColors {
-            icon: hsla(0., 0.70, 0.44, 1.),
-            bg: hsla(0., 0.76, 0.95, 1.),
-            muted: hsla(0., 0.52, 0.80, 1.),
-            text: hsla(0., 0.70, 0.40, 1.),
+            icon: rgb(0xef7271).into(),
+            bg: rgb(0xffe3e1).into(),
+            muted: rgb(0xffcdca).into(),
+            text: rgb(0xef7271).into(),
         },
         warning: SemanticColors {
-            icon: hsla(38. / 360., 0.82, 0.40, 1.),
-            bg: hsla(42. / 360., 0.92, 0.93, 1.),
-            muted: hsla(40. / 360., 0.68, 0.75, 1.),
-            text: hsla(35. / 360., 0.82, 0.34, 1.),
+            icon: rgb(0xf1ad49).into(),
+            bg: rgb(0xffeeda).into(),
+            muted: rgb(0xffe1be).into(),
+            text: rgb(0xf1ad49).into(),
         },
         info: SemanticColors {
-            icon: hsla(210. / 360., 0.75, 0.42, 1.),
-            bg: hsla(210. / 360., 0.84, 0.95, 1.),
-            muted: hsla(210. / 360., 0.58, 0.78, 1.),
-            text: hsla(210. / 360., 0.75, 0.36, 1.),
+            icon: rgb(0x3b9ee5).into(),
+            bg: rgb(0xdeebfa).into(),
+            muted: rgb(0xc4daf6).into(),
+            text: rgb(0x3b9ee5).into(),
         },
     }
 }
@@ -251,4 +288,24 @@ pub fn chrome_bg_for_mode(window: &Window, mode: ThemeMode) -> gpui::Hsla {
 /// Shared titlebar + sidebar chrome colour, following the OS appearance.
 pub fn chrome_bg(window: &Window) -> gpui::Hsla {
     chrome_bg_for_mode(window, ThemeMode::System)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn light_theme_uses_zed_ayu_light_chrome_values() {
+        let theme = light_theme();
+
+        assert_eq!(theme.chrome_bg, rgb(0xdcddde).into());
+        assert_eq!(theme.card_bg, rgb(0xfcfcfc).into());
+        assert_eq!(theme.sunken_bg, rgb(0xececed).into());
+        assert_eq!(theme.text_primary, rgb(0x5c6166).into());
+        assert_eq!(theme.text_secondary, rgb(0x8b8e92).into());
+        assert_eq!(theme.text_placeholder, rgb(0xa9acae).into());
+        assert_eq!(theme.border, rgb(0xcfd1d2).into());
+        assert_eq!(theme.divider, rgb(0xdfe0e1).into());
+        assert_eq!(theme.focus_ring, rgb(0x3b9ee5).into());
+    }
 }

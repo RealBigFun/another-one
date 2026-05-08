@@ -15,7 +15,7 @@ The app stacks surfaces from "deepest chrome" to "lightest card."
 | Chrome | `tokens::chrome_bg()` | `rgb(0x27292e)` | Titlebar, sidebars, footer |
 | Card | `tokens::card_bg()` | `rgb(0x2b2d31)` | Modals, popovers, dropdown menus |
 | Sunken | `tokens::sunken_bg()` | `rgb(0x202329)` | Subtle sub-surface (list-row bg) |
-| Terminal | `tokens::terminal_bg()` | `rgb(0x17191d)` | PTY / agent session canvas |
+| Terminal | `tokens::terminal_bg()` | `rgb(0x000000)` | PTY / agent session canvas |
 | Scrim | `tokens::scrim_bg()` | `hsla(0,0,0,0.50)` | Modal overlay, blur background |
 
 ## Text
