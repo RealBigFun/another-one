@@ -644,50 +644,75 @@ pub enum Control {
 
 // ── Push vs pull contract for state mutations ────────────────────
 //
-// Foundation task `another-one-ojm.1` locks in the **inline-snapshot
-// reply** model (option (a) of the two we considered):
+// The shipped reality is a **hybrid** — both inline replies AND a
+// state-change push pump are active. This block describes what
+// each channel is for; see also #122 (push-pump introduction),
+// #134 (debounce + RepoSummary added), #137 (this reconciliation).
 //
-//   Domain mutator replies — `ProjectAdded`, `TaskRenamed`,
-//   `BranchCreated`, etc. — carry an inline `ProjectSummary`
-//   (or scoped projection of it) so the issuing client updates
-//   its tree from the reply directly. **No** separate
-//   `ListProjects` round-trip is required after a successful
-//   mutation.
+// ## Channel 1: inline-snapshot mutator replies (original ojm.1 design)
 //
-// The rejected alternative (b) was: mutator replies return only an
-// Ack, and the daemon pushes a fresh `WorkerReply::ProjectList` with
-// `request_id == 0` to every connected client on every state change.
+//   Domain mutator verbs return a `WorkerReply::*` variant whose
+//   payload contains the changed entity (`ProjectAdded { project:
+//   ProjectSummary }`, `TaskRenamed { task: TaskSummary }`, etc.).
+//   The issuing client can splice the result into its tree from
+//   the reply directly without a follow-up `ListProjects`
+//   round-trip.
 //
-// Why (a):
-//   - Single round-trip per mutation. Mobile-on-cellular cares.
-//   - The mutating client's UI converges first (it gets the snapshot
-//     synchronously with the reply). Other clients can still
-//     subscribe to a separate push channel later — but adding that
-//     subscription is purely additive over (a). Going the other way
-//     (a → b) would be a wire break.
-//   - Bandwidth: today the desktop is the only mutator and the
-//     paired phone is the only other client. Pushing the full
-//     `ProjectList` to every connected client on every state change
-//     is wasted bytes for the typical 2-peer case. (a) limits the
-//     post-mutation traffic to the issuer.
-//   - Simpler daemon: no broadcast bookkeeping, no "which client
-//     cares about project X" filter logic. Each `Control::*` mutator
-//     handler emits one reply and is done.
+//   Status today: **dead code in practice.** Every GUI mutator
+//   path (`app/src/app.rs::dispatch_*`) uses
+//   `dispatch_fire_and_forget`, which logs errors but does not
+//   consume the reply's inline snapshot. All clients converge
+//   their UI via Channel 2 instead.
 //
-// Domain children (`ojm.2..8`) follow this rule:
-//   - Mutator verbs return a `WorkerReply::*` variant whose payload
-//     contains the changed entity (or the full project summary if
-//     the change cascades). Names like
-//     `ProjectAdded { project: ProjectSummary }`,
-//     `TaskRenamed { task: TaskSummary }`.
-//   - Reader verbs return the projection the caller asked for, no
-//     side-effects on other clients.
-//   - If a future feature needs cross-client live updates (e.g.
-//     "phone follows desktop's commit panel in real time"), it
-//     lands as a separate opt-in `Control::Subscribe { topic }`
-//     verb that pushes targeted `WorkerReply::*` frames with
-//     `request_id == 0`. Today nothing in the GPUI desktop's UX
-//     requires that, and YAGNI applies.
+//   Why keep the variants: they're cheap bytes on the wire, the
+//   infrastructure is the foundation for the per-domain session
+//   migrations (jbk / qa3 / cwn / fzw / kek sub-issues), and
+//   opting in to them later is purely additive. If a mutator
+//   variant ever becomes authoritative for a client, it must also
+//   carry `repo: Option<RepoSummary>` (see #134) — otherwise that
+//   client silently drops branch catalog data on the mutation.
+//
+// ## Channel 2: state-change push pump (added #122, debounced #134)
+//
+//   `daemon::dispatch::serve_session_with_attach` spawns a task
+//   that subscribes to `DaemonRegistry::subscribe_state_changes()`
+//   and pushes a fresh `WorkerReply::ProjectList { projects, repos,
+//   ui }` with `request_id == 0` to the peer after any state-change
+//   burst. A 50 ms quiet-window debouncer collapses bursts so the
+//   peer sees at most ~20 Hz even when the registry signals dozens
+//   of mutations per second under load.
+//
+//   This is what **every client relies on today** — including
+//   desktop-paired-to-itself through the in-memory transport, and
+//   mobile over iroh. Both absorb via `ProjectStore::absorb_projection`,
+//   which rehydrates the full tree + repo catalog from the wire
+//   (per #134).
+//
+//   Cost: one projection per state-change burst per connected
+//   session. For the typical 2-peer case (desktop + phone) that's
+//   fine; scaling to many peers would want scoped pushes ("repo X
+//   changed") driven off a typed payload on the state-change
+//   broadcast. Filed follow-ups for that sit beyond #137.
+//
+// ## Rule of thumb for new mutator verbs
+//
+//   - Return an inline-snapshot `WorkerReply::*` variant. Carry
+//     enough context that a future consumer can splice without
+//     another round-trip — include `repo: Option<RepoSummary>`
+//     when the mutation touches the repo catalog. Channel 1 bytes
+//     are effectively free and the variant is there if we ever
+//     decide to drop Channel 2 or want Channel 1 to be
+//     authoritative on a bandwidth-sensitive path.
+//   - Call `DaemonRegistry::notify_state_changed` so Channel 2
+//     fires too. That's what clients consume today.
+//   - Reader verbs return the projection the caller asked for and
+//     do not touch Channel 2.
+//
+//   If a future feature needs *scoped* cross-client live updates
+//   (e.g. "phone follows desktop's commit panel in real time"), it
+//   lands as an opt-in `Control::Subscribe { topic }` verb that
+//   pushes targeted `WorkerReply::*` frames with `request_id == 0`
+//   instead of piggybacking on the ProjectList pump.
 
 /// Worker replies (type=2 frames). Payload is JSON. Daemon → client
 /// only.
