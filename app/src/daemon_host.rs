@@ -161,6 +161,24 @@ impl RegistryState {
         }
     }
 
+    /// Publish a state-change tick on the shared broadcast.
+    /// Every connected session's push pump wakes up, drains the
+    /// 50 ms quiet window added in #134, and then emits one fresh
+    /// `WorkerReply::ProjectList`. Single source of truth for
+    /// "something in the registry changed" — every mutator helper
+    /// on `DesktopTerminalRegistry` and `AnotherOneApp` routes
+    /// through here instead of sending on `state_change_tx`
+    /// directly, so future instrumentation (filtering, scoped
+    /// pushes, metrics) only has one place to land. The trait's
+    /// [`DaemonRegistry::notify_state_changed`] delegates into
+    /// this via its cloned sender when the caller doesn't hold
+    /// the state lock. Fires-and-forgets: `send` errs only when no
+    /// receivers are subscribed, which is fine — no one's listening,
+    /// no work to do. See #136.
+    pub fn notify_state_changed(&self) {
+        let _ = self.state_change_tx.send(());
+    }
+
     /// Recompute the min-across-viewers size for `key` and, if it
     /// changed since the last effective size, enqueue a resize for
     /// the GPUI render tick to apply. Returns the effective size so
@@ -306,9 +324,9 @@ impl DesktopTerminalRegistry {
             // (logs + returns ()); no Result to map here.
             state.project_store.save();
             // Fire the broadcast tick so every connected session's
-            // push pump sends a fresh ProjectList. Same channel the
-            // GUI's sync_registry_project_store fires on.
-            let _ = state.state_change_tx.send(());
+            // push pump sends a fresh ProjectList. Single primitive
+            // on `RegistryState` — see #136.
+            state.notify_state_changed();
             result
         })
     }
@@ -349,8 +367,10 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn notify_state_changed(&self) {
-        // `send` returns Err only if there are no receivers. That's
-        // fine — no one's listening yet, no work to do.
+        // Delegates into `RegistryState::notify_state_changed` via
+        // the cloned sender we cached at construction, so callers
+        // holding a trait object (no state lock) route through the
+        // same primitive as in-lock callers. See #136.
         let _ = self.state_tx.send(());
     }
 
@@ -374,7 +394,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             let changed = state.project_store.rename_task(&task_id, &new_name);
             if changed {
                 state.project_store.save();
-                let _ = state.state_change_tx.send(());
+                state.notify_state_changed();
             }
             (changed, task_summary_for(state, &task_id))
         });
@@ -391,7 +411,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             let changed = state.project_store.set_task_pinned(&task_id, pinned);
             if changed {
                 state.project_store.save();
-                let _ = state.state_change_tx.send(());
+                state.notify_state_changed();
             }
             (changed, task_summary_for(state, &task_id))
         });
