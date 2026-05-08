@@ -334,6 +334,16 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .unwrap_or_default()
     }
 
+    fn list_repos(&self) -> Vec<daemon_proto::RepoSummary> {
+        // Served from the same `RegistryState` as `list_projects`
+        // so one dispatch-side call to both methods sees a
+        // consistent snapshot. Desktop is the only registry
+        // carrying real repo metadata today; the sandbox defaults
+        // to the trait's empty-list impl.
+        self.with_state(|state| repo_summaries(state))
+            .unwrap_or_default()
+    }
+
     fn subscribe_state_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
         self.state_tx.subscribe()
     }
@@ -1396,6 +1406,44 @@ fn task_summary_for(state: &RegistryState, task_id: &str) -> Option<TaskSummary>
         .find(|t| t.id == task_id)
         .cloned()?;
     Some(task_to_summary(state, task))
+}
+
+/// Build the repo-catalog half of the `ProjectList` push. Mirrors
+/// `project_summaries` but for the repo grouping (branches,
+/// common git dir). Before this existed, client-side
+/// `absorb_projection` synthesised empty `RepoRecord`s from the
+/// project list alone; desktop absorbs its own push on every
+/// state change and that silently wiped the locally-resolved
+/// branch catalog.
+fn repo_summaries(state: &RegistryState) -> Vec<daemon_proto::RepoSummary> {
+    let store = &state.project_store;
+    store
+        .repos
+        .values()
+        .map(|repo| {
+            let branches = repo
+                .branch_order
+                .iter()
+                .filter_map(|name| repo.branches_by_name.get(name))
+                .map(|branch| daemon_proto::RepoBranchSummary {
+                    name: branch.name.clone(),
+                    last_commit_relative: branch.last_commit_relative.clone(),
+                    is_default: branch.is_default,
+                    ahead_count: branch.ahead_count,
+                    behind_count: branch.behind_count,
+                })
+                .collect();
+            daemon_proto::RepoSummary {
+                id: repo.id.clone(),
+                common_dir: repo
+                    .common_dir
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                branch_order: repo.branch_order.clone(),
+                branches,
+            }
+        })
+        .collect()
 }
 
 fn task_to_summary(

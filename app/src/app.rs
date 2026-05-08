@@ -5668,14 +5668,19 @@ impl AnotherOneApp {
                     // worker-reply queue, just sourced from the
                     // events stream instead.
                     match reply {
-                        daemon_proto::WorkerReply::ProjectList { projects, ui } => {
+                        daemon_proto::WorkerReply::ProjectList {
+                            projects,
+                            repos,
+                            ui,
+                        } => {
                             log::info!(
-                                "drain_session_events: absorbed projection ({} projects, ui pinned={} expanded={})",
+                                "drain_session_events: absorbed projection ({} projects, {} repos, ui pinned={} expanded={})",
                                 projects.len(),
+                                repos.len(),
                                 ui.pinned_task_ids.len(),
                                 ui.expanded_repo_ids.len(),
                             );
-                            self.project_store.absorb_projection(projects, ui);
+                            self.project_store.absorb_projection(projects, repos, ui);
                             for project in &self.project_store.projects {
                                 if self
                                     .project_store
@@ -15631,12 +15636,14 @@ impl AnotherOneApp {
             match reply {
                 daemon_proto::WorkerReply::ProjectList {
                     projects: summaries,
+                    repos: repo_summaries,
                     ui,
                 } => {
                     let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
                     log::info!(
-                        "daemon ProjectList: {} project(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
+                        "daemon ProjectList: {} project(s), {} repo(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
                         summaries.len(),
+                        repo_summaries.len(),
                         task_total,
                         ui.pinned_task_ids.len(),
                         ui.expanded_repo_ids.len(),
@@ -15646,7 +15653,8 @@ impl AnotherOneApp {
                     // method on the same wire types. No more parallel
                     // convert_remote_snapshot / set_remote_snapshot
                     // pair; no more lossy fabrication of defaults.
-                    self.project_store.absorb_projection(summaries, ui);
+                    self.project_store
+                        .absorb_projection(summaries, repo_summaries, ui);
                     log::info!(
                         "post-absorb: store has {} projects and tasks for {} root projects",
                         self.project_store.projects.len(),
