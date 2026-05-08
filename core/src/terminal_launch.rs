@@ -4,7 +4,7 @@ use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, Context};
 use portable_pty::{native_pty_system, CommandBuilder};
@@ -230,10 +230,18 @@ fn launch_terminal(
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
                     let _ = broadcast_for_reader.send(bytes.clone());
+                    // Time the bounded-channel send so the lockup
+                    // watchdog / sampler can tell us whether this
+                    // reader is being backpressured by a slow or
+                    // deadlocked GPUI drain. See issue #125.
+                    let send_started = Instant::now();
                     let _ = output_sender.send(TerminalLaunchReply::Output {
                         key: output_key.clone(),
                         bytes,
                     });
+                    crate::leakscope::record_pty_send_block_ns(
+                        send_started.elapsed().as_nanos() as u64,
+                    );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
@@ -359,8 +367,15 @@ fn launch_warm_terminal(
                     crate::leakscope::record_pty_read(count);
                     let bytes = buf[..count].to_vec();
                     let _ = broadcast_for_reader.send(bytes.clone());
+                    // Same timing shim as the hot launch path above;
+                    // warm tabs share the 2048-cap `SyncSender` so
+                    // they can deadlock/starve identically.
+                    let send_started = Instant::now();
                     let _ =
                         output_sender.send(WarmTerminalLaunchReply::Output { launch_id, bytes });
+                    crate::leakscope::record_pty_send_block_ns(
+                        send_started.elapsed().as_nanos() as u64,
+                    );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
