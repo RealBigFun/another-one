@@ -145,13 +145,19 @@ pub async fn serve_session_with_attach(
     // `SessionEvent::Push` instead.
     {
         let projects = registry.list_projects();
+        let repos = registry.list_repos();
         let ui = registry.ui_snapshot();
         info!(
             viewer_id,
             project_count = projects.len(),
+            repo_count = repos.len(),
             "serve_session: pushing initial ProjectList"
         );
-        let reply = WorkerReply::ProjectList { projects, ui };
+        let reply = WorkerReply::ProjectList {
+            projects,
+            repos,
+            ui,
+        };
         if let Err(e) = session.push_reply(reply).await {
             return Err(e);
         }
@@ -163,28 +169,56 @@ pub async fn serve_session_with_attach(
     // GUI mutations without polling. The pump exits when the
     // session ends (push_reply returns Err) or the registry's
     // sender drops.
+    //
+    // Coalesced: the registry broadcasts on every mutation (PTY
+    // drain ticks alone can flip state on the order of dozens to
+    // hundreds of times per second under sustained sub-agent
+    // output), and pushing one `ProjectList` per mutation floods
+    // the peer with identical content. Worse, desktop paired via
+    // the in-memory transport absorbs its own reflected push and
+    // visibly flickers its sidebar as the repo catalog gets wiped
+    // and rebuilt. We wait out a quiet window after the first
+    // tick, drain any subsequent ticks, and push exactly once per
+    // burst — 50 ms is imperceptible to the user and covers the
+    // 60 Hz refresh cadence with headroom.
     let push_session = Arc::clone(&session);
     let push_registry = Arc::clone(&registry);
     let push_handle = tokio::spawn(async move {
+        const PUSH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(50);
         let mut rx = push_registry.subscribe_state_changes();
         loop {
+            // Wait for at least one tick before starting a window.
             match rx.recv().await {
-                Ok(()) => {
-                    let projects = push_registry.list_projects();
-                    let ui = push_registry.ui_snapshot();
-                    let reply = WorkerReply::ProjectList { projects, ui };
-                    if push_session.push_reply(reply).await.is_err() {
-                        break;
-                    }
-                }
+                Ok(()) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // Lagged means we missed ticks but the next
-                    // recv will give us the latest — and we always
-                    // re-snapshot fresh so missing intermediate
-                    // ticks is fine. Continue.
-                    continue;
+                    // Same rationale as the old post-debounce path:
+                    // we re-snapshot fresh so missing intermediate
+                    // ticks is fine. Fall through to push.
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+            // Quiet-window: collapse bursts into one push. Any
+            // `Lagged` we hit while draining is fine — we only care
+            // that *something* happened in this window.
+            tokio::time::sleep(PUSH_DEBOUNCE).await;
+            loop {
+                match rx.try_recv() {
+                    Ok(()) => continue,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+                }
+            }
+            let projects = push_registry.list_projects();
+            let repos = push_registry.list_repos();
+            let ui = push_registry.ui_snapshot();
+            let reply = WorkerReply::ProjectList {
+                projects,
+                repos,
+                ui,
+            };
+            if push_session.push_reply(reply).await.is_err() {
+                break;
             }
         }
     });
@@ -312,6 +346,7 @@ async fn dispatch_call(
         // ── Read verbs ───────────────────────────────────────────────
         Control::ListProjects => Some(WorkerReply::ProjectList {
             projects: registry.list_projects(),
+            repos: registry.list_repos(),
             ui: registry.ui_snapshot(),
         }),
         Control::ListProjectActions { project_id } => Some(WorkerReply::ProjectActionsAck {
