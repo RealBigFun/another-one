@@ -26,6 +26,7 @@ const GIT_PULL_REQUEST_FORMAT_CONTRACT: &str = concat!(
 );
 const GIT_COMMIT_TIMEOUT: Duration = Duration::from_secs(30);
 const GIT_COMMIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const GIT_PULL_REQUEST_SUMMARY_CHAR_LIMIT: usize = 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitActionLlmSettings {
@@ -919,15 +920,8 @@ fn render_commit_generation_script(script_template: &str, diff_patch: &str) -> S
     format!("{script_template}\n\nStaged patch:\n{diff_patch}\n")
 }
 
-fn render_pull_request_generation_script(
-    script_template: &str,
-    base_branch: &str,
-    commit_list: &str,
-    diff_patch: &str,
-) -> String {
-    let context = format!(
-        "Base branch: {base_branch}\n\nBranch-only commits:\n{commit_list}\n\nDiff against {base_branch}:\n{diff_patch}\n"
-    );
+fn render_pull_request_generation_script(script_template: &str, context: &str) -> String {
+    let context = truncate_text_for_prompt(context, GIT_PULL_REQUEST_SUMMARY_CHAR_LIMIT);
     let script_with_contract = format!(
         "{}\n\n{}",
         script_template.trim(),
@@ -939,6 +933,37 @@ fn render_pull_request_generation_script(
     }
 
     format!("{script_with_contract}\n\n{context}")
+}
+
+fn truncate_text_for_prompt(text: &str, max_chars: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+
+    let marker = format!(
+        "\n\n[... omitted {} characters to keep the AI generation prompt short ...]\n\n",
+        char_count.saturating_sub(max_chars)
+    );
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        return marker.chars().take(max_chars).collect();
+    }
+
+    let retained_chars = max_chars - marker_chars;
+    let head_chars = retained_chars / 2;
+    let tail_chars = retained_chars - head_chars;
+    let head = text.chars().take(head_chars).collect::<String>();
+    let tail = text
+        .chars()
+        .rev()
+        .take(tail_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+
+    format!("{head}{marker}{tail}")
 }
 
 fn generate_commit_message(
@@ -956,14 +981,8 @@ fn generate_pull_request_content(
     settings: &GitActionSettings,
 ) -> Result<GeneratedPullRequestContent, String> {
     let base_branch = resolve_pull_request_base_branch(repo_path, selected_base_branch)?;
-    let commit_list = branch_commit_list(repo_path, &base_branch)?;
-    let diff_patch = branch_diff_patch(repo_path, &base_branch)?;
-    let prompt = render_pull_request_generation_script(
-        settings.pr_generation_script(),
-        &base_branch,
-        &commit_list,
-        &diff_patch,
-    );
+    let context = branch_pull_request_summary(repo_path, &base_branch)?;
+    let prompt = render_pull_request_generation_script(settings.pr_generation_script(), &context);
     let raw = run_generation(
         prompt.as_str(),
         repo_path,
@@ -1007,58 +1026,119 @@ fn resolve_pull_request_base_branch(
         })
 }
 
-fn branch_commit_list(repo_path: &Path, base_branch: &str) -> Result<String, String> {
-    let output = git_command(repo_path)
-        .args([
-            "log",
-            "--no-decorate",
-            "--pretty=format:%h %s",
-            &format!("{base_branch}..HEAD"),
-        ])
-        .output()
-        .map_err(|err| format!("Could not read branch commits for PR generation: {err}"))?;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BranchChangedFile {
+    status: String,
+    paths: Vec<String>,
+}
 
-    if !output.status.success() {
-        return Err(command_failure(
-            "Could not read branch commits for PR generation",
-            &output,
+fn branch_pull_request_summary(repo_path: &Path, base_branch: &str) -> Result<String, String> {
+    let changed_files = branch_changed_files(repo_path, base_branch)?;
+    let visible_files = changed_files
+        .into_iter()
+        .filter(|changed| {
+            !changed
+                .paths
+                .iter()
+                .any(|path| git_path_is_ignored(repo_path, path))
+        })
+        .collect::<Vec<_>>();
+
+    if visible_files.is_empty() {
+        return Err(format!(
+            "There are no non-ignored branch changes to describe relative to {base_branch}."
         ));
     }
 
-    let commits = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(if commits.is_empty() {
-        format!("No unique commits found between {base_branch} and HEAD.")
-    } else {
-        commits
-    })
+    let head_branch = git_current_branch(repo_path).unwrap_or_else(|| "HEAD".to_string());
+    let changed_file_list = visible_files
+        .iter()
+        .map(format_branch_changed_file)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(format!(
+        "Repository context:\n\
+         - Base branch: {base_branch}\n\
+         - Head branch: {head_branch}\n\
+         - The changed-file list below excludes paths matched by this repository's gitignore/exclude rules.\n\
+         - No commit messages or patch contents are included.\n\
+         - Use only this summary; do not inspect repository files or run commands.\n\n\
+         Changed files:\n{changed_file_list}\n"
+    ))
 }
 
-fn branch_diff_patch(repo_path: &Path, base_branch: &str) -> Result<String, String> {
+fn branch_changed_files(
+    repo_path: &Path,
+    base_branch: &str,
+) -> Result<Vec<BranchChangedFile>, String> {
     let output = git_command(repo_path)
         .args([
             "diff",
-            "--no-ext-diff",
-            "--no-color",
+            "--name-status",
+            "--find-renames",
+            "-z",
             &format!("{base_branch}...HEAD"),
         ])
         .output()
-        .map_err(|err| format!("Could not read the branch diff for PR generation: {err}"))?;
+        .map_err(|err| format!("Could not inspect branch changes for PR generation: {err}"))?;
 
     if !output.status.success() {
         return Err(command_failure(
-            "Could not read the branch diff for PR generation",
+            "Could not inspect branch changes for PR generation",
             &output,
         ));
     }
 
-    let patch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if patch.is_empty() {
-        return Err(format!(
-            "There are no branch changes to describe relative to {base_branch}."
-        ));
+    let fields = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8_lossy(field).to_string())
+        .collect::<Vec<_>>();
+    let mut changed_files = Vec::new();
+    let mut index = 0usize;
+    while index < fields.len() {
+        let status = fields[index].clone();
+        index += 1;
+        let path_count = if status.starts_with('R') || status.starts_with('C') {
+            2
+        } else {
+            1
+        };
+        if index + path_count > fields.len() {
+            return Err("Could not parse branch changed files for PR generation.".to_string());
+        }
+        let paths = fields[index..index + path_count].to_vec();
+        index += path_count;
+        changed_files.push(BranchChangedFile { status, paths });
     }
 
-    Ok(patch)
+    Ok(changed_files)
+}
+
+fn git_path_is_ignored(repo_path: &Path, path: &str) -> bool {
+    let output = git_command(repo_path)
+        .args(["check-ignore", "--no-index", "--quiet", "--"])
+        .arg(path)
+        .output();
+
+    match output {
+        Ok(output) if output.status.code() == Some(0) => true,
+        Ok(output) if output.status.code() == Some(1) => false,
+        _ => true,
+    }
+}
+
+fn format_branch_changed_file(changed: &BranchChangedFile) -> String {
+    if changed.paths.len() == 2 {
+        format!(
+            "{} {} -> {}",
+            changed.status, changed.paths[0], changed.paths[1]
+        )
+    } else {
+        format!("{} {}", changed.status, changed.paths.join(" "))
+    }
 }
 
 fn run_generation(
@@ -1452,10 +1532,10 @@ fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_pull_request_args, default_commit_generation_script, default_pr_generation_script,
-        find_latest_pull_request_args, gh_json_command, git_stdout, indicates_missing_pull_request,
-        indicates_missing_pull_request_checks, normalize_github_remote,
-        normalize_pull_request_check_bucket, parse_commit_message,
+        branch_pull_request_summary, create_pull_request_args, default_commit_generation_script,
+        default_pr_generation_script, find_latest_pull_request_args, gh_json_command, git_stdout,
+        indicates_missing_pull_request, indicates_missing_pull_request_checks,
+        normalize_github_remote, normalize_pull_request_check_bucket, parse_commit_message,
         parse_pull_request_checks_output, parse_pull_request_content, push_branch,
         render_commit_generation_script, render_pull_request_generation_script,
         simple_toolbar_git_command, PullRequestCheckBucket, ToolbarGitAction,
@@ -1721,15 +1801,13 @@ mod tests {
     fn render_pull_request_generation_script_replaces_context_tokens() {
         let rendered = render_pull_request_generation_script(
             "Summarize:\n{{pull_request_context}}",
-            "main",
-            "abc123 feat: add PR AI",
-            "diff --git a b",
+            "Repository context:\n- Base branch: main\n- No patch contents are included.",
         );
 
         assert_eq!(
             rendered,
             format!(
-                "Summarize:\nBase branch: main\n\nBranch-only commits:\nabc123 feat: add PR AI\n\nDiff against main:\ndiff --git a b\n\n{}",
+                "Summarize:\nRepository context:\n- Base branch: main\n- No patch contents are included.\n\n{}",
                 GIT_PULL_REQUEST_FORMAT_CONTRACT.trim_end()
             )
         );
@@ -1739,17 +1817,80 @@ mod tests {
     fn render_pull_request_generation_script_appends_context_when_no_placeholder_is_present() {
         let rendered = render_pull_request_generation_script(
             "Write a concise PR summary.",
-            "main",
-            "abc123 feat: add PR AI",
-            "diff --git a b",
+            "Repository context:\n- Base branch: main\n- No patch contents are included.",
         );
 
         assert_eq!(
             rendered,
             format!(
-                "Write a concise PR summary.\n\n{}\n\nBase branch: main\n\nBranch-only commits:\nabc123 feat: add PR AI\n\nDiff against main:\ndiff --git a b\n",
+                "Write a concise PR summary.\n\n{}\n\nRepository context:\n- Base branch: main\n- No patch contents are included.",
                 GIT_PULL_REQUEST_FORMAT_CONTRACT.trim_end()
             )
+        );
+    }
+
+    #[test]
+    fn branch_pull_request_summary_excludes_gitignored_paths() {
+        let temp_dir = TempDir::new().expect("tempdir should exist");
+        let repo_path = temp_dir.path().join("repo");
+        run_git(
+            temp_dir.path(),
+            &["init", "--initial-branch=main", repo_path.to_str().unwrap()],
+        );
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        std::fs::write(repo_path.join(".gitignore"), "ignored.txt\n")
+            .expect("gitignore should write");
+        std::fs::write(repo_path.join("README.md"), "hello\n").expect("readme should write");
+        std::fs::write(repo_path.join("ignored.txt"), "ignored before\n")
+            .expect("ignored file should write");
+        run_git(&repo_path, &["add", ".gitignore", "README.md"]);
+        run_git(&repo_path, &["add", "-f", "ignored.txt"]);
+        run_git(&repo_path, &["commit", "-m", "feat: seed repository"]);
+        run_git(&repo_path, &["checkout", "-b", "feature/test"]);
+        std::fs::write(repo_path.join("README.md"), "hello world\n").expect("readme should update");
+        std::fs::write(repo_path.join("ignored.txt"), "ignored after\n")
+            .expect("ignored file should update");
+        run_git(&repo_path, &["add", "README.md", "ignored.txt"]);
+        run_git(&repo_path, &["commit", "-m", "feat: update files"]);
+
+        let summary = branch_pull_request_summary(&repo_path, "main")
+            .expect("summary should include non-ignored changes");
+
+        assert!(summary.contains("README.md"));
+        assert!(!summary.contains("ignored.txt"));
+        assert!(!summary.contains("ignored after"));
+    }
+
+    #[test]
+    fn branch_pull_request_summary_rejects_only_gitignored_paths() {
+        let temp_dir = TempDir::new().expect("tempdir should exist");
+        let repo_path = temp_dir.path().join("repo");
+        run_git(
+            temp_dir.path(),
+            &["init", "--initial-branch=main", repo_path.to_str().unwrap()],
+        );
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        std::fs::write(repo_path.join(".gitignore"), "ignored.txt\n")
+            .expect("gitignore should write");
+        std::fs::write(repo_path.join("ignored.txt"), "ignored before\n")
+            .expect("ignored file should write");
+        run_git(&repo_path, &["add", ".gitignore"]);
+        run_git(&repo_path, &["add", "-f", "ignored.txt"]);
+        run_git(&repo_path, &["commit", "-m", "feat: seed repository"]);
+        run_git(&repo_path, &["checkout", "-b", "feature/test"]);
+        std::fs::write(repo_path.join("ignored.txt"), "ignored after\n")
+            .expect("ignored file should update");
+        run_git(&repo_path, &["add", "ignored.txt"]);
+        run_git(&repo_path, &["commit", "-m", "feat: update ignored file"]);
+
+        let error = branch_pull_request_summary(&repo_path, "main")
+            .expect_err("ignored-only changes should not produce a PR summary");
+
+        assert_eq!(
+            error,
+            "There are no non-ignored branch changes to describe relative to main."
         );
     }
 

@@ -667,7 +667,14 @@ mod tests {
             let (id2, _) = server_session.next_call().await.unwrap().unwrap();
             // Reply id2 first.
             server_session
-                .reply(id2, WorkerReply::ProjectList { projects: vec![], repos: vec![], ui: Default::default() })
+                .reply(
+                    id2,
+                    WorkerReply::ProjectList {
+                        projects: vec![],
+                        repos: vec![],
+                        ui: Default::default(),
+                    },
+                )
                 .await
                 .unwrap();
             server_session

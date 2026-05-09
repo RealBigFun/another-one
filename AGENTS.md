@@ -8,6 +8,16 @@ This app is built for mac and linux - any changes must keep this in mind.
 - This applies to icon-only controls and text-based actions alike unless the element is purely decorative or intentionally non-interactive.
 - Any user-facing errors or notifications should go through the app toast function unless explicitly specified otherwise.
 
+## Rust formatting
+
+After changing Rust files, format only the Rust files changed in the current working tree:
+
+```bash
+git diff --name-only --diff-filter=ACMRTUXB HEAD -- '*.rs' | xargs -r rustfmt
+```
+
+Do not run full-workspace formatting unless explicitly requested.
+
 ## Tracking work
 
 We use GitHub Issues to capture work. Do not let drive-by findings expand the current branch's scope — file them and move on.

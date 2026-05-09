@@ -632,7 +632,14 @@ mod tests {
                 .expect("call before close");
             assert!(matches!(verb, Control::ListProjects));
             server
-                .reply(id, WorkerReply::ProjectList { projects: vec![], repos: vec![], ui: Default::default() })
+                .reply(
+                    id,
+                    WorkerReply::ProjectList {
+                        projects: vec![],
+                        repos: vec![],
+                        ui: Default::default(),
+                    },
+                )
                 .await
                 .expect("reply");
         });
@@ -654,7 +661,14 @@ mod tests {
             let (id2, _) = server.next_call().await.unwrap().unwrap();
             // Reply to id2 FIRST.
             server
-                .reply(id2, WorkerReply::ProjectList { projects: vec![], repos: vec![], ui: Default::default() })
+                .reply(
+                    id2,
+                    WorkerReply::ProjectList {
+                        projects: vec![],
+                        repos: vec![],
+                        ui: Default::default(),
+                    },
+                )
                 .await
                 .unwrap();
             // Then id1.

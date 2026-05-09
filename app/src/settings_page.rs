@@ -71,6 +71,16 @@ const CLAUDE_MODEL_OPTIONS: &[(&str, &str)] = &[
     ("claude-haiku-4-5", "Claude Haiku 4.5"),
 ];
 
+const CURSOR_AGENT_MODEL_OPTIONS: &[(&str, &str)] = &[
+    ("auto", "Auto"),
+    ("composer-2", "Composer 2"),
+    ("claude-opus-4.7", "Claude Opus 4.7"),
+    ("gpt-5.5", "GPT-5.5"),
+    ("gpt-5.5-high-fast", "GPT-5.5 High Fast"),
+    ("gemini-3.1-pro", "Gemini 3.1 Pro"),
+    ("grok-4.3", "Grok 4.3"),
+];
+
 const CODEX_THINKING_OPTIONS: &[(&str, &str)] = &[
     ("none", "Off"),
     ("xhigh", "Extra high"),
@@ -124,6 +134,7 @@ fn git_action_provider_label(provider: AgentProviderKind) -> &'static str {
     match provider {
         AgentProviderKind::ClaudeCode => "Claude Code",
         AgentProviderKind::Codex => "Codex",
+        AgentProviderKind::CursorAgent => "Cursor CLI (agent)",
         _ => provider.label(),
     }
 }
@@ -209,6 +220,7 @@ fn git_action_model_options(
     let source = match provider {
         AgentProviderKind::Codex => CODEX_MODEL_OPTIONS,
         AgentProviderKind::ClaudeCode => CLAUDE_MODEL_OPTIONS,
+        AgentProviderKind::CursorAgent => CURSOR_AGENT_MODEL_OPTIONS,
         _ => &[],
     };
     options.extend(source.iter().map(|(value, label)| SettingsSelectOption {
@@ -2700,7 +2712,7 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let settings = self.settings_git_action_llm(kind);
-        let provider = settings.provider.unwrap_or(AgentProviderKind::Codex);
+        let provider = settings.provider.unwrap_or(AgentProviderKind::ClaudeCode);
         let model = settings.model.as_deref().unwrap_or_default();
         let thinking = settings.thinking.as_deref().unwrap_or_default();
         let model_options = git_action_model_options(provider, model);
@@ -2901,49 +2913,54 @@ impl AnotherOneApp {
         button_hover: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        [AgentProviderKind::Codex, AgentProviderKind::ClaudeCode]
-            .into_iter()
-            .map(|provider| {
-                let selected = selected_provider == provider;
-                let icon_path = AGENTS
-                    .iter()
-                    .find(|agent| agent.provider == Some(provider))
-                    .map(|agent| agent.icon)
-                    .unwrap_or("assets/icons/action__agent.svg");
-                div()
-                    .h(px(34.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .cursor_pointer()
-                    .bg(if selected {
-                        active_button_bg.opacity(0.22)
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .hover(move |s| s.bg(button_hover))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            this.set_git_action_llm_provider(kind, provider, cx);
-                            cx.stop_propagation();
-                        }),
-                    )
-                    .child(branded_icon(
-                        icon_path,
-                        16.,
-                        Some(settings_text_primary(self.project_store.ui.theme_mode)),
-                    ))
-                    .child(
-                        div()
-                            .text_size(rems(12. / 16.))
-                            .text_color(settings_text_primary(self.project_store.ui.theme_mode))
-                            .child(git_action_provider_label(provider)),
-                    )
-                    .into_any_element()
-            })
-            .collect()
+        [
+            AgentProviderKind::ClaudeCode,
+            AgentProviderKind::CursorAgent,
+            AgentProviderKind::Codex,
+        ]
+        .into_iter()
+        .filter(|provider| agent_executable_available(*provider))
+        .map(|provider| {
+            let selected = selected_provider == provider;
+            let icon_path = AGENTS
+                .iter()
+                .find(|agent| agent.provider == Some(provider))
+                .map(|agent| agent.icon)
+                .unwrap_or("assets/icons/action__agent.svg");
+            div()
+                .h(px(34.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .cursor_pointer()
+                .bg(if selected {
+                    active_button_bg.opacity(0.22)
+                } else {
+                    gpui::transparent_black()
+                })
+                .hover(move |s| s.bg(button_hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                        this.set_git_action_llm_provider(kind, provider, cx);
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(branded_icon(
+                    icon_path,
+                    16.,
+                    Some(settings_text_primary(self.project_store.ui.theme_mode)),
+                ))
+                .child(
+                    div()
+                        .text_size(rems(12. / 16.))
+                        .text_color(settings_text_primary(self.project_store.ui.theme_mode))
+                        .child(git_action_provider_label(provider)),
+                )
+                .into_any_element()
+        })
+        .collect()
     }
 
     fn git_action_string_option_elements(

@@ -264,13 +264,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     /// Update a task's persisted branch name + target-project
     /// pointer (worktree-task move). Default impl is a no-op.
-    fn update_task_branch(
-        &self,
-        _task_id: &str,
-        _target_project_id: &str,
-        _branch_name: &str,
-    ) {
-    }
+    fn update_task_branch(&self, _task_id: &str, _target_project_id: &str, _branch_name: &str) {}
 
     /// Replace the user's expanded-project set wholesale. Default
     /// impl is a no-op.

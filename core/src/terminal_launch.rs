@@ -240,7 +240,7 @@ fn launch_terminal(
                         bytes,
                     });
                     crate::leakscope::record_pty_send_block_ns(
-                        send_started.elapsed().as_nanos() as u64,
+                        send_started.elapsed().as_nanos() as u64
                     );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -374,7 +374,7 @@ fn launch_warm_terminal(
                     let _ =
                         output_sender.send(WarmTerminalLaunchReply::Output { launch_id, bytes });
                     crate::leakscope::record_pty_send_block_ns(
-                        send_started.elapsed().as_nanos() as u64,
+                        send_started.elapsed().as_nanos() as u64
                     );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,

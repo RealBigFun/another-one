@@ -56,8 +56,7 @@ use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
-    ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind,
-    TaskWorktreeBranchMode,
+    ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind, TaskWorktreeBranchMode,
 };
 use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
@@ -91,7 +90,6 @@ const TOAST_FADE_OUT: Duration = Duration::from_millis(220);
 const PASTED_IMAGE_PREVIEW_LIFETIME: Duration = Duration::from_secs(4);
 const TOAST_STACK_LIMIT: usize = 4;
 const TOAST_VISIBLE_MESSAGE_LIMIT: usize = 1_200;
-const TOAST_COPY_MESSAGE_LIMIT: usize = 20_000;
 const TOAST_SWIPE_DISMISS_THRESHOLD: f32 = 120.;
 const TOAST_COPY_FEEDBACK: Duration = Duration::from_millis(1200);
 const PULL_REQUEST_LOOKUP_TTL: Duration = Duration::from_secs(30);
@@ -880,12 +878,12 @@ impl AppToast {
         shown_at: Instant,
         dismiss_at: Instant,
     ) -> Self {
-        let message = truncate_toast_text(message.into(), TOAST_VISIBLE_MESSAGE_LIMIT);
+        let full_message = message.into();
         Self {
             id,
             kind,
-            copy_message: message.clone(),
-            message,
+            message: truncate_toast_text(full_message.clone(), TOAST_VISIBLE_MESSAGE_LIMIT),
+            copy_message: full_message,
             shown_at,
             dismiss_at,
         }
@@ -903,7 +901,7 @@ impl AppToast {
             id,
             kind,
             message: truncate_toast_text(message.into(), TOAST_VISIBLE_MESSAGE_LIMIT),
-            copy_message: truncate_toast_text(copy_message.into(), TOAST_COPY_MESSAGE_LIMIT),
+            copy_message: copy_message.into(),
             shown_at,
             dismiss_at,
         }
@@ -2211,10 +2209,7 @@ impl AnotherOneApp {
     /// held for the duration of the clone.
     #[allow(dead_code)] // wired up by the per-call-site migrations (see another-one-oja sub-issues)
     pub(crate) fn session_handle(&self) -> Arc<dyn daemon_transport::Session> {
-        self.session
-            .lock()
-            .expect("session slot poisoned")
-            .clone()
+        self.session.lock().expect("session slot poisoned").clone()
     }
 
     /// Replace the current `Session` impl. Used by the QR pair flow
@@ -5462,10 +5457,7 @@ impl AnotherOneApp {
                 let tab_id = request.key.tab_id.clone();
                 crate::session_host::dispatch_fire_and_forget(
                     session,
-                    daemon_proto::Control::AttachTab {
-                        section_id,
-                        tab_id,
-                    },
+                    daemon_proto::Control::AttachTab { section_id, tab_id },
                     |result| {
                         if let Err(err) = result {
                             log::warn!("focus-change AttachTab failed: {err}");
@@ -5697,7 +5689,8 @@ impl AnotherOneApp {
                                 ui.expanded_repo_ids.len(),
                             );
                             self.project_store.absorb_projection(projects, repos, ui);
-                            self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+                            self.expanded_projects =
+                                self.project_store.ui.expanded_repo_ids.clone();
 
                             #[cfg(target_os = "android")]
                             {
@@ -6243,10 +6236,7 @@ impl AnotherOneApp {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
-            daemon_proto::Control::SetShortcutBinding {
-                action_id,
-                binding,
-            },
+            daemon_proto::Control::SetShortcutBinding { action_id, binding },
             |result| {
                 if let Err(err) = result {
                     log::warn!("SetShortcutBinding failed: {err}");
@@ -6458,11 +6448,7 @@ impl AnotherOneApp {
     /// session. `action` is the variant id (`"commit"` or
     /// `"commit-and-push"`) — encoded as a string so daemon-proto
     /// stays free of the `RepoDefaultCommitAction` enum shape.
-    pub(crate) fn dispatch_set_repo_default_commit_action(
-        &self,
-        repo_id: String,
-        action: String,
-    ) {
+    pub(crate) fn dispatch_set_repo_default_commit_action(&self, repo_id: String, action: String) {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
@@ -6564,12 +6550,10 @@ impl AnotherOneApp {
             .map(|p| p.path.clone());
         let section_id_for_insert = section_id.clone();
         self.workspace_pane.update(cx, |workspace, _cx| {
-            workspace
-                .section_states
-                .insert(
-                    section_id_for_insert,
-                    SectionState::from_persisted(persisted, fallback_cwd),
-                );
+            workspace.section_states.insert(
+                section_id_for_insert,
+                SectionState::from_persisted(persisted, fallback_cwd),
+            );
         });
     }
 
@@ -7075,20 +7059,15 @@ impl AnotherOneApp {
         // gets rejected even though the desktop sidebar would happily
         // launch the same tab via the direct `spawn_terminal_launch`
         // path. See another-one-cwn for the migration this enables.
-        let task_match = self
-            .project_store
-            .tasks
-            .values()
-            .flatten()
-            .find_map(|t| {
-                if t.section_id != section_store_key {
-                    return None;
-                }
-                t.tabs
-                    .iter()
-                    .find(|pt| pt.id == req.tab_id)
-                    .map(|pt| (t.clone(), pt.clone()))
-            });
+        let task_match = self.project_store.tasks.values().flatten().find_map(|t| {
+            if t.section_id != section_store_key {
+                return None;
+            }
+            t.tabs
+                .iter()
+                .find(|pt| pt.id == req.tab_id)
+                .map(|pt| (t.clone(), pt.clone()))
+        });
         let (persisted_tab, cwd) = match task_match {
             Some((task, persisted_tab)) => {
                 let cwd = task
@@ -12838,8 +12817,7 @@ mod tests {
         AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
         NewTaskShortcutTarget, SectionId, SectionState, TabCloseScope, TerminalCellPosition,
         TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
-        TerminalSelectionRange, TerminalTab, ToastKind, TOAST_COPY_MESSAGE_LIMIT,
-        TOAST_VISIBLE_MESSAGE_LIMIT,
+        TerminalSelectionRange, TerminalTab, ToastKind, TOAST_VISIBLE_MESSAGE_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -13132,7 +13110,7 @@ mod tests {
     }
 
     #[test]
-    fn toast_copy_message_defaults_to_visible_message() {
+    fn toast_copy_message_defaults_to_full_message() {
         let now = Instant::now();
         let toast = AppToast::new(
             1,
@@ -13176,32 +13154,27 @@ mod tests {
 
         assert!(toast.message.as_ref().ends_with("[truncated]"));
         assert!(toast.message.as_ref().len() < TOAST_VISIBLE_MESSAGE_LIMIT + 32);
-        assert_eq!(toast.copy_message, toast.message);
+        assert_eq!(
+            toast.copy_message.as_ref(),
+            "x".repeat(TOAST_VISIBLE_MESSAGE_LIMIT + 1)
+        );
     }
 
     #[test]
-    fn toast_copy_message_is_truncated_on_char_boundaries() {
+    fn toast_copy_message_is_not_truncated() {
         let now = Instant::now();
+        let copy_message = "é".repeat(TOAST_VISIBLE_MESSAGE_LIMIT + 1);
         let toast = AppToast::with_copy_message(
             1,
             ToastKind::Error,
             "Could not run command.",
-            "é".repeat(TOAST_COPY_MESSAGE_LIMIT + 1),
+            copy_message.clone(),
             now,
             now + Duration::from_secs(1),
         );
 
         assert_eq!(toast.message.as_ref(), "Could not run command.");
-        assert!(toast.copy_message.as_ref().ends_with("[truncated]"));
-        assert_eq!(
-            toast
-                .copy_message
-                .as_ref()
-                .trim_end_matches("…\n\n[truncated]")
-                .chars()
-                .count(),
-            TOAST_COPY_MESSAGE_LIMIT
-        );
+        assert_eq!(toast.copy_message.as_ref(), copy_message);
     }
 
     #[test]
@@ -15792,7 +15765,6 @@ impl AnotherOneApp {
         true
     }
 }
-
 
 fn short_id(id: &str) -> String {
     if id.len() > 12 {

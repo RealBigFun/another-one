@@ -383,11 +383,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         Ok(())
     }
 
-    fn rename_task(
-        &self,
-        task_id: &str,
-        new_name: &str,
-    ) -> (bool, Option<TaskSummary>) {
+    fn rename_task(&self, task_id: &str, new_name: &str) -> (bool, Option<TaskSummary>) {
         let task_id = task_id.to_string();
         let new_name = new_name.to_string();
         let result = self.with_state(|state| {
@@ -401,11 +397,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         result.unwrap_or((false, None))
     }
 
-    fn set_task_pinned(
-        &self,
-        task_id: &str,
-        pinned: bool,
-    ) -> (bool, Option<TaskSummary>) {
+    fn set_task_pinned(&self, task_id: &str, pinned: bool) -> (bool, Option<TaskSummary>) {
         let task_id = task_id.to_string();
         let result = self.with_state(|state| {
             let changed = state.project_store.set_task_pinned(&task_id, pinned);
@@ -502,12 +494,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         });
     }
 
-    fn update_task_branch(
-        &self,
-        task_id: &str,
-        target_project_id: &str,
-        branch_name: &str,
-    ) {
+    fn update_task_branch(&self, task_id: &str, target_project_id: &str, branch_name: &str) {
         let task_id = task_id.to_string();
         let target_project_id = target_project_id.to_string();
         let branch_name = branch_name.to_string();
@@ -524,9 +511,9 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn set_git_commit_llm(&self, settings: serde_json::Value) {
-        let Ok(settings) = serde_json::from_value::<
-            another_one_core::git_actions::GitActionLlmSettings,
-        >(settings) else {
+        let Ok(settings) =
+            serde_json::from_value::<another_one_core::git_actions::GitActionLlmSettings>(settings)
+        else {
             tracing::warn!("SetGitCommitLlm payload failed to decode");
             return;
         };
@@ -536,9 +523,9 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn set_git_pr_llm(&self, settings: serde_json::Value) {
-        let Ok(settings) = serde_json::from_value::<
-            another_one_core::git_actions::GitActionLlmSettings,
-        >(settings) else {
+        let Ok(settings) =
+            serde_json::from_value::<another_one_core::git_actions::GitActionLlmSettings>(settings)
+        else {
             tracing::warn!("SetGitPrLlm payload failed to decode");
             return;
         };
@@ -1474,10 +1461,7 @@ fn task_to_summary(
     let section_key = task.section_id.clone();
     let parsed_section = SectionId::from_store_key(&section_key);
     let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
-    let cwd = task
-        .cwd
-        .as_ref()
-        .map(|p| p.to_string_lossy().into_owned());
+    let cwd = task.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
     let next_tab_id = task.next_tab_id;
     let kind_value = serde_json::to_value(&task.kind).ok();
     let root_project_id = task.root_project_id.clone();
@@ -1504,9 +1488,10 @@ fn task_to_summary(
                 restore_status: tab.restore_status,
                 failure_message: tab.failure_message,
                 failure_details: tab.failure_details,
-                launch_config: tab.launch_config.as_ref().and_then(|cfg| {
-                    serde_json::to_value(cfg).ok()
-                }),
+                launch_config: tab
+                    .launch_config
+                    .as_ref()
+                    .and_then(|cfg| serde_json::to_value(cfg).ok()),
             }
         })
         .collect();
@@ -1878,7 +1863,9 @@ fn run(
     // is the whole point of the daemon-transport seam.
     let in_process_registry = registry.clone();
     runtime.spawn(async move {
-        if let Err(e) = daemon::dispatch::serve_session(in_process_server, in_process_registry).await {
+        if let Err(e) =
+            daemon::dispatch::serve_session(in_process_server, in_process_registry).await
+        {
             log::warn!("in-process serve_session ended with error: {e}");
         }
     });

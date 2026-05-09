@@ -37,9 +37,7 @@
 use std::sync::{Arc, OnceLock};
 
 use daemon_proto::{Control, WorkerReply};
-use daemon_transport::{
-    EventStream, Session, SessionEvent, SessionFuture, TransportError,
-};
+use daemon_transport::{EventStream, Session, SessionEvent, SessionFuture, TransportError};
 use futures_core::Stream;
 use tokio::runtime::{Handle, Runtime};
 
@@ -126,7 +124,10 @@ impl NoSession {
 }
 
 impl Session for NoSession {
-    fn call<'a>(&'a self, _verb: Control) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
+    fn call<'a>(
+        &'a self,
+        _verb: Control,
+    ) -> SessionFuture<'a, Result<WorkerReply, TransportError>> {
         let reason = self.reason.clone();
         Box::pin(async move { Err(TransportError::Closed(Some(reason))) })
     }

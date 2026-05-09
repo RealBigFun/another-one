@@ -351,7 +351,10 @@ fn capture_lockup(stale_ms: u64) {
     let sampler_result = platform_capture_stacks(pid, &out_path);
     match sampler_result {
         Ok(tool) => {
-            eprintln!("WATCHDOG: stack dump via `{tool}` written to {}", out_path.display());
+            eprintln!(
+                "WATCHDOG: stack dump via `{tool}` written to {}",
+                out_path.display()
+            );
         }
         Err(e) => {
             eprintln!(

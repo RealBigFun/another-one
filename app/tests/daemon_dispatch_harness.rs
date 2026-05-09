@@ -21,9 +21,7 @@ use std::time::Duration;
 use another_one::__test_harness::{DesktopTerminalRegistry, RegistryState};
 use another_one_core::project_store::{Project, ProjectStore, Task};
 use daemon_proto::{Control, WorkerReply};
-use daemon_transport::{
-    in_memory::pair, DialTarget, Session as ClientSession, SessionEvent,
-};
+use daemon_transport::{in_memory::pair, DialTarget, Session as ClientSession, SessionEvent};
 use futures_core::Stream;
 use futures_util::StreamExt;
 
@@ -351,9 +349,7 @@ mod mutators {
             .shortcuts
             .as_ref()
             .expect("shortcuts present in projection");
-        let mapping = shortcuts
-            .as_object()
-            .expect("shortcuts is JSON object");
+        let mapping = shortcuts.as_object().expect("shortcuts is JSON object");
         assert!(
             mapping
                 .iter()
@@ -405,8 +401,7 @@ mod mutators {
             },
         )
         .await;
-        let reply =
-            call_then_drain_push(&mut harness, Control::ResetGitCommitScript).await;
+        let reply = call_then_drain_push(&mut harness, Control::ResetGitCommitScript).await;
         let (_, ui) = unwrap_projection(reply);
         assert!(
             ui.git_commit_generation_script
@@ -447,8 +442,7 @@ mod mutators {
             },
         )
         .await;
-        let reply =
-            call_then_drain_push(&mut harness, Control::ResetGitPrScript).await;
+        let reply = call_then_drain_push(&mut harness, Control::ResetGitPrScript).await;
         let (_, ui) = unwrap_projection(reply);
         assert!(
             ui.git_pr_generation_script
@@ -534,11 +528,7 @@ mod mutators {
         // optional "anthropic" or "openai" choice; we just round-trip
         // an empty object and verify the wire doesn't drop it.
         let settings = serde_json::json!({});
-        let reply = call_then_drain_push(
-            &mut harness,
-            Control::SetGitCommitLlm { settings },
-        )
-        .await;
+        let reply = call_then_drain_push(&mut harness, Control::SetGitCommitLlm { settings }).await;
         let (_, ui) = unwrap_projection(reply);
         // Wire field always present once set; existence is enough.
         assert!(ui.git_commit_generation_llm.is_some());
@@ -549,8 +539,7 @@ mod mutators {
     async fn set_git_pr_llm_emits_push() {
         let mut harness = fresh_harness_after_initial_push().await;
         let settings = serde_json::json!({});
-        let reply =
-            call_then_drain_push(&mut harness, Control::SetGitPrLlm { settings }).await;
+        let reply = call_then_drain_push(&mut harness, Control::SetGitPrLlm { settings }).await;
         let (_, ui) = unwrap_projection(reply);
         assert!(ui.git_pr_generation_llm.is_some());
         harness.shutdown();
@@ -683,10 +672,7 @@ mod mutators {
         )
         .await;
         let (_, ui) = unwrap_projection(reply);
-        assert_eq!(
-            ui.last_active_section_id.as_deref(),
-            Some("p1::main::t1")
-        );
+        assert_eq!(ui.last_active_section_id.as_deref(), Some("p1::main::t1"));
         harness.shutdown();
     }
 

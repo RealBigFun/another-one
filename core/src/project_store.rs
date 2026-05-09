@@ -90,10 +90,7 @@ fn save_worker_loop(worker: &'static SaveWorker) {
         {
             let mut guard = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
             while guard.is_none() {
-                guard = worker
-                    .cvar
-                    .wait(guard)
-                    .unwrap_or_else(|e| e.into_inner());
+                guard = worker.cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
             }
         }
         // Let the burst settle. Any saves during this sleep land in
@@ -202,9 +199,7 @@ impl From<daemon_proto::ProjectKind> for ProjectKind {
 /// lossy behaviour `set_remote_snapshot` used to synthesise
 /// unconditionally — clients fall back to the pre-#125 "no branch
 /// catalog" rendering rather than showing stale or missing data.
-fn repos_from_summaries(
-    summaries: Vec<daemon_proto::RepoSummary>,
-) -> HashMap<String, RepoRecord> {
+fn repos_from_summaries(summaries: Vec<daemon_proto::RepoSummary>) -> HashMap<String, RepoRecord> {
     summaries
         .into_iter()
         .map(|summary| {
@@ -1013,7 +1008,11 @@ impl ProjectStore {
         }
         let mut store = Self {
             repos,
-            projects_by_id: projects.iter().cloned().map(|p| (p.id.clone(), p)).collect(),
+            projects_by_id: projects
+                .iter()
+                .cloned()
+                .map(|p| (p.id.clone(), p))
+                .collect(),
             projects: Vec::new(),
             project_order: projects.iter().map(|p| p.id.clone()).collect(),
             tasks_by_id: tasks.iter().cloned().map(|t| (t.id.clone(), t)).collect(),
@@ -1749,10 +1748,7 @@ impl ProjectStore {
         #[cfg(not(test))]
         {
             let worker = save_worker();
-            let mut pending = worker
-                .pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut pending = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
             // Single-slot mailbox: if a save was already queued, the
             // newer snapshot wins — callers only care that the latest
             // state is on disk, not that every intermediate revision
