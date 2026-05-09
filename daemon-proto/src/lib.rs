@@ -1523,6 +1523,7 @@ pub enum AgentProvider {
     CursorAgent,
     Codex,
     Pi,
+    Droid,
     Gemini,
     OpenCode,
     Amp,

@@ -29,6 +29,8 @@ pub enum AgentProviderKind {
     Codex,
     #[serde(rename = "pi")]
     Pi,
+    #[serde(rename = "droid")]
+    Droid,
     #[serde(rename = "gemini")]
     Gemini,
     #[serde(rename = "opencode")]
@@ -56,6 +58,7 @@ impl From<AgentProviderKind> for daemon_proto::AgentProvider {
             AgentProviderKind::CursorAgent => daemon_proto::AgentProvider::CursorAgent,
             AgentProviderKind::Codex => daemon_proto::AgentProvider::Codex,
             AgentProviderKind::Pi => daemon_proto::AgentProvider::Pi,
+            AgentProviderKind::Droid => daemon_proto::AgentProvider::Droid,
             AgentProviderKind::Gemini => daemon_proto::AgentProvider::Gemini,
             AgentProviderKind::OpenCode => daemon_proto::AgentProvider::OpenCode,
             AgentProviderKind::Amp => daemon_proto::AgentProvider::Amp,
@@ -79,6 +82,7 @@ pub fn agent_provider_kind_from_wire(
         daemon_proto::AgentProvider::CursorAgent => Some(AgentProviderKind::CursorAgent),
         daemon_proto::AgentProvider::Codex => Some(AgentProviderKind::Codex),
         daemon_proto::AgentProvider::Pi => Some(AgentProviderKind::Pi),
+        daemon_proto::AgentProvider::Droid => Some(AgentProviderKind::Droid),
         daemon_proto::AgentProvider::Gemini => Some(AgentProviderKind::Gemini),
         daemon_proto::AgentProvider::OpenCode => Some(AgentProviderKind::OpenCode),
         daemon_proto::AgentProvider::Amp => Some(AgentProviderKind::Amp),
@@ -94,6 +98,7 @@ pub(crate) const ALL_PROVIDERS: &[AgentProviderKind] = &[
     AgentProviderKind::CursorAgent,
     AgentProviderKind::Codex,
     AgentProviderKind::Pi,
+    AgentProviderKind::Droid,
     AgentProviderKind::Gemini,
     AgentProviderKind::OpenCode,
     AgentProviderKind::Amp,
@@ -176,6 +181,12 @@ pub const AGENTS: &[AgentDef] = &[
         label: "Pi",
         icon: "assets/agent-icons/pi.png",
         provider: Some(AgentProviderKind::Pi),
+    },
+    AgentDef {
+        id: "droid",
+        label: "Droid",
+        icon: "assets/agent-icons/droid.svg",
+        provider: Some(AgentProviderKind::Droid),
     },
     AgentDef {
         id: "opencode",
@@ -427,6 +438,7 @@ pub(crate) struct ClaudeCodeHarness;
 pub(crate) struct CursorAgentHarness;
 pub(crate) struct CodexHarness;
 pub(crate) struct PiHarness;
+pub(crate) struct DroidHarness;
 pub(crate) struct GeminiHarness;
 pub(crate) struct OpenCodeHarness;
 pub(crate) struct AmpHarness;
@@ -589,6 +601,18 @@ impl AgentHarness for PiHarness {
     }
 }
 
+impl AgentHarness for DroidHarness {
+    fn provider_kind(&self) -> AgentProviderKind {
+        AgentProviderKind::Droid
+    }
+    fn label(&self) -> &'static str {
+        "Droid"
+    }
+    fn command(&self) -> &'static str {
+        "droid"
+    }
+}
+
 impl AgentHarness for GeminiHarness {
     fn provider_kind(&self) -> AgentProviderKind {
         AgentProviderKind::Gemini
@@ -674,6 +698,7 @@ pub(crate) fn harness(kind: AgentProviderKind) -> &'static dyn AgentHarness {
         AgentProviderKind::CursorAgent => &CursorAgentHarness,
         AgentProviderKind::Codex => &CodexHarness,
         AgentProviderKind::Pi => &PiHarness,
+        AgentProviderKind::Droid => &DroidHarness,
         AgentProviderKind::Gemini => &GeminiHarness,
         AgentProviderKind::OpenCode => &OpenCodeHarness,
         AgentProviderKind::Amp => &AmpHarness,
@@ -804,6 +829,10 @@ mod tests {
             Some("gemini")
         );
         assert_eq!(agent_id_for_provider(AgentProviderKind::Pi), Some("pi"));
+        assert_eq!(
+            agent_id_for_provider(AgentProviderKind::Droid),
+            Some("droid")
+        );
         assert_eq!(
             agent_id_for_provider(AgentProviderKind::OpenCode),
             Some("opencode")

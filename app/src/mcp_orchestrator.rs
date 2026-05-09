@@ -443,6 +443,7 @@ fn provider_str(kind: AgentProviderKind) -> String {
         AgentProviderKind::CursorAgent => "cursor-agent",
         AgentProviderKind::Codex => "codex",
         AgentProviderKind::Pi => "pi",
+        AgentProviderKind::Droid => "droid",
         AgentProviderKind::Gemini => "gemini",
         AgentProviderKind::OpenCode => "opencode",
         AgentProviderKind::Amp => "amp",
