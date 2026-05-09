@@ -1866,11 +1866,7 @@ impl AnotherOneApp {
         let button_bg = settings_button_bg(self.project_store.ui.theme_mode);
         let button_hover = settings_button_hover(self.project_store.ui.theme_mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
-        let enabled_agents = self
-            .enabled_agents()
-            .into_iter()
-            .filter(|agent| agent.provider.map_or(true, agent_executable_available))
-            .collect::<Vec<_>>();
+        let enabled_agents = self.enabled_agents();
 
         let mut rows = div().flex().flex_col();
         for (index, agent) in AGENTS.iter().enumerate() {

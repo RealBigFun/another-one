@@ -42,9 +42,10 @@ actions!(
 );
 
 use crate::agents::{
-    agent_id_for_provider, agent_output_indicates_missing_session, effective_enabled_agents,
-    terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
-    AgentDef, TerminalLaunchConfig, TerminalSessionRef, AGENTS,
+    agent_executable_available, agent_id_for_provider, agent_output_indicates_missing_session,
+    effective_enabled_agents, terminal_launch_config_for_selected_agent,
+    terminal_launch_config_for_selected_agents, AgentDef, TerminalLaunchConfig, TerminalSessionRef,
+    AGENTS,
 };
 use crate::background_ops::{BroadcastOperation, BroadcastOperationEvent};
 use crate::git_workspace::GitWorkspace;
@@ -3460,6 +3461,9 @@ impl AnotherOneApp {
 
     pub(crate) fn enabled_agents(&self) -> Vec<&'static AgentDef> {
         effective_enabled_agents(self.project_store.ui.enabled_agents.as_ref())
+            .into_iter()
+            .filter(|agent| agent.provider.map_or(true, agent_executable_available))
+            .collect()
     }
 
     pub(crate) fn agent_enabled(&self, agent_id: &str) -> bool {

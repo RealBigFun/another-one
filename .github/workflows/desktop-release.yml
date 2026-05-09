@@ -220,6 +220,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -287,11 +290,38 @@ jobs:
             exit 1
           fi
           RELEASE_DIR="${{ steps.stage.outputs.release_dir }}"
+
+          PREV_TAG="$(git describe --tags --abbrev=0 --match 'v*' "${RELEASE_TAG}^" 2>/dev/null || true)"
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMIT_RANGE="${PREV_TAG}..${RELEASE_TAG}"
+            COMPARE_LINE="[Compare ${PREV_TAG}...${RELEASE_TAG}](https://github.com/${RELEASE_REPO}/compare/${PREV_TAG}...${RELEASE_TAG})"
+          else
+            COMMIT_RANGE="${RELEASE_TAG}"
+            COMPARE_LINE=""
+          fi
+          COMMITS="$(git log --no-merges --pretty=format:'- %s ([%h](https://github.com/'"${RELEASE_REPO}"'/commit/%H))' "$COMMIT_RANGE" || true)"
+          if [[ -z "$COMMITS" ]]; then
+            COMMITS="_No commits in range._"
+          fi
+
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "AnotherOne Desktop v${CARGO_VERSION} (build ${BUILD_NUMBER}) — ${GITHUB_SHA}."
+            echo
+            if [[ -n "$COMPARE_LINE" ]]; then
+              echo "$COMPARE_LINE"
+              echo
+            fi
+            echo "## Commits"
+            echo
+            echo "$COMMITS"
+          } > "$NOTES_FILE"
+
           gh release create "$RELEASE_TAG" \
             --repo "$RELEASE_REPO" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
-            --notes "AnotherOne Desktop v${CARGO_VERSION} (build ${BUILD_NUMBER}) — ${GITHUB_SHA}." \
+            --notes-file "$NOTES_FILE" \
             "$RELEASE_DIR"/AnotherOne-* \
             "$RELEASE_DIR"/SHA256SUMS \
             "$RELEASE_DIR"/latest.json \
