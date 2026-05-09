@@ -5697,14 +5697,19 @@ impl AnotherOneApp {
                                 ui.expanded_repo_ids.len(),
                             );
                             self.project_store.absorb_projection(projects, repos, ui);
-                            for project in &self.project_store.projects {
-                                if self
-                                    .project_store
-                                    .tasks
-                                    .get(&project.id)
-                                    .is_some_and(|tasks| !tasks.is_empty())
-                                {
-                                    self.expanded_projects.insert(project.repo_id.clone());
+                            self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+
+                            #[cfg(target_os = "android")]
+                            {
+                                for project in &self.project_store.projects {
+                                    if self
+                                        .project_store
+                                        .tasks
+                                        .get(&project.id)
+                                        .is_some_and(|tasks| !tasks.is_empty())
+                                    {
+                                        self.expanded_projects.insert(project.repo_id.clone());
+                                    }
                                 }
                             }
                             updated = true;
@@ -15719,22 +15724,27 @@ impl AnotherOneApp {
                         self.project_store.projects.len(),
                         self.project_store.tasks.len()
                     );
+                    self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+
                     // The sidebar's expand chevron is rendered with an
                     // SVG that doesn't load on Android (no asset
                     // bundling yet), so a freshly-seeded store would
-                    // hide tasks behind an invisible toggle. Pre-mark
-                    // every project that has at least one task as
-                    // expanded so tasks show inline beneath each
-                    // project — same code path desktop uses when the
-                    // user has manually expanded a row.
-                    for project in &self.project_store.projects {
-                        if self
-                            .project_store
-                            .tasks
-                            .get(&project.id)
-                            .is_some_and(|tasks| !tasks.is_empty())
-                        {
-                            self.expanded_projects.insert(project.repo_id.clone());
+                    // hide tasks behind an invisible toggle. On Android
+                    // only, pre-mark every project that has at least one
+                    // task as expanded so tasks show inline beneath each
+                    // project. Desktop preserves the user's persisted
+                    // collapsed/expanded state from the daemon.
+                    #[cfg(target_os = "android")]
+                    {
+                        for project in &self.project_store.projects {
+                            if self
+                                .project_store
+                                .tasks
+                                .get(&project.id)
+                                .is_some_and(|tasks| !tasks.is_empty())
+                            {
+                                self.expanded_projects.insert(project.repo_id.clone());
+                            }
                         }
                     }
                     changed = true;
