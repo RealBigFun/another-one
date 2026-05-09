@@ -1153,6 +1153,7 @@ fn run_generation(
             run_codex(prompt, repo_path, output_prefix, empty_output_label, llm)
         }
         AgentProviderKind::ClaudeCode => run_claude(prompt, repo_path, empty_output_label, llm),
+        AgentProviderKind::CursorAgent => run_cursor(prompt, repo_path, empty_output_label, llm),
         provider => Err(format!(
             "{} is not supported for Git Action generation yet.",
             provider.label()
@@ -1268,6 +1269,65 @@ fn run_claude(
     let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if raw.is_empty() {
         return Err(format!("Claude returned an empty {empty_output_label}."));
+    }
+
+    Ok(raw)
+}
+
+fn run_cursor(
+    prompt: &str,
+    repo_path: &Path,
+    empty_output_label: &str,
+    llm: &GitActionLlmSettings,
+) -> Result<String, String> {
+    let cursor = find_cursor_agent_cli(repo_path)
+        .ok_or_else(|| "Cursor Agent CLI was not found.".to_string())?;
+    let mut command = external_command(cursor, repo_path);
+    command.args([
+        "--print",
+        "--output-format",
+        "text",
+        "--mode",
+        "ask",
+        "--trust",
+    ]);
+    if let Some(model) = llm
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        command.args(["--model", model]);
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("Could not start Cursor Agent CLI: {err}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(prompt.as_bytes())
+            .map_err(|err| format!("Could not write the Cursor Agent prompt: {err}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("Cursor Agent did not complete: {err}"))?;
+
+    if !output.status.success() {
+        return Err(command_failure(
+            "Cursor Agent message generation failed",
+            &output,
+        ));
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return Err(format!(
+            "Cursor Agent returned an empty {empty_output_label}."
+        ));
     }
 
     Ok(raw)
@@ -1516,6 +1576,14 @@ fn find_claude_cli(repo_path: &Path) -> Option<PathBuf> {
         fallbacks.push(home.join(".local/bin/claude"));
     }
     crate::command_env::find_executable("claude", repo_path, &fallbacks)
+}
+
+fn find_cursor_agent_cli(repo_path: &Path) -> Option<PathBuf> {
+    let mut fallbacks = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        fallbacks.push(home.join(".local/bin/agent"));
+    }
+    crate::command_env::find_executable("agent", repo_path, &fallbacks)
 }
 
 fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
