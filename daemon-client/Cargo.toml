@@ -1,6 +1,6 @@
 [package]
 name = "daemon-client"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "Iroh client for AnotherOne — dials a desktop daemon's pairing endpoint and runs the wire protocol from the client side."
 publish = false
