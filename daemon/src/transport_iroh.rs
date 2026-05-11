@@ -890,4 +890,118 @@ mod tests {
             Some("abc123".to_string())
         );
     }
+
+    /// Wrong token — rejected, nonce unchanged so the legitimate
+    /// client can still complete pairing with the correct token.
+    /// Covers the mismatch branch of `constant_time_eq`.
+    #[test]
+    fn consume_hello_rejects_wrong_token_and_keeps_nonce() {
+        let dir = tempdir().unwrap();
+        let allowlist = dir.path().join("paired_peers");
+        let pair_state = test_pair_state("correct-nonce");
+
+        let err = consume_hello(
+            Control::Hello {
+                pair_token: Some("wrong-nonce".to_string()),
+                protocol_version: PROTOCOL_VERSION,
+            },
+            "peer-1",
+            &pair_state,
+            &allowlist,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("pair_token mismatch"));
+        assert!(!allowlist.exists(), "allowlist must not have been written");
+        assert_eq!(
+            pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce,
+            Some("correct-nonce".to_string())
+        );
+    }
+
+    /// Hello with no `pair_token` at all — rejected, nonce unchanged.
+    /// This is the "malformed client / legitimate client forgot the
+    /// QR value" case and must not collapse to the rejects-token
+    /// path in a way that consumes the nonce.
+    #[test]
+    fn consume_hello_rejects_missing_token_and_keeps_nonce() {
+        let dir = tempdir().unwrap();
+        let allowlist = dir.path().join("paired_peers");
+        let pair_state = test_pair_state("correct-nonce");
+
+        let err = consume_hello(
+            Control::Hello {
+                pair_token: None,
+                protocol_version: PROTOCOL_VERSION,
+            },
+            "peer-1",
+            &pair_state,
+            &allowlist,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("missing pair_token"));
+        assert!(!allowlist.exists(), "allowlist must not have been written");
+        assert_eq!(
+            pair_state.lock().unwrap_or_else(|p| p.into_inner()).nonce,
+            Some("correct-nonce".to_string())
+        );
+    }
+
+    /// Hello arrives but the daemon has no outstanding pair nonce
+    /// (user never hit "pair", or a previous pairing already consumed
+    /// it). Must be rejected so a replayed Hello with a stale token
+    /// can't pair on behalf of whoever knew the old QR value.
+    #[test]
+    fn consume_hello_rejects_when_no_outstanding_nonce() {
+        let dir = tempdir().unwrap();
+        let allowlist = dir.path().join("paired_peers");
+        let pair_state = Arc::new(Mutex::new(PairState {
+            nonce: None,
+            addr: EndpointAddr::new(SecretKey::generate().public().into()),
+            pairing_url: String::new(),
+            qr_png_bytes: Vec::new(),
+        }));
+
+        let err = consume_hello(
+            Control::Hello {
+                pair_token: Some("anything".to_string()),
+                protocol_version: PROTOCOL_VERSION,
+            },
+            "peer-1",
+            &pair_state,
+            &allowlist,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("no outstanding pair nonce"));
+        assert!(!allowlist.exists(), "allowlist must not have been written");
+    }
+
+    /// A Control variant that isn't Hello on a fresh unpaired
+    /// connection is rejected outright. Pre-#122 the iroh frame
+    /// loop already filtered these at the wire level; this test
+    /// pins the behaviour at the `consume_hello` function itself
+    /// so a future refactor can't silently accept an arbitrary
+    /// Control as "pairing complete".
+    #[test]
+    fn consume_hello_rejects_non_hello_control() {
+        let dir = tempdir().unwrap();
+        let allowlist = dir.path().join("paired_peers");
+        let pair_state = test_pair_state("correct-nonce");
+
+        let err = consume_hello(
+            Control::ListProjects,
+            "peer-1",
+            &pair_state,
+            &allowlist,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("must be Control::Hello"),
+            "expected rejection message, got: {err}"
+        );
+        assert!(!allowlist.exists());
+    }
 }
