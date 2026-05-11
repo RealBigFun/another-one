@@ -257,6 +257,25 @@ async fn handle_connection(
                     Ok(()) => {
                         authz = PostAuth::AlreadyPaired;
                         info!(viewer_id, "TOFU pair complete");
+                        // Auto-rotate the pair nonce now that it's
+                        // been consumed. Without this, the desktop's
+                        // QR stays visually live while referencing a
+                        // dead nonce — any subsequent scan (same
+                        // phone re-pairing after uninstall, or a
+                        // different device) gets rejected with
+                        // "no outstanding pair nonce (consumed or
+                        // not rolled)" and the user has to hit
+                        // "Reset pairings" manually. Rotating on
+                        // consume makes the QR always-live: each
+                        // scan consumes the current nonce, the
+                        // next scan sees a fresh one. Same burn-on-
+                        // use property the "Reset pairings" path
+                        // already relies on.
+                        if let Ok(mut guard) = pair_state.lock() {
+                            if let Err(e) = rotate_pair_state(&mut guard) {
+                                warn!(error = %e, "post-consume pair rotation failed");
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!(viewer_id, error = %e, "rejecting unpaired peer");
@@ -595,6 +614,39 @@ pub(crate) fn generate_pair_nonce() -> String {
         out.push(HEX[(b & 0xf) as usize] as char);
     }
     out
+}
+
+/// Rotate the pair nonce + rebuild the pairing URL + QR PNG on an
+/// already-held [`PairState`] guard. Shared implementation used by
+/// both the user-driven "Reset pairings" path
+/// ([`EndpointHandle::regenerate_pairing`]) and the post-consume
+/// auto-rotate after a successful [`consume_hello`].
+///
+/// Single source of truth keeps the three pieces in lockstep —
+/// forgetting to update the URL after the nonce rolls would leave
+/// the next scan hitting the new-nonce check with the old token.
+///
+/// As a side effect, also drops the fresh pairing URL into
+/// `$XDG_CACHE_HOME/another-one/pair-url.txt`. That file is the
+/// canonical input to `scripts/test-mobile-pair.sh`, which drives
+/// mobile pair flow without a human holding a phone to a camera.
+/// Silently skipped when the cache dir can't be resolved (e.g.
+/// in tests against a fake home).
+pub(crate) fn rotate_pair_state(state: &mut PairState) -> anyhow::Result<()> {
+    let new_nonce = generate_pair_nonce();
+    let new_url = build_pairing_url_with_token(&state.addr, &new_nonce);
+    let new_qr = render_qr_png_bytes(&new_url)?;
+    state.nonce = Some(new_nonce);
+    state.pairing_url = new_url.clone();
+    state.qr_png_bytes = new_qr;
+    if let Some(cache_dir) = dirs::cache_dir() {
+        let dir = cache_dir.join("another-one");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let path = dir.join("pair-url.txt");
+            let _ = std::fs::write(&path, new_url.as_bytes());
+        }
+    }
+    Ok(())
 }
 
 /// Constant-time byte comparison. Returns false on length mismatch.

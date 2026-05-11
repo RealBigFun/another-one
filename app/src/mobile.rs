@@ -42,6 +42,102 @@ pub fn set_activity_ptr(ptr: *mut std::ffi::c_void) {
     ACTIVITY_PTR.store(ptr, Ordering::Release);
 }
 
+/// Internal (app-private, survives `adb install -r`) storage path
+/// stashed at `android_main` entry from
+/// `AndroidApp::internal_data_path`. Other modules that want to
+/// persist small per-install state (iroh secret key, future
+/// pairing metadata) read it via [`internal_data_path`] instead of
+/// re-deriving from JNI.
+#[cfg(target_os = "android")]
+static INTERNAL_DATA_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Stash the app's internal data directory so non-android-activity
+/// callers (notably `daemon-client`'s dial helper) can persist
+/// state that should outlive a single process but stay within the
+/// app-private storage sandbox. Idempotent — first call wins. See
+/// #TODO(secret-key-persist) for the iroh-client-side follow-up.
+#[cfg(target_os = "android")]
+pub fn set_internal_data_path(path: std::path::PathBuf) {
+    let _ = INTERNAL_DATA_PATH.set(path);
+}
+
+/// The path [`set_internal_data_path`] stashed, or `None` if the
+/// activity glue never reported one (shouldn't happen under
+/// `android-activity` 0.6, but keep the probe total so host-target
+/// tests that don't enter `android_main` can still link).
+#[cfg(target_os = "android")]
+pub fn internal_data_path() -> Option<&'static std::path::Path> {
+    INTERNAL_DATA_PATH.get().map(|p| p.as_path())
+}
+
+/// File inside the app-private internal storage where the iroh
+/// client's secret key persists across reconnects and `adb
+/// install -r` cycles. Ephemeral key-per-dial (the pre-#TODO
+/// behaviour) meant every reconnect presented a fresh viewer_id,
+/// which the daemon rejected with "no outstanding pair nonce"
+/// because the allowlist entry was keyed on the first-pair
+/// identity.
+#[cfg(target_os = "android")]
+pub fn iroh_secret_key_path() -> Option<std::path::PathBuf> {
+    Some(internal_data_path()?.join("iroh-client.key"))
+}
+
+/// Development-only pair-URL trigger file. When present inside the
+/// app's internal-data directory, [`drain_qr_scan_results`] reads
+/// its contents as if they were a scanned QR, deletes the file,
+/// and returns the URL to the render tick. This is what lets the
+/// `scripts/test-mobile-pair.sh` harness drive the pair flow
+/// without a human holding the phone to a camera.
+///
+/// `adb shell run-as dev.anotherone.app sh -c "printf %s '<url>' >
+/// files/pair-trigger"` is the canonical producer. Anything that
+/// can write into the app-private storage namespace works;
+/// nothing else on the device (including the user via the system
+/// file picker) has access without `run-as`, so leaving the path
+/// wired in release builds is a non-issue.
+#[cfg(target_os = "android")]
+fn pair_trigger_file_path() -> Option<std::path::PathBuf> {
+    Some(internal_data_path()?.join("pair-trigger"))
+}
+
+#[cfg(target_os = "android")]
+fn absorb_pair_trigger_file() {
+    let Some(path) = pair_trigger_file_path() else {
+        return;
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            log::warn!("pair-trigger read failed: {e}");
+            return;
+        }
+    };
+    // Remove first so a failed push doesn't re-fire on every tick.
+    // The canonical producer writes → delete-after-consume, but a
+    // crashed producer could leave a stale file; the unlink here
+    // keeps the fire-once semantics regardless.
+    if let Err(e) = std::fs::remove_file(&path) {
+        log::warn!("pair-trigger unlink failed: {e}");
+    }
+    let url = contents.trim().to_string();
+    if url.is_empty() {
+        return;
+    }
+    log::info!("pair-trigger: injecting URL len={} into QR queue", url.len());
+    push_qr_scan_result(url);
+}
+
+/// Host-target stub — mobile's persistent-identity path concept
+/// doesn't apply on the desktop iroh client path (desktop runs the
+/// iroh *server*, persisting its own key via the daemon's
+/// `load_or_create_secret_key`). Returning `None` lets shared
+/// callers fall through to ephemeral-key semantics.
+#[cfg(not(target_os = "android"))]
+pub fn iroh_secret_key_path() -> Option<std::path::PathBuf> {
+    None
+}
+
 /// Queue of pairing URLs delivered by the QR scanner. The JNI callback
 /// pushes; the render tick drains. Wrapped in `OnceLock` so it can be
 /// referenced from both the JNI thread and the GPUI thread without
@@ -63,6 +159,12 @@ pub fn push_qr_scan_result(url: String) {
 
 /// Take all pending scan results. Called from the render tick.
 pub fn drain_qr_scan_results() -> Vec<String> {
+    // On Android, check the pair-trigger file first so the
+    // automation harness (scripts/test-mobile-pair.sh) can feed a
+    // URL into the same queue the camera callback uses. No-op
+    // when no trigger file is present (common path).
+    #[cfg(target_os = "android")]
+    absorb_pair_trigger_file();
     qr_scan_queue()
         .lock()
         .map(|mut q| std::mem::take(&mut *q))

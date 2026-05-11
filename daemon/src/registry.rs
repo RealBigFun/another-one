@@ -134,13 +134,7 @@ impl EndpointHandle {
         // "observed while mid-mutation". Panicking here too would
         // turn a recoverable hiccup into a daemon crash.
         let mut state = self.pair_state.lock().unwrap_or_else(|p| p.into_inner());
-        let new_nonce = crate::transport_iroh::generate_pair_nonce();
-        let new_url = crate::transport_iroh::build_pairing_url_with_token(&state.addr, &new_nonce);
-        let new_qr = crate::transport_iroh::render_qr_png_bytes(&new_url)?;
-        state.nonce = Some(new_nonce);
-        state.pairing_url = new_url;
-        state.qr_png_bytes = new_qr;
-        Ok(())
+        crate::transport_iroh::rotate_pair_state(&mut state)
     }
 }
 

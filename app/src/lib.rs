@@ -200,6 +200,23 @@ pub fn android_main(android_app: android_activity::AndroidApp) {
     // when control hands off to `Application::run`.
     crate::mobile::set_activity_ptr(android_app.activity_as_ptr());
 
+    // Stash the app-private internal data dir so the mobile-side
+    // iroh client can persist its secret key across reconnects and
+    // `adb install -r` cycles. Without this, every dial generates a
+    // fresh key — after the first successful pair the daemon's
+    // allowlist has entry `<key_A>`, but the next dial presents
+    // `<key_B>` and the daemon rejects with "no outstanding pair
+    // nonce" (because the nonce was consumed by the first Hello and
+    // never rolled). `AndroidApp::internal_data_path` is the
+    // app-private path that survives `adb install -r` but wipes on
+    // uninstall, which is exactly the lifecycle we want for pairing
+    // identity.
+    if let Some(dir) = android_app.internal_data_path() {
+        crate::mobile::set_internal_data_path(dir);
+    } else {
+        log::warn!("android_main: internal_data_path unavailable; iroh key will stay ephemeral");
+    }
+
     let _platform = gpui_mobile::android::jni::init_platform(&android_app);
     let shared = match gpui_mobile::android::jni::shared_platform() {
         Some(s) => s,
