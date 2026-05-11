@@ -1807,6 +1807,7 @@ dependencies = [
  "axum",
  "daemon-proto",
  "daemon-transport",
+ "dirs 5.0.1",
  "futures-util",
  "image",
  "iroh",
