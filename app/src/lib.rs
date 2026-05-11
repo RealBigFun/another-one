@@ -27,6 +27,7 @@ mod build_info;
 mod create_branch_modal;
 mod custom_actions_modal;
 mod daemon_host;
+mod gh_check;
 mod git_diff_pane;
 mod git_workspace;
 mod iroh_client;

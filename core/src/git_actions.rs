@@ -1586,7 +1586,7 @@ fn find_cursor_agent_cli(repo_path: &Path) -> Option<PathBuf> {
     crate::command_env::find_executable("agent", repo_path, &fallbacks)
 }
 
-fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
+pub fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
     crate::command_env::find_executable(
         "gh",
         repo_path,
