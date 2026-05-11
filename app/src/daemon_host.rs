@@ -1653,6 +1653,9 @@ pub(crate) fn shortcut_action_id(action: ShortcutAction) -> &'static str {
         ShortcutAction::PreviousTab => "previous-tab",
         ShortcutAction::NextTask => "next-task",
         ShortcutAction::PreviousTask => "previous-task",
+        ShortcutAction::ZoomIn => "zoom-in",
+        ShortcutAction::ZoomOut => "zoom-out",
+        ShortcutAction::ZoomReset => "zoom-reset",
     }
 }
 
@@ -1666,6 +1669,9 @@ fn shortcut_action_from_id(id: &str) -> Option<ShortcutAction> {
         "previous-tab" => Some(ShortcutAction::PreviousTab),
         "next-task" => Some(ShortcutAction::NextTask),
         "previous-task" => Some(ShortcutAction::PreviousTask),
+        "zoom-in" => Some(ShortcutAction::ZoomIn),
+        "zoom-out" => Some(ShortcutAction::ZoomOut),
+        "zoom-reset" => Some(ShortcutAction::ZoomReset),
         _ => None,
     }
 }

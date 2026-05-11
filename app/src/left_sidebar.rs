@@ -862,6 +862,45 @@ impl AnotherOneApp {
             return;
         }
 
+        // Zoom: routed through the shortcut system since #62 so
+        // Linux/Windows actually fire (the legacy `cmd-=` GPUI
+        // binding resolved `cmd-` to Super/Meta there and did
+        // nothing). Settings page auto-surfaces these via
+        // `ALL_SHORTCUT_ACTIONS`.
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::ZoomIn),
+            ev,
+        ) {
+            self.zoom_in(cx);
+            cx.stop_propagation();
+            return;
+        }
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::ZoomOut),
+            ev,
+        ) {
+            self.zoom_out(cx);
+            cx.stop_propagation();
+            return;
+        }
+        if shortcut_matches_event(
+            self.project_store
+                .ui
+                .shortcuts
+                .binding_for(ShortcutAction::ZoomReset),
+            ev,
+        ) {
+            self.zoom_reset(cx);
+            cx.stop_propagation();
+            return;
+        }
+
         if self.sidebar_task_menu.is_some() && ev.keystroke.key.as_str() == "escape" {
             self.sidebar_task_menu = None;
             cx.stop_propagation();

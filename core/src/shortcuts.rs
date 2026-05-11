@@ -23,9 +23,12 @@ pub enum ShortcutAction {
     PreviousTab,
     NextTask,
     PreviousTask,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
-pub const ALL_SHORTCUT_ACTIONS: [ShortcutAction; 8] = [
+pub const ALL_SHORTCUT_ACTIONS: [ShortcutAction; 11] = [
     ShortcutAction::CycleProjects,
     ShortcutAction::NewTabInCurrentTask,
     ShortcutAction::NewTask,
@@ -34,6 +37,9 @@ pub const ALL_SHORTCUT_ACTIONS: [ShortcutAction; 8] = [
     ShortcutAction::PreviousTab,
     ShortcutAction::NextTask,
     ShortcutAction::PreviousTask,
+    ShortcutAction::ZoomIn,
+    ShortcutAction::ZoomOut,
+    ShortcutAction::ZoomReset,
 ];
 
 impl ShortcutAction {
@@ -47,6 +53,9 @@ impl ShortcutAction {
             Self::PreviousTab => "Previous Tab",
             Self::NextTask => "Next Task",
             Self::PreviousTask => "Previous Task",
+            Self::ZoomIn => "Zoom In",
+            Self::ZoomOut => "Zoom Out",
+            Self::ZoomReset => "Reset Zoom",
         }
     }
 
@@ -60,6 +69,9 @@ impl ShortcutAction {
             Self::PreviousTab => "cmd-shift-[",
             Self::NextTask => "cmd-alt-down",
             Self::PreviousTask => "cmd-alt-up",
+            Self::ZoomIn => zoom_in_default_binding(),
+            Self::ZoomOut => zoom_out_default_binding(),
+            Self::ZoomReset => zoom_reset_default_binding(),
         }
     }
 }
@@ -98,6 +110,91 @@ const fn close_current_tab_default_binding() -> &'static str {
     }
 }
 
+/// Zoom shortcuts used the GPUI `KeyBinding::new("cmd-=", …)`
+/// plumbing before #62. On Linux/Windows the `cmd-` token maps to
+/// the Super/Meta key, not Ctrl, so the bindings silently did
+/// nothing — which is the bug report #62 is tracking. Promoting
+/// zoom to `ShortcutAction` lets each platform advertise a sane
+/// default and lets users remap through the same settings page as
+/// the other shortcuts.
+const fn zoom_in_default_binding() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "cmd-="
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))]
+    {
+        "control-="
+    }
+    #[cfg(target_os = "ios")]
+    {
+        ""
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "android",
+        target_os = "ios",
+    )))]
+    {
+        compile_error!("another-one-core: add a `zoom_in` default binding for this target.");
+        ""
+    }
+}
+
+const fn zoom_out_default_binding() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "cmd--"
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))]
+    {
+        "control--"
+    }
+    #[cfg(target_os = "ios")]
+    {
+        ""
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "android",
+        target_os = "ios",
+    )))]
+    {
+        compile_error!("another-one-core: add a `zoom_out` default binding for this target.");
+        ""
+    }
+}
+
+const fn zoom_reset_default_binding() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "cmd-0"
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))]
+    {
+        "control-0"
+    }
+    #[cfg(target_os = "ios")]
+    {
+        ""
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "android",
+        target_os = "ios",
+    )))]
+    {
+        compile_error!("another-one-core: add a `zoom_reset` default binding for this target.");
+        ""
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShortcutSettings {
     #[serde(default = "default_cycle_projects_shortcut")]
@@ -116,6 +213,12 @@ pub struct ShortcutSettings {
     pub next_task: String,
     #[serde(default = "default_previous_task_shortcut")]
     pub previous_task: String,
+    #[serde(default = "default_zoom_in_shortcut")]
+    pub zoom_in: String,
+    #[serde(default = "default_zoom_out_shortcut")]
+    pub zoom_out: String,
+    #[serde(default = "default_zoom_reset_shortcut")]
+    pub zoom_reset: String,
 }
 
 impl Default for ShortcutSettings {
@@ -129,6 +232,9 @@ impl Default for ShortcutSettings {
             previous_tab: default_previous_tab_shortcut(),
             next_task: default_next_task_shortcut(),
             previous_task: default_previous_task_shortcut(),
+            zoom_in: default_zoom_in_shortcut(),
+            zoom_out: default_zoom_out_shortcut(),
+            zoom_reset: default_zoom_reset_shortcut(),
         }
     }
 }
@@ -144,6 +250,9 @@ impl ShortcutSettings {
             ShortcutAction::PreviousTab => &self.previous_tab,
             ShortcutAction::NextTask => &self.next_task,
             ShortcutAction::PreviousTask => &self.previous_task,
+            ShortcutAction::ZoomIn => &self.zoom_in,
+            ShortcutAction::ZoomOut => &self.zoom_out,
+            ShortcutAction::ZoomReset => &self.zoom_reset,
         }
     }
 
@@ -158,6 +267,9 @@ impl ShortcutSettings {
             ShortcutAction::PreviousTab => self.previous_tab = binding,
             ShortcutAction::NextTask => self.next_task = binding,
             ShortcutAction::PreviousTask => self.previous_task = binding,
+            ShortcutAction::ZoomIn => self.zoom_in = binding,
+            ShortcutAction::ZoomOut => self.zoom_out = binding,
+            ShortcutAction::ZoomReset => self.zoom_reset = binding,
         }
     }
 
@@ -220,4 +332,16 @@ fn default_next_task_shortcut() -> String {
 
 fn default_previous_task_shortcut() -> String {
     ShortcutAction::PreviousTask.default_binding().to_string()
+}
+
+fn default_zoom_in_shortcut() -> String {
+    ShortcutAction::ZoomIn.default_binding().to_string()
+}
+
+fn default_zoom_out_shortcut() -> String {
+    ShortcutAction::ZoomOut.default_binding().to_string()
+}
+
+fn default_zoom_reset_shortcut() -> String {
+    ShortcutAction::ZoomReset.default_binding().to_string()
 }
