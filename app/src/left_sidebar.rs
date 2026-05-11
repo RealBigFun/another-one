@@ -3206,6 +3206,48 @@ fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
     let key = ev.keystroke.key.as_str();
     let modifiers = ev.keystroke.modifiers;
 
+    #[cfg(target_os = "macos")]
+    let control_pressed = modifiers.control;
+    #[cfg(not(target_os = "macos"))]
+    let control_pressed = modifiers.control || modifiers.platform;
+
+    // Modifier-aware navigation-key encoding (#31). xterm / modern
+    // terminal emulators advertise modified arrows / Home / End /
+    // Page± / Delete via `\x1b[1;<mod><final>` (or `\x1b[<n>;<mod>~`
+    // for the tilde family), where `<mod>` is `1 + shift:1 + alt:2
+    // + ctrl:4`. readline, fish, and agent TUIs depend on this to
+    // distinguish word-jump (Ctrl+Arrow) and selection (Shift+Arrow)
+    // from the plain cursor moves. Before this fix, `terminal_key_bytes`
+    // tried `control_key_byte("left")` which only accepts single
+    // ASCII chars and fell through to the bare `\x1b[D`, so Ctrl+Left
+    // was indistinguishable from Left to the PTY.
+    //
+    // Runs *before* the generic Ctrl/Alt fallback because those
+    // paths would either drop the modifier (control_key_byte
+    // rejects nav key names) or emit the legacy ESC-prefix shape
+    // (`\x1b\x1b[D`) which many TUIs don't parse.
+    let nav_modifier_bits: u8 = 1
+        + (modifiers.shift as u8)
+        + ((modifiers.alt as u8) << 1)
+        + ((control_pressed as u8) << 2);
+    if nav_modifier_bits != 1 {
+        let modified = match key {
+            "up" => Some(format!("\x1b[1;{nav_modifier_bits}A")),
+            "down" => Some(format!("\x1b[1;{nav_modifier_bits}B")),
+            "right" => Some(format!("\x1b[1;{nav_modifier_bits}C")),
+            "left" => Some(format!("\x1b[1;{nav_modifier_bits}D")),
+            "home" => Some(format!("\x1b[1;{nav_modifier_bits}H")),
+            "end" => Some(format!("\x1b[1;{nav_modifier_bits}F")),
+            "pageup" => Some(format!("\x1b[5;{nav_modifier_bits}~")),
+            "pagedown" => Some(format!("\x1b[6;{nav_modifier_bits}~")),
+            "delete" => Some(format!("\x1b[3;{nav_modifier_bits}~")),
+            _ => None,
+        };
+        if let Some(sequence) = modified {
+            return Some(sequence.into_bytes());
+        }
+    }
+
     let mut bytes = match key {
         "enter" => Some(vec![b'\r']),
         "backspace" => Some(vec![0x7f]),
@@ -3223,11 +3265,6 @@ fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
         "delete" => Some(b"\x1b[3~".to_vec()),
         _ => None,
     };
-
-    #[cfg(target_os = "macos")]
-    let control_pressed = modifiers.control;
-    #[cfg(not(target_os = "macos"))]
-    let control_pressed = modifiers.control || modifiers.platform;
 
     if control_pressed {
         if let Some(key_char) = ev.keystroke.key_char.as_deref() {
@@ -3356,6 +3393,105 @@ mod tests {
         assert_eq!(
             terminal_key_bytes(&key_event("c", Some("c"), modifiers)),
             Some(vec![0x03])
+        );
+    }
+
+    /// xterm/VT-style modifier-aware nav-key encoding from #31.
+    /// Each modifier combination should produce the `\x1b[1;<mod><final>`
+    /// form (or `\x1b[<n>;<mod>~` for the tilde family) so readline
+    /// and agent TUIs can distinguish word-jump / selection /
+    /// navigation verbs from plain arrows. `<mod>` is
+    /// `1 + shift:1 + alt:2 + ctrl:4`.
+    #[test]
+    fn terminal_key_bytes_encodes_shift_arrow() {
+        let mut modifiers = Modifiers::default();
+        modifiers.shift = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("left", None, modifiers)),
+            Some(b"\x1b[1;2D".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_ctrl_arrow_for_word_jump() {
+        let mut modifiers = Modifiers::default();
+        modifiers.control = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("right", None, modifiers)),
+            Some(b"\x1b[1;5C".to_vec())
+        );
+        assert_eq!(
+            terminal_key_bytes(&key_event("left", None, modifiers)),
+            Some(b"\x1b[1;5D".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_alt_arrow() {
+        let mut modifiers = Modifiers::default();
+        modifiers.alt = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("up", None, modifiers)),
+            Some(b"\x1b[1;3A".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_ctrl_shift_arrow() {
+        let mut modifiers = Modifiers::default();
+        modifiers.control = true;
+        modifiers.shift = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("left", None, modifiers)),
+            Some(b"\x1b[1;6D".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_modified_home_end() {
+        let mut modifiers = Modifiers::default();
+        modifiers.control = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("home", None, modifiers)),
+            Some(b"\x1b[1;5H".to_vec())
+        );
+        assert_eq!(
+            terminal_key_bytes(&key_event("end", None, modifiers)),
+            Some(b"\x1b[1;5F".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_encodes_modified_tilde_family() {
+        let mut modifiers = Modifiers::default();
+        modifiers.shift = true;
+        assert_eq!(
+            terminal_key_bytes(&key_event("pageup", None, modifiers)),
+            Some(b"\x1b[5;2~".to_vec())
+        );
+        assert_eq!(
+            terminal_key_bytes(&key_event("pagedown", None, modifiers)),
+            Some(b"\x1b[6;2~".to_vec())
+        );
+        assert_eq!(
+            terminal_key_bytes(&key_event("delete", None, modifiers)),
+            Some(b"\x1b[3;2~".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_key_bytes_unmodified_arrows_stay_plain() {
+        // Regression guard: the #31 fix must not disturb the
+        // no-modifier path. Plain arrows still emit their bare
+        // CSI sequences for shells that don't advertise modified
+        // mode.
+        assert_eq!(
+            terminal_key_bytes(&key_event("up", None, Modifiers::default())),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            terminal_key_bytes(&key_event("home", None, Modifiers::default())),
+            Some(b"\x1b[H".to_vec())
         );
     }
 
