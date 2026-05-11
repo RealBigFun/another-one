@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+#[cfg(not(test))]
 use std::sync::{Condvar, Mutex, OnceLock};
+#[cfg(not(test))]
 use std::thread;
+#[cfg(not(test))]
 use std::time::Duration;
 
 use crate::agents::{
@@ -51,12 +54,22 @@ const STORE_VERSION: u8 = 3;
 // so the last save before process exit doesn't race the worker's
 // debounce sleep. Tests use the sync path via `#[cfg(test)]` so
 // assertions on file contents remain deterministic.
+//
+// The worker machinery is `#[cfg(not(test))]`-gated because tests
+// go through `write_store_sync` directly from `save()` — compiling
+// the worker unused in test builds produced five "never used"
+// warnings after #130 landed. Keeping the gate local to the worker
+// (rather than scattering `#[allow(dead_code)]`) means the test
+// binary doesn't carry a static OnceLock or a leaked Box it never
+// touches.
 
+#[cfg(not(test))]
 struct SaveWorker {
     pending: Mutex<Option<(PathBuf, StoreFile)>>,
     cvar: Condvar,
 }
 
+#[cfg(not(test))]
 static SAVE_WORKER: OnceLock<&'static SaveWorker> = OnceLock::new();
 
 /// Collapse a storm of saves this wide into one disk write. 50 ms
@@ -65,8 +78,10 @@ static SAVE_WORKER: OnceLock<&'static SaveWorker> = OnceLock::new();
 /// long enough to absorb the 100+ Hz `persist_section_state` flurry
 /// a CDP sub-agent produces. See Drop impl for the end-of-life
 /// flush that covers the "exit inside the debounce window" race.
+#[cfg(not(test))]
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(50);
 
+#[cfg(not(test))]
 fn save_worker() -> &'static SaveWorker {
     SAVE_WORKER.get_or_init(|| {
         // Leak the worker so it has a 'static lifetime without a
@@ -84,6 +99,7 @@ fn save_worker() -> &'static SaveWorker {
     })
 }
 
+#[cfg(not(test))]
 fn save_worker_loop(worker: &'static SaveWorker) {
     loop {
         // Wait for at least one pending snapshot.
@@ -109,8 +125,8 @@ fn save_worker_loop(worker: &'static SaveWorker) {
 
 /// Drain the mailbox on the caller's thread. Used by
 /// [`ProjectStore::drop`] so the last save before app shutdown
-/// isn't lost to the debounce sleep, and reusable by tests that
-/// want to force a flush without relying on `#[cfg(test)]`.
+/// isn't lost to the debounce sleep.
+#[cfg(not(test))]
 fn flush_pending_save() {
     if let Some(worker) = SAVE_WORKER.get().copied() {
         let snapshot = worker
