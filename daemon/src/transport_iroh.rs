@@ -622,7 +622,14 @@ fn load_or_create_secret_key(path: &Path) -> anyhow::Result<SecretKey> {
     } else {
         let sk = SecretKey::generate();
         let hex = hex_encode_32(&sk.to_bytes());
-        std::fs::write(path, format!("{hex}\n"))
+        // Write-through-sync: plain `std::fs::write` lets the
+        // underlying File drop without fsyncing, so a power cut
+        // between write(2) and the next fsync leaves the secret
+        // key missing. Combined with TOFU pairing being
+        // memory-only, losing the key on first-pair means the
+        // phone can't reconnect until the user hits Reset Pairings
+        // and rescans. See #57.
+        persist_file_durable(path, format!("{hex}\n").as_bytes())
             .with_context(|| format!("write secret key to {}", path.display()))?;
         #[cfg(unix)]
         {
@@ -696,6 +703,71 @@ pub fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("open allowlist {}", path.display()))?;
     f.write_all(line.as_bytes())
         .with_context(|| format!("write allowlist {}", path.display()))?;
+    // fsync the file so the appended line survives a power cut.
+    // Without this, the kernel is free to buffer the dirty page
+    // indefinitely; if the box loses power within that window the
+    // pairing silently vanishes and the phone can't reconnect
+    // until the user manually resets + rescans. See #57.
+    f.sync_all()
+        .with_context(|| format!("fsync allowlist {}", path.display()))?;
+    drop(f);
+    // fsync the parent directory so that the file create (first
+    // pair — the file didn't exist before we opened it with
+    // `create(true)`) is durable. On Linux/macOS a directory entry
+    // isn't guaranteed to persist just because the child file was
+    // fsynced.
+    if let Some(parent) = path.parent() {
+        fsync_dir(parent).with_context(|| {
+            format!("fsync allowlist parent {}", parent.display())
+        })?;
+    }
+    Ok(())
+}
+
+/// Write `bytes` to `path` with full crash-consistency:
+///   1. open + write + fsync the new content,
+///   2. fsync the parent directory so the rename/create is
+///      durable.
+///
+/// Not an atomic-replace — we overwrite in place — because the
+/// two call sites today (`load_or_create_secret_key`, and by
+/// extension any future single-file-per-identity writer) are on
+/// the cold path (once per install) and the simpler shape is
+/// easier to audit than a tmp+rename dance. Callers that need
+/// concurrent-safe atomic replacement can move to
+/// `tempfile::persist` later; the fsync semantics will still apply.
+fn persist_file_durable(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))?;
+    f.write_all(bytes)
+        .with_context(|| format!("write {}", path.display()))?;
+    f.sync_all()
+        .with_context(|| format!("fsync {}", path.display()))?;
+    drop(f);
+    if let Some(parent) = path.parent() {
+        fsync_dir(parent)
+            .with_context(|| format!("fsync parent {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+/// fsync a directory so a file creation / rename inside it is
+/// durable. On platforms that don't need this (none of our
+/// targets today — Linux and macOS both benefit), it's a no-op
+/// after opening the dir as read-only.
+fn fsync_dir(path: &Path) -> anyhow::Result<()> {
+    let dir = std::fs::File::open(path)?;
+    dir.sync_all()?;
     Ok(())
 }
 
