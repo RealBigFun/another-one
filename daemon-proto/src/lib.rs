@@ -24,6 +24,130 @@ pub const TY_DATA: u8 = 0x00;
 pub const TY_CONTROL: u8 = 0x01;
 pub const TY_WORKER_REPLY: u8 = 0x02;
 
+/// Wire layout inside every [`TY_DATA`] frame payload (both
+/// daemon→client PTY output and client→daemon user input).
+///
+///   +--2--+-- section_id (utf8) --+--2--+-- tab_id (utf8) --+-- pty bytes --+
+///   | len |          ...          | len |        ...        |     ...       |
+///   +-----+-----------------------+-----+-------------------+---------------+
+///
+/// `u16` lengths are big-endian. Both ids are short (≤80 bytes in
+/// practice: `SectionId`'s store key + a small integer tab id), so
+/// a 2-byte length is comfortable headroom and never crowds the
+/// 64 KiB [`MAX_FRAME_BYTES`] cap.
+///
+/// Before #138 the payload was the raw PTY bytes alone and the
+/// daemon's `AttachState` resolved "which tab does this belong to"
+/// from session state — which races when the client switches
+/// attach mid-stream, silently rendering old-tab bytes into the
+/// new tab. Tagging every frame with `(section_id, tab_id)` lets
+/// the receiver demux authoritatively and drop stale frames
+/// without guessing.
+pub fn encode_pty_data(section_id: &str, tab_id: &str, bytes: &[u8]) -> Vec<u8> {
+    // `u16::MAX` is 64 KiB — either id overflowing it would blow
+    // the frame cap anyway, so we can safely truncate the length
+    // to 16 bits; guard with a debug assert so tests surface any
+    // pathological id before a release build silently ships bad
+    // wire bytes.
+    debug_assert!(
+        section_id.len() <= u16::MAX as usize && tab_id.len() <= u16::MAX as usize,
+        "pty data id exceeds wire length budget"
+    );
+    let section = section_id.as_bytes();
+    let tab = tab_id.as_bytes();
+    let mut out = Vec::with_capacity(2 + section.len() + 2 + tab.len() + bytes.len());
+    out.extend_from_slice(&(section.len() as u16).to_be_bytes());
+    out.extend_from_slice(section);
+    out.extend_from_slice(&(tab.len() as u16).to_be_bytes());
+    out.extend_from_slice(tab);
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// Inverse of [`encode_pty_data`]. Returns
+/// `Some((section_id, tab_id, pty_bytes))` on well-formed input,
+/// `None` when the header can't be read (malformed / legacy
+/// untagged frame). Callers decode and either route to the tagged
+/// tab or drop the frame; logging the drop is the caller's
+/// responsibility so per-transport context (peer id, frame count)
+/// can be included.
+pub fn decode_pty_data(payload: &[u8]) -> Option<(String, String, Vec<u8>)> {
+    if payload.len() < 2 {
+        return None;
+    }
+    let sec_len = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+    let after_sec_header = 2 + sec_len;
+    if payload.len() < after_sec_header + 2 {
+        return None;
+    }
+    let section_id = std::str::from_utf8(&payload[2..after_sec_header]).ok()?.to_string();
+    let tab_len = u16::from_be_bytes([payload[after_sec_header], payload[after_sec_header + 1]])
+        as usize;
+    let after_tab_header = after_sec_header + 2 + tab_len;
+    if payload.len() < after_tab_header {
+        return None;
+    }
+    let tab_id = std::str::from_utf8(&payload[after_sec_header + 2..after_tab_header])
+        .ok()?
+        .to_string();
+    let bytes = payload[after_tab_header..].to_vec();
+    Some((section_id, tab_id, bytes))
+}
+
+#[cfg(test)]
+mod pty_data_wire_tests {
+    use super::*;
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let bytes = vec![0x00, 0x01, 0x02, 0xff, b'h', b'i'];
+        let encoded = encode_pty_data("proj-a:section-1", "7", &bytes);
+        let (sec, tab, payload) = decode_pty_data(&encoded).expect("decode roundtrip");
+        assert_eq!(sec, "proj-a:section-1");
+        assert_eq!(tab, "7");
+        assert_eq!(payload, bytes);
+    }
+
+    #[test]
+    fn encode_empty_bytes() {
+        let encoded = encode_pty_data("s", "t", &[]);
+        let (sec, tab, payload) = decode_pty_data(&encoded).expect("decode");
+        assert_eq!(sec, "s");
+        assert_eq!(tab, "t");
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn decode_rejects_short_header() {
+        assert!(decode_pty_data(&[]).is_none());
+        assert!(decode_pty_data(&[0x00]).is_none());
+        // Claims sec_len=10 but only 2 bytes of payload after
+        // the length field — decoder must refuse rather than
+        // read past the buffer.
+        assert!(decode_pty_data(&[0x00, 0x0a, b'a', b'b']).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_short_tab_header() {
+        // Well-formed section header, but truncates before the
+        // tab-length bytes.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(1_u16).to_be_bytes());
+        buf.push(b's');
+        // No tab-length follows.
+        assert!(decode_pty_data(&buf).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_non_utf8_ids() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(1_u16).to_be_bytes());
+        buf.push(0xff); // invalid utf8
+        buf.extend_from_slice(&(0_u16).to_be_bytes());
+        assert!(decode_pty_data(&buf).is_none());
+    }
+}
+
 /// Reject any frame larger than this. 64 KiB is comfortably more than
 /// any real PTY chunk (readers use 4 KiB buffers) or resize JSON payload
 /// (~40 bytes), so there is no legitimate reason for a peer to announce

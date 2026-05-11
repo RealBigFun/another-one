@@ -77,7 +77,7 @@ pub struct Session {
     send_tx: Mutex<Option<mpsc::Sender<(u8, Vec<u8>)>>>,
     /// Holds the bytes-from-daemon receiver. UI code drains via
     /// [`Session::next_incoming_bytes`].
-    incoming_rx: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
+    incoming_rx: Mutex<Option<mpsc::Receiver<(String, String, Vec<u8>)>>>,
     /// Holds decoded worker replies (from `TY_WORKER_REPLY` frames).
     /// UI code drains via [`Session::next_worker_reply`].
     worker_replies_rx: Mutex<Option<mpsc::Receiver<WorkerReply>>>,
@@ -282,7 +282,8 @@ async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
     // reserved for future use. Unknown types are logged and dropped
     // so older clients stay forwards-compatible as the daemon adds
     // variants.
-    let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (incoming_tx, incoming_rx) =
+        mpsc::channel::<(String, String, Vec<u8>)>(128);
     let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReply>(64);
     let (close_tx, mut close_rx) = oneshot::channel::<()>();
     let conn_for_close = conn.clone();
@@ -295,7 +296,22 @@ async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
                 _ = &mut close_rx => break,
                 frame = read_frame(&mut recv) => match frame {
                     Ok(Some((TY_DATA, payload))) => {
-                        if incoming_tx.send(payload).await.is_err() {
+                        // Decode the #138 (section_id, tab_id) tag
+                        // the daemon attaches to every PTY chunk.
+                        // Untagged legacy frames (decoder returns
+                        // None) fall through with empty ids so
+                        // older daemons keep working until both
+                        // sides ship the tag.
+                        let (section_id, tab_id, body) =
+                            match daemon_proto::decode_pty_data(&payload) {
+                                Some(decoded) => decoded,
+                                None => (String::new(), String::new(), payload),
+                            };
+                        if incoming_tx
+                            .send((section_id, tab_id, body))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -420,6 +436,22 @@ impl Session {
         self.send_frame(TY_DATA, bytes).await
     }
 
+    /// Send tagged PTY input for `(section_id, tab_id)`. The tag
+    /// lets the daemon route the bytes to the right tab without
+    /// relying on its stale attach snapshot — fixing the
+    /// mid-stream-attach race described in #138. Consumers should
+    /// prefer this over [`Session::send`], which leaves the
+    /// routing implicit.
+    pub async fn send_tab_data(
+        &self,
+        section_id: &str,
+        tab_id: &str,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        let payload = daemon_proto::encode_pty_data(section_id, tab_id, bytes);
+        self.send_frame(TY_DATA, payload).await
+    }
+
     /// Request a PTY resize on the daemon's end (legacy standalone
     /// sandbox path). Goes through the same stream as data,
     /// multiplexed by frame type. For tab-routed resizes use
@@ -464,12 +496,15 @@ impl Session {
             .await
     }
 
-    /// Drain the next inbound PTY-data frame. Returns `None` once the
-    /// frame reader task has exited (clean EOF, error, or `close`).
-    /// This is the polling swap-in for the legacy
-    /// `subscribe(StreamSink)` — UI code spawns a task to drain into
-    /// whatever surface it likes.
-    pub async fn next_incoming_bytes(&self) -> Option<Vec<u8>> {
+    /// Drain the next inbound PTY-data frame. Returns
+    /// `Some((section_id, tab_id, bytes))` tagged per-frame by the
+    /// daemon (see #138); empty `section_id`/`tab_id` indicates a
+    /// legacy untagged frame the caller should route via its own
+    /// attach state. `None` once the frame reader task has exited
+    /// (clean EOF, error, or `close`). Polling swap-in for the
+    /// legacy `subscribe(StreamSink)` — UI code spawns a task to
+    /// drain into whatever surface it likes.
+    pub async fn next_incoming_bytes(&self) -> Option<(String, String, Vec<u8>)> {
         let mut guard = self.incoming_rx.lock().await;
         match guard.as_mut() {
             Some(rx) => rx.recv().await,
