@@ -148,12 +148,18 @@ mod pty_data_wire_tests {
     }
 }
 
-/// Reject any frame larger than this. 64 KiB is comfortably more than
-/// any real PTY chunk (readers use 4 KiB buffers) or resize JSON payload
-/// (~40 bytes), so there is no legitimate reason for a peer to announce
-/// a larger frame. Keeping the cap tight limits how much a compromised
-/// paired peer can make the daemon allocate per frame.
-pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// Reject any frame larger than this. 4 MiB comfortably fits a
+/// realistic [`WorkerReply::ProjectList`] (tens of projects +
+/// repos + branches in one JSON payload; an 18-project / 7-repo
+/// desktop already serialises to ~220 KiB after the on-wire
+/// `RepoSummary` addition in #134) while staying well below QUIC
+/// stream-budget thresholds on any reasonable link. PTY chunks and
+/// resize JSON stay tiny; the cap's job is bounding what a
+/// compromised paired peer can make the daemon allocate per frame,
+/// not squeezing the projection. Bumped from 64 KiB in #TODO
+/// (mobile couldn't receive its own initial ProjectList because
+/// the projection exceeded the old cap).
+pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 /// Top-level envelope for every type=1 control frame. Carries a
 /// `request_id` so the client can correlate the daemon's reply
