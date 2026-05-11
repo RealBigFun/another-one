@@ -412,6 +412,8 @@ pub struct Project {
     pub path: PathBuf,
     pub kind: ProjectKind,
     #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
     pub checkout: ProjectCheckoutState,
     #[serde(default)]
     pub branch_settings: ProjectBranchSettings,
@@ -580,6 +582,8 @@ pub struct Task {
     pub target_project_id: String,
     pub branch_name: String,
     pub section_id: String,
+    #[serde(default)]
+    pub worktree: Option<TaskWorktree>,
     #[serde(skip)]
     pub worktree_project_id: Option<String>,
     #[serde(skip)]
@@ -590,6 +594,31 @@ pub struct Task {
     pub next_tab_id: usize,
     #[serde(skip)]
     pub cwd: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWorktree {
+    pub id: String,
+    pub repo_id: String,
+    pub name: String,
+    pub path: PathBuf,
+    #[serde(default)]
+    pub checkout: ProjectCheckoutState,
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+}
+
+impl TaskWorktree {
+    pub fn from_project(project: &Project) -> Self {
+        Self {
+            id: project.id.clone(),
+            repo_id: project.repo_id.clone(),
+            name: project.name.clone(),
+            path: project.path.clone(),
+            checkout: project.checkout.clone(),
+            worktree_name: project.worktree_name.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1132,6 +1161,10 @@ impl ProjectStore {
     }
 
     pub fn root_project_id_for_project(&self, project_id: &str) -> Option<String> {
+        if let Some(task) = self.task_for_worktree(project_id) {
+            return Some(task.root_project_id.clone());
+        }
+
         let project = self.project(project_id)?;
 
         self.projects_by_id
@@ -1149,9 +1182,37 @@ impl ProjectStore {
     }
 
     pub fn branch_names(&self, project_id: &str) -> Vec<String> {
-        self.repo_for_project(project_id)
+        self.repo_for_workspace(project_id)
             .map(|repo| repo.branch_order.clone())
             .unwrap_or_default()
+    }
+
+    pub fn task_for_worktree(&self, worktree_id: &str) -> Option<&Task> {
+        self.tasks_by_id.values().find(|task| {
+            task.worktree
+                .as_ref()
+                .is_some_and(|worktree| worktree.id == worktree_id)
+        })
+    }
+
+    pub fn workspace_path(&self, project_id: &str) -> Option<PathBuf> {
+        self.project(project_id)
+            .map(|project| project.path.clone())
+            .or_else(|| {
+                self.task_for_worktree(project_id)
+                    .and_then(|task| task.worktree.as_ref())
+                    .map(|worktree| worktree.path.clone())
+            })
+    }
+
+    pub fn repo_for_workspace(&self, project_id: &str) -> Option<&RepoRecord> {
+        self.project(project_id)
+            .and_then(|project| self.repo(&project.repo_id))
+            .or_else(|| {
+                self.task_for_worktree(project_id)
+                    .and_then(|task| task.worktree.as_ref())
+                    .and_then(|worktree| self.repo(&worktree.repo_id))
+            })
     }
 
     fn automatic_primary_branch_name(
@@ -1339,20 +1400,26 @@ impl ProjectStore {
     }
 
     pub fn branch_view(&self, project_id: &str, branch_name: &str) -> Option<Branch> {
-        let project = self.project(project_id)?;
-        let repo = self.repo(&project.repo_id)?;
+        let project = self.project(project_id);
+        let worktree = project
+            .is_none()
+            .then(|| {
+                self.task_for_worktree(project_id)
+                    .and_then(|task| task.worktree.as_ref())
+            })
+            .flatten();
+        let repo = self.repo_for_workspace(project_id)?;
         let branch = repo.branches_by_name.get(branch_name)?;
-        let is_current = project.checkout.current_branch.as_deref() == Some(branch_name);
+        let checkout = project
+            .map(|project| &project.checkout)
+            .or_else(|| worktree.map(|worktree| &worktree.checkout))?;
+        let is_current = checkout.current_branch.as_deref() == Some(branch_name);
 
         Some(Branch {
             name: branch.name.clone(),
-            lines_added: if is_current {
-                project.checkout.lines_added
-            } else {
-                0
-            },
+            lines_added: if is_current { checkout.lines_added } else { 0 },
             lines_removed: if is_current {
-                project.checkout.lines_removed
+                checkout.lines_removed
             } else {
                 0
             },
@@ -1383,6 +1450,11 @@ impl ProjectStore {
     pub fn current_branch_name(&self, project_id: &str) -> Option<String> {
         self.project(project_id)
             .and_then(|project| project.checkout.current_branch.clone())
+            .or_else(|| {
+                self.task_for_worktree(project_id)
+                    .and_then(|task| task.worktree.as_ref())
+                    .and_then(|worktree| worktree.checkout.current_branch.clone())
+            })
     }
 
     pub fn repo_default_commit_action(&self, repo_id: &str) -> Option<RepoDefaultCommitAction> {
@@ -1494,34 +1566,30 @@ impl ProjectStore {
 
     #[allow(dead_code)]
     pub fn remove_project(&mut self, project_id: &str) {
-        let Some(repo_id) = self
-            .projects_by_id
-            .get(project_id)
-            .map(|project| project.repo_id.clone())
-        else {
+        let Some(mut project) = self.projects_by_id.remove(project_id) else {
             return;
         };
-        let removed_project_ids = self
-            .projects_by_id
-            .iter()
-            .filter_map(|(candidate_id, candidate)| {
-                (candidate.repo_id == repo_id).then(|| candidate_id.clone())
-            })
-            .collect::<HashSet<_>>();
-
-        for removed_project_id in &removed_project_ids {
-            let _ = self.remove_exact_project(removed_project_id);
+        if project.archived {
+            self.projects_by_id.insert(project_id.to_string(), project);
+            return;
         }
+        project.archived = true;
+        self.archive_project_actions(&project);
 
-        if !self
-            .projects_by_id
+        let removed_task_ids = self
+            .tasks_by_id
             .values()
-            .any(|candidate| candidate.repo_id == repo_id)
-        {
-            self.repos.remove(&repo_id);
-            self.ui.expanded_repo_ids.remove(&repo_id);
-            self.ui.repo_default_commit_actions.remove(&repo_id);
+            .filter(|task| task.root_project_id == project_id)
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        for task_id in removed_task_ids {
+            let _ = self.remove_task_by_id(&task_id);
         }
+        self.projects_by_id
+            .retain(|_, project| project.kind == ProjectKind::Root);
+        self.projects_by_id.insert(project_id.to_string(), project);
+        self.project_order
+            .retain(|project_id| self.projects_by_id.contains_key(project_id));
         self.rebuild_runtime_views();
         self.save();
     }
@@ -1708,6 +1776,41 @@ impl ProjectStore {
     }
 
     pub fn insert_prepared_project(&mut self, prepared: PreparedProject) -> bool {
+        if prepared.project.kind == ProjectKind::Worktree {
+            return false;
+        }
+        let restored_actions = self
+            .ui
+            .archived_project_actions
+            .iter()
+            .position(|archived| archived.project_path == prepared.project.path)
+            .map(|archive_index| {
+                self.ui
+                    .archived_project_actions
+                    .remove(archive_index)
+                    .actions
+            });
+        if let Some(existing) = self
+            .projects_by_id
+            .values_mut()
+            .find(|existing| existing.path == prepared.project.path && existing.archived)
+        {
+            existing.archived = false;
+            existing.checkout = prepared.project.checkout;
+            existing.branch_settings = prepared.project.branch_settings;
+            if let Some(actions) = restored_actions {
+                for mut action in actions {
+                    action.scope = ProjectActionScope::Project;
+                    upsert_action(&mut existing.actions, action);
+                }
+            }
+            if existing.actions.is_empty() {
+                existing.actions = prepared.project.actions;
+            }
+            self.rebuild_runtime_views();
+            self.save();
+            return true;
+        }
         if self
             .projects_by_id
             .values()
@@ -1738,6 +1841,7 @@ impl ProjectStore {
         let mut project = prepared.project;
         self.restore_archived_project_actions(&mut project);
         project.repo_id = repo_id;
+        project.archived = false;
         self.project_order.push(project.id.clone());
         self.projects_by_id.insert(project.id.clone(), project);
         self.rebuild_runtime_views();
@@ -1955,6 +2059,10 @@ impl ProjectStore {
                     target_project_id,
                     branch_name: task_summary.branch_name,
                     section_id: task_summary.section_id,
+                    worktree: task_summary
+                        .worktree
+                        .as_ref()
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
                     worktree_project_id: task_summary.worktree_project_id,
                     tabs,
                     active_tab_id: task_summary.active_tab_id,
@@ -1984,6 +2092,7 @@ impl ProjectStore {
                 name: summary.name,
                 path: std::path::PathBuf::from(summary.path),
                 kind,
+                archived: false,
                 checkout,
                 branch_settings,
                 actions,
@@ -2358,9 +2467,15 @@ impl ProjectStore {
             .repo_default_commit_actions
             .retain(|repo_id, _| self.repos.contains_key(repo_id));
 
+        self.migrate_worktree_projects_into_tasks();
+
         self.tasks_by_id.retain(|_, task| {
             self.projects_by_id.contains_key(&task.root_project_id)
-                && self.projects_by_id.contains_key(&task.target_project_id)
+                && (self.projects_by_id.contains_key(&task.target_project_id)
+                    || task.worktree.as_ref().is_some_and(|worktree| {
+                        task.target_project_id == worktree.id
+                            && self.repos.contains_key(&worktree.repo_id)
+                    }))
         });
 
         self.task_ids_by_root_project
@@ -2413,6 +2528,9 @@ impl ProjectStore {
             .iter()
             .filter_map(|project_id| {
                 let mut project = self.projects_by_id.get(project_id)?.clone();
+                if project.archived || project.kind != ProjectKind::Root {
+                    return None;
+                }
                 project.worktree_name = if project.is_worktree() {
                     project
                         .path
@@ -2436,18 +2554,20 @@ impl ProjectStore {
                     .iter()
                     .filter_map(|task_id| {
                         let mut task = self.tasks_by_id.get(task_id)?.clone();
-                        task.worktree_project_id = (task.target_project_id != task.root_project_id)
-                            .then(|| task.target_project_id.clone());
+                        task.worktree_project_id =
+                            task.worktree.as_ref().map(|worktree| worktree.id.clone());
                         if let Some(section) = self.terminal_sections.get(&task.section_id) {
                             task.tabs = section.tabs.clone();
                             task.active_tab_id = section.active_tab_id.clone();
                             task.next_tab_id = section.next_tab_id;
-                            task.cwd = section.cwd.clone();
+                            task.cwd = section.cwd.clone().or_else(|| {
+                                task.worktree.as_ref().map(|worktree| worktree.path.clone())
+                            });
                         } else {
                             task.tabs = Vec::new();
                             task.active_tab_id = String::new();
                             task.next_tab_id = 0;
-                            task.cwd = None;
+                            task.cwd = task.worktree.as_ref().map(|worktree| worktree.path.clone());
                         }
                         Some(task)
                     })
@@ -2455,6 +2575,48 @@ impl ProjectStore {
                 (root_project_id.clone(), tasks)
             })
             .collect();
+    }
+
+    fn migrate_worktree_projects_into_tasks(&mut self) {
+        let worktrees = self
+            .projects_by_id
+            .values()
+            .filter(|project| project.kind == ProjectKind::Worktree)
+            .cloned()
+            .collect::<Vec<_>>();
+        if worktrees.is_empty() {
+            return;
+        }
+
+        for worktree_project in &worktrees {
+            for task in self.tasks_by_id.values_mut() {
+                if task.target_project_id == worktree_project.id
+                    || task.worktree_project_id.as_deref() == Some(worktree_project.id.as_str())
+                {
+                    task.worktree = Some(TaskWorktree::from_project(worktree_project));
+                    task.target_project_id = worktree_project.id.clone();
+                    if let Some(section) = self.terminal_sections.get(&task.section_id) {
+                        task.cwd = section
+                            .cwd
+                            .clone()
+                            .or_else(|| Some(worktree_project.path.clone()));
+                    } else {
+                        task.cwd = Some(worktree_project.path.clone());
+                    }
+                }
+            }
+        }
+
+        let worktree_ids = worktrees
+            .iter()
+            .map(|project| project.id.clone())
+            .collect::<HashSet<_>>();
+        self.projects_by_id.retain(|project_id, project| {
+            (!worktree_ids.contains(project_id) || project.archived)
+                && project.kind == ProjectKind::Root
+        });
+        self.project_order
+            .retain(|project_id| self.projects_by_id.contains_key(project_id));
     }
 
     pub fn refresh_runtime_views(&mut self) {
@@ -2622,6 +2784,7 @@ pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
             name,
             path: canonical.clone(),
             kind,
+            archived: false,
             checkout: checkout_state_from_resolved(&branches),
             branch_settings: ProjectBranchSettings::default(),
             actions: Vec::new(),
@@ -3589,11 +3752,20 @@ pub fn create_task_worktree(
 
 fn git_worktree_checked_out_path(stderr: &str, stdout: &str) -> Option<String> {
     let combined = format!("{stderr}\n{stdout}");
-    if !combined.contains("is already checked out") {
+    if !combined.contains("is already checked out")
+        && !combined.contains("is already used by worktree at")
+    {
         return None;
     }
 
-    let (_, rest) = combined.split_once("is already checked out at ")?;
+    let rest = combined
+        .split_once("is already checked out at ")
+        .map(|(_, rest)| rest)
+        .or_else(|| {
+            combined
+                .split_once("is already used by worktree at ")
+                .map(|(_, rest)| rest)
+        })?;
     let path = rest
         .lines()
         .next()
@@ -4520,6 +4692,7 @@ mod tests {
             } else {
                 ProjectKind::Root
             },
+            archived: false,
             checkout: ProjectCheckoutState::default(),
             branch_settings: ProjectBranchSettings::default(),
             actions: Vec::new(),
@@ -4630,6 +4803,7 @@ mod tests {
             target_project_id: "root".to_string(),
             branch_name: "feature/login".to_string(),
             section_id: "root::feature/login::task-1".to_string(),
+            worktree: None,
             worktree_project_id: None,
             tabs: Vec::new(),
             active_tab_id: String::new(),
@@ -5263,6 +5437,7 @@ mod tests {
             name: "Project new-root".to_string(),
             path: project_path,
             kind: ProjectKind::Root,
+            archived: false,
             checkout: ProjectCheckoutState::default(),
             branch_settings: ProjectBranchSettings::default(),
             actions: Vec::new(),
@@ -5282,7 +5457,7 @@ mod tests {
         assert!(inserted);
         assert!(store.ui.archived_project_actions.is_empty());
         let restored_project = store
-            .project("new-root")
+            .project("root")
             .expect("re-added project should exist");
         assert_eq!(restored_project.actions.len(), 1);
         assert_eq!(restored_project.actions[0].id, "action-ok");
@@ -5324,6 +5499,7 @@ mod tests {
                         target_project_id: "root".to_string(),
                         branch_name: "feature/persist-tasks".to_string(),
                         section_id: "root::feature/persist-tasks::task-1".to_string(),
+                        worktree: None,
                         worktree_project_id: None,
                         tabs: vec![
                             PersistedTerminalTab {
@@ -5374,6 +5550,7 @@ mod tests {
                         target_project_id: "wt1".to_string(),
                         branch_name: "feature/worktree".to_string(),
                         section_id: "wt1::feature/worktree::task-2".to_string(),
+                        worktree: None,
                         worktree_project_id: Some("wt1".to_string()),
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),
@@ -5636,7 +5813,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_project_should_remove_worktree_siblings_in_same_repo_group() {
+    fn remove_project_archives_root_and_removes_tasks_without_deleting_project() {
         let mut root_project = sample_project("root", None);
         root_project.repo_id = "repo".to_string();
         root_project.actions.push(sample_shell_action(
@@ -5673,6 +5850,7 @@ mod tests {
                         target_project_id: "root".to_string(),
                         branch_name: "main".to_string(),
                         section_id: "root::main::task-root".to_string(),
+                        worktree: None,
                         worktree_project_id: None,
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),
@@ -5700,6 +5878,7 @@ mod tests {
                         target_project_id: "wt".to_string(),
                         branch_name: "feature/worktree".to_string(),
                         section_id: "wt::feature/worktree::task-worktree".to_string(),
+                        worktree: None,
                         worktree_project_id: Some("wt".to_string()),
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),
@@ -5782,26 +5961,16 @@ mod tests {
 
         store.remove_project("root");
 
-        assert!(store.projects_by_id.is_empty());
         assert!(store.projects.is_empty());
-        assert!(store.project_order.is_empty());
+        assert!(store
+            .project("root")
+            .is_some_and(|project| project.archived));
+        assert!(store.project("wt").is_none());
+        assert_eq!(store.project_order, vec!["root".to_string()]);
         assert!(store.tasks_by_id.is_empty());
         assert!(store.tasks.is_empty());
         assert!(store.task_ids_by_root_project.is_empty());
         assert!(store.terminal_sections.is_empty());
-        assert!(store.repos.is_empty());
-        assert!(store.ui.expanded_repo_ids.is_empty());
-        assert!(store.ui.repo_default_commit_actions.is_empty());
-        assert_eq!(store.ui.archived_project_actions.len(), 1);
-        assert_eq!(
-            store.ui.archived_project_actions[0].project_path,
-            PathBuf::from("/tmp/root")
-        );
-        assert_eq!(store.ui.archived_project_actions[0].actions.len(), 1);
-        assert_eq!(
-            store.ui.archived_project_actions[0].actions[0].id,
-            "action-ok"
-        );
         assert_eq!(store.ui.last_active_section_id, None);
     }
 
@@ -5862,6 +6031,7 @@ mod tests {
                         target_project_id: "root".to_string(),
                         branch_name: "main".to_string(),
                         section_id: "root::main::task-root".to_string(),
+                        worktree: None,
                         worktree_project_id: None,
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),
@@ -5889,6 +6059,7 @@ mod tests {
                         target_project_id: "wt".to_string(),
                         branch_name: "feature/worktree".to_string(),
                         section_id: "wt::feature/worktree::task-worktree".to_string(),
+                        worktree: None,
                         worktree_project_id: Some("wt".to_string()),
                         tabs: vec![PersistedTerminalTab {
                             id: "0".to_string(),

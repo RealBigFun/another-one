@@ -125,6 +125,7 @@ pub fn spawn_task_creation(
                             .unwrap_or_else(|| created.path.display().to_string()),
                         path: created.path.clone(),
                         kind: ProjectKind::Worktree,
+                        archived: false,
                         checkout: ProjectCheckoutState::default(),
                         branch_settings: ProjectBranchSettings::default(),
                         actions: Vec::new(),
@@ -186,6 +187,7 @@ pub fn spawn_branch_creation(
                                         .unwrap_or_else(|| created.path.display().to_string()),
                                     path: created.path.clone(),
                                     kind: ProjectKind::Worktree,
+                                    archived: false,
                                     checkout: ProjectCheckoutState {
                                         current_branch: Some(created.branch_name.clone()),
                                         ..ProjectCheckoutState::default()
@@ -255,6 +257,7 @@ pub fn spawn_review_task_creation(
                             .unwrap_or_else(|| created.path.display().to_string()),
                         path: created.path.clone(),
                         kind: ProjectKind::Worktree,
+                        archived: false,
                         checkout: ProjectCheckoutState::default(),
                         branch_settings: ProjectBranchSettings::default(),
                         actions: Vec::new(),

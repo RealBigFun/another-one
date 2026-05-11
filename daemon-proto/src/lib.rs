@@ -80,9 +80,11 @@ pub fn decode_pty_data(payload: &[u8]) -> Option<(String, String, Vec<u8>)> {
     if payload.len() < after_sec_header + 2 {
         return None;
     }
-    let section_id = std::str::from_utf8(&payload[2..after_sec_header]).ok()?.to_string();
-    let tab_len = u16::from_be_bytes([payload[after_sec_header], payload[after_sec_header + 1]])
-        as usize;
+    let section_id = std::str::from_utf8(&payload[2..after_sec_header])
+        .ok()?
+        .to_string();
+    let tab_len =
+        u16::from_be_bytes([payload[after_sec_header], payload[after_sec_header + 1]]) as usize;
     let after_tab_header = after_sec_header + 2 + tab_len;
     if payload.len() < after_tab_header {
         return None;
@@ -1610,6 +1612,11 @@ pub struct TaskSummary {
     /// task. `None` for direct tasks. Wire-additive.
     #[serde(default)]
     pub worktree_project_id: Option<String>,
+    /// Opaque JSON-serialised `core::project_store::TaskWorktree`.
+    /// Worktree tasks carry their workspace metadata here instead of
+    /// requiring a top-level worktree Project in `ProjectSummary`.
+    #[serde(default)]
+    pub worktree: Option<serde_json::Value>,
 }
 
 /// Lossy wire projection of
@@ -2051,9 +2058,7 @@ mod wire_roundtrip_tests {
         // Forward-compat: an older daemon that didn't know about
         // `pair_token` serialized Hello without the field. A
         // current daemon must still decode that as `pair_token: None`.
-        let legacy_bytes = format!(
-            r#"{{"type":"hello","protocol_version":{PROTOCOL_VERSION}}}"#
-        );
+        let legacy_bytes = format!(r#"{{"type":"hello","protocol_version":{PROTOCOL_VERSION}}}"#);
         let decoded: Control = serde_json::from_str(&legacy_bytes).expect("legacy decode");
         match decoded {
             Control::Hello {

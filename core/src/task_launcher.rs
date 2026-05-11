@@ -62,24 +62,34 @@ pub fn task_workspace_target(
             .find(|project| project.id == task.target_project_id)
             .unwrap_or(root_project),
         TaskKind::Worktree | TaskKind::MultiWorktree => {
-            let project_id = task
-                .worktree_project_id
-                .as_ref()
-                .unwrap_or(&task.target_project_id);
-            projects.iter().find(|project| project.id == *project_id)?
+            if task.worktree.is_some() {
+                root_project
+            } else {
+                let project_id = task
+                    .worktree_project_id
+                    .as_ref()
+                    .unwrap_or(&task.target_project_id);
+                projects.iter().find(|project| project.id == *project_id)?
+            }
         }
     };
+    let worktree = task.worktree.as_ref();
 
     Some(TaskWorkspaceTarget {
         root_project_id: root_project.id.clone(),
-        project_id: project.id.clone(),
+        project_id: worktree.map_or_else(|| project.id.clone(), |worktree| worktree.id.clone()),
         task_id: task.id.clone(),
         branch_name: project
             .checkout
             .current_branch
             .clone()
+            .or_else(|| worktree.and_then(|worktree| worktree.checkout.current_branch.clone()))
             .unwrap_or_else(|| task.branch_name.clone()),
-        project_path: task.cwd.clone().unwrap_or_else(|| project.path.clone()),
+        project_path: task
+            .cwd
+            .clone()
+            .or_else(|| worktree.map(|worktree| worktree.path.clone()))
+            .unwrap_or_else(|| project.path.clone()),
     })
 }
 
@@ -121,6 +131,7 @@ mod tests {
             name: id.to_string(),
             path: PathBuf::from(format!("/tmp/{id}")),
             kind,
+            archived: false,
             checkout: crate::project_store::ProjectCheckoutState {
                 current_branch: Some(branch.to_string()),
                 lines_added: 0,
@@ -150,6 +161,7 @@ mod tests {
             target_project_id: target_project_id.to_string(),
             branch_name: branch_name.to_string(),
             section_id: format!("{target_project_id}::{branch_name}::{id}"),
+            worktree: None,
             worktree_project_id: worktree_project_id.map(str::to_string),
             tabs: Vec::new(),
             active_tab_id: String::new(),

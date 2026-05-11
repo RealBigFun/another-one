@@ -5740,15 +5740,10 @@ impl AnotherOneApp {
                             let session = self.session_handle();
                             crate::session_host::dispatch_fire_and_forget(
                                 session,
-                                daemon_proto::Control::AttachTab {
-                                    section_id,
-                                    tab_id,
-                                },
+                                daemon_proto::Control::AttachTab { section_id, tab_id },
                                 |result| {
                                     if let Err(err) = result {
-                                        log::warn!(
-                                            "AttachDropped auto-reattach failed: {err}"
-                                        );
+                                        log::warn!("AttachDropped auto-reattach failed: {err}");
                                     }
                                 },
                             );
@@ -9308,24 +9303,24 @@ impl AnotherOneApp {
             .active_section
             .as_ref()
             .and_then(|section| {
-                self.project_store
-                    .projects
-                    .iter()
-                    .find(|project| project.id == section.project_id)
+                self.project_path(&section.project_id)
+                    .map(|path| (section.project_id.clone(), path))
             })
             .or_else(|| {
                 workspace
                     .active_project_page
                     .as_ref()
                     .and_then(|project_id| {
-                        self.project_store
-                            .projects
-                            .iter()
-                            .find(|project| project.id == *project_id)
+                        self.project_path(project_id)
+                            .map(|path| (project_id.clone(), path))
                     })
             })
-            .or_else(|| self.project_store.projects.first())
-            .map(|project| (project.id.clone(), project.path.clone()))
+            .or_else(|| {
+                self.project_store
+                    .projects
+                    .first()
+                    .map(|project| (project.id.clone(), project.path.clone()))
+            })
         else {
             return;
         };
@@ -9381,11 +9376,8 @@ impl AnotherOneApp {
             .active_section
             .as_ref()
             .and_then(|section| {
-                self.project_store
-                    .projects
-                    .iter()
-                    .find(|project| project.id == section.project_id)
-                    .map(|project| (project.id.clone(), project.path.clone()))
+                self.project_path(&section.project_id)
+                    .map(|path| (section.project_id.clone(), path))
             })
             .or_else(|| {
                 self.workspace_pane
@@ -9584,6 +9576,7 @@ impl AnotherOneApp {
             target_project_id: target_project_id.clone(),
             branch_name: branch_name.clone(),
             section_id: SectionId::for_task(&target_project_id, &branch_name, &task_id).store_key(),
+            worktree: None,
             worktree_project_id,
             tabs: Vec::new(),
             active_tab_id: String::new(),
@@ -9596,6 +9589,12 @@ impl AnotherOneApp {
             self.expanded_projects.insert(project.repo_id.clone());
             self.project_store
                 .set_expanded_projects(&self.expanded_projects);
+        } else if let Some(task) = self.project_store.task_for_worktree(&target_project_id) {
+            if let Some(root_project) = self.project_store.project(&task.root_project_id) {
+                self.expanded_projects.insert(root_project.repo_id.clone());
+                self.project_store
+                    .set_expanded_projects(&self.expanded_projects);
+            }
         }
 
         let section_id = SectionId::for_task(&target_project_id, &branch_name, &task_id);
@@ -10123,11 +10122,7 @@ impl AnotherOneApp {
     }
 
     fn project_path(&self, project_id: &str) -> Option<std::path::PathBuf> {
-        self.project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .map(|project| project.path.clone())
+        self.project_store.workspace_path(project_id)
     }
 
     pub(crate) fn open_changed_file_diff(
@@ -10726,23 +10721,10 @@ impl AnotherOneApp {
                 match reply.result {
                     Ok(success) => {
                         let prepared = success.project.clone();
-                        let inserted = self.project_store.insert_prepared_project(prepared.clone());
-                        if !inserted {
-                            if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
-                                if let Some(state) = self.new_task_modal.as_mut() {
-                                    state.submitting = false;
-                                }
-                            }
-                            self.show_error_toast(
-                                "The worktree was created, but the app could not load it.",
-                                cx,
-                            );
-                            return true;
-                        }
-                        self.commit_local_mutation();
-
-                        let Some(project) =
-                            self.project_store.project(&prepared.project.id).cloned()
+                        let Some(root_project) = self
+                            .project_store
+                            .project(&success.original_project_id)
+                            .cloned()
                         else {
                             if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
                                 if let Some(state) = self.new_task_modal.as_mut() {
@@ -10750,10 +10732,18 @@ impl AnotherOneApp {
                                 }
                             }
                             self.show_error_toast(
-                                "The worktree was created, but the app could not resolve its saved state.",
+                                "The worktree was created, but the app could not resolve its root project.",
                                 cx,
                             );
                             return true;
+                        };
+                        let worktree = another_one_core::project_store::TaskWorktree {
+                            id: prepared.project.id.clone(),
+                            repo_id: root_project.repo_id.clone(),
+                            name: prepared.project.name.clone(),
+                            path: prepared.project.path.clone(),
+                            checkout: prepared.project.checkout.clone(),
+                            worktree_name: prepared.project.worktree_name.clone(),
                         };
 
                         let task_id = uuid::Uuid::new_v4().to_string();
@@ -10762,28 +10752,29 @@ impl AnotherOneApp {
                             name: success.task_name.clone(),
                             kind: TaskKind::Worktree,
                             root_project_id: success.original_project_id.clone(),
-                            target_project_id: project.id.clone(),
+                            target_project_id: worktree.id.clone(),
                             branch_name: success.branch_name.clone(),
                             section_id: SectionId::for_task(
-                                &project.id,
+                                &worktree.id,
                                 &success.branch_name,
                                 &task_id,
                             )
                             .store_key(),
-                            worktree_project_id: Some(project.id.clone()),
+                            worktree: Some(worktree.clone()),
+                            worktree_project_id: Some(worktree.id.clone()),
                             tabs: Vec::new(),
                             active_tab_id: String::new(),
                             next_tab_id: 0,
-                            cwd: None,
+                            cwd: Some(worktree.path.clone()),
                         });
 
-                        self.expanded_projects.insert(project.repo_id.clone());
+                        self.expanded_projects.insert(root_project.repo_id.clone());
                         self.project_store
                             .set_expanded_projects(&self.expanded_projects);
 
                         let section_id =
-                            SectionId::for_task(&project.id, &success.branch_name, &task_id);
-                        let project_path = project.path.clone();
+                            SectionId::for_task(&worktree.id, &success.branch_name, &task_id);
+                        let project_path = worktree.path.clone();
                         let launch_config = success.launch_config;
                         let launch_config_for_section =
                             success.open_agent.then_some(launch_config.clone());
@@ -10801,7 +10792,7 @@ impl AnotherOneApp {
                                 self.attach_or_start_prewarmed_terminal(
                                     None,
                                     key,
-                                    project.path.clone(),
+                                    worktree.path.clone(),
                                     launch_config,
                                     cx,
                                 );
@@ -13050,6 +13041,7 @@ mod tests {
             target_project_id: target_project_id.to_string(),
             branch_name: branch_name.to_string(),
             section_id: format!("{target_project_id}::{branch_name}::{id}"),
+            worktree: None,
             worktree_project_id: worktree_project_id.map(str::to_string),
             tabs: Vec::new(),
             active_tab_id: String::new(),

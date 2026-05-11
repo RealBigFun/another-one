@@ -229,8 +229,7 @@ impl RegistryState {
             .entry(key.clone())
             .or_default()
             .insert(viewer_id.to_string(), (cols, rows));
-        self.viewer_focus
-            .insert(viewer_id.to_string(), key.clone());
+        self.viewer_focus.insert(viewer_id.to_string(), key.clone());
         self.recompute_effective_size(&key);
         focus_changed
     }
@@ -1420,16 +1419,8 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
     store
         .projects
         .iter()
-        // Include both Root and Worktree projects: tasks reference
-        // worktree projects via `target_project_id`, and the
-        // client-side `absorb_projection` → `sanitize` drops any task
-        // whose target project isn't in the projection. The sidebar
-        // UI filters to Root entries on its own; the wire format
-        // carries the full graph.
+        .filter(|project| project.kind == CoreProjectKind::Root)
         .map(|project| {
-            // Tasks are keyed by root_project_id, so worktree summaries
-            // naturally carry an empty task list — the task lives on
-            // its root.
             let tasks = store
                 .tasks
                 .get(&project.id)
@@ -1521,6 +1512,10 @@ fn task_to_summary(
     let kind_value = serde_json::to_value(&task.kind).ok();
     let root_project_id = task.root_project_id.clone();
     let worktree_project_id = task.worktree_project_id.clone();
+    let worktree = task
+        .worktree
+        .as_ref()
+        .and_then(|worktree| serde_json::to_value(worktree).ok());
     let tabs = task
         .tabs
         .into_iter()
@@ -1575,6 +1570,7 @@ fn task_to_summary(
         root_project_id,
         kind: kind_value,
         worktree_project_id,
+        worktree,
     }
 }
 
