@@ -179,6 +179,82 @@ impl RegistryState {
         let _ = self.state_change_tx.send(());
     }
 
+    /// Announce that `viewer_id` is now watching `key` at
+    /// `(cols, rows)` and recompute the per-tab min-across-viewers
+    /// effective size. If the viewer was previously watching a
+    /// different key, its entry on the old key is dropped first
+    /// (a viewer can only claim one tab at a time) and that old
+    /// key's effective size is recomputed so any other viewer on
+    /// it gets a fresh clamp.
+    ///
+    /// Returns `true` if this call changed which tab the viewer
+    /// was focused on — callers that need to re-issue `AttachTab`
+    /// on the other side of a session (Android re-keys attach on
+    /// focus change, desktop doesn't) can branch on that signal.
+    ///
+    /// Consolidates the 17-line "drop old focus / insert new /
+    /// recompute" pattern that used to live duplicated in
+    /// `DesktopTerminalRegistry::tab_resize` and
+    /// `AnotherOneApp::ensure_active_terminal_runtime`. Adding a
+    /// new bookkeeping field keyed on `(viewer_id, key)` now only
+    /// touches this helper. See #51.
+    pub(crate) fn claim_viewport(
+        &mut self,
+        viewer_id: &str,
+        key: TerminalRuntimeKey,
+        cols: u16,
+        rows: u16,
+    ) -> bool {
+        let mut focus_changed = false;
+        if let Some(old_key) = self.viewer_focus.get(viewer_id).cloned() {
+            if old_key != key {
+                focus_changed = true;
+                if let Some(map) = self.active_viewers.get_mut(&old_key) {
+                    map.remove(viewer_id);
+                    if map.is_empty() {
+                        self.active_viewers.remove(&old_key);
+                        self.effective_sizes.remove(&old_key);
+                    }
+                }
+                self.recompute_effective_size(&old_key);
+            }
+        } else {
+            // First claim from this viewer — no prior focus to
+            // unwind, but callers treat "no prior key" as a
+            // focus change too (they may still need to
+            // AttachTab on the paired session).
+            focus_changed = true;
+        }
+        self.active_viewers
+            .entry(key.clone())
+            .or_default()
+            .insert(viewer_id.to_string(), (cols, rows));
+        self.viewer_focus
+            .insert(viewer_id.to_string(), key.clone());
+        self.recompute_effective_size(&key);
+        focus_changed
+    }
+
+    /// Drop every per-tab bookkeeping entry for `key`. Called when
+    /// a tab is removed — failing to clean up any one field
+    /// silently leaks (a stale `viewer_focus` pointer would
+    /// misroute the next `TabResize` from that viewer; an orphan
+    /// `active_viewers` entry would clamp a tab nobody's
+    /// watching). Single funnel keeps those invariants in one
+    /// place. See #51.
+    pub(crate) fn forget_tab(&mut self, key: &TerminalRuntimeKey) {
+        self.broadcasts.remove(key);
+        self.writers.remove(key);
+        self.active_viewers.remove(key);
+        self.effective_sizes.remove(key);
+        self.in_flight_launches.remove(key);
+        // Any viewer still focused on this key has a dangling
+        // pointer — clear it so the next TabResize from that
+        // viewer doesn't take the "drop old focus" branch against
+        // a ghost key.
+        self.viewer_focus.retain(|_, focus_key| focus_key != key);
+    }
+
     /// Recompute the min-across-viewers size for `key` and, if it
     /// changed since the last effective size, enqueue a resize for
     /// the GPUI render tick to apply. Returns the effective size so
@@ -633,30 +709,9 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             return;
         };
         self.with_state(|state| {
-            // If this viewer was focused on a different tab, drop
-            // its size entry there first — a viewer can only claim
-            // one tab at a time.
-            if let Some(old_key) = state.viewer_focus.get(viewer_id).cloned() {
-                if old_key != key {
-                    if let Some(map) = state.active_viewers.get_mut(&old_key) {
-                        map.remove(viewer_id);
-                        if map.is_empty() {
-                            state.active_viewers.remove(&old_key);
-                            state.effective_sizes.remove(&old_key);
-                        }
-                    }
-                    state.recompute_effective_size(&old_key);
-                }
-            }
-            state
-                .active_viewers
-                .entry(key.clone())
-                .or_default()
-                .insert(viewer_id.to_string(), (cols, rows));
-            state
-                .viewer_focus
-                .insert(viewer_id.to_string(), key.clone());
-            state.recompute_effective_size(&key);
+            // `claim_viewport` handles the drop-old-focus /
+            // insert-new / recompute dance in one place. See #51.
+            state.claim_viewport(viewer_id, key, cols, rows);
         });
     }
 

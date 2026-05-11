@@ -5430,42 +5430,23 @@ impl AnotherOneApp {
             #[cfg(target_os = "android")]
             let mut focus_changed = false;
             if let Ok(mut state) = self.registry_state.lock() {
-                // Switching focused tabs on desktop: drop the prior
-                // tab's desktop-local entry (same semantics as a
-                // mobile detach/reattach).
-                if let Some(old_key) = state.viewer_focus.get(DESKTOP_LOCAL_VIEWER_ID).cloned() {
-                    if old_key != request.key {
-                        #[cfg(target_os = "android")]
-                        {
-                            focus_changed = true;
-                        }
-                        if let Some(map) = state.active_viewers.get_mut(&old_key) {
-                            map.remove(DESKTOP_LOCAL_VIEWER_ID);
-                            if map.is_empty() {
-                                state.active_viewers.remove(&old_key);
-                                state.effective_sizes.remove(&old_key);
-                            }
-                        }
-                        state.recompute_effective_size(&old_key);
-                    }
-                } else {
-                    #[cfg(target_os = "android")]
-                    {
-                        focus_changed = true;
-                    }
+                // Single-call viewport claim — see #51. On Android
+                // we branch on `focus_changed` to re-issue
+                // `Control::AttachTab` against the paired session
+                // so the daemon's forwarder pushes bytes for the
+                // newly focused tab.
+                let changed = state.claim_viewport(
+                    DESKTOP_LOCAL_VIEWER_ID,
+                    request.key.clone(),
+                    request.size.cols,
+                    request.size.rows,
+                );
+                #[cfg(target_os = "android")]
+                {
+                    focus_changed = changed;
                 }
-                state
-                    .active_viewers
-                    .entry(request.key.clone())
-                    .or_default()
-                    .insert(
-                        DESKTOP_LOCAL_VIEWER_ID.to_string(),
-                        (request.size.cols, request.size.rows),
-                    );
-                state
-                    .viewer_focus
-                    .insert(DESKTOP_LOCAL_VIEWER_ID.to_string(), request.key.clone());
-                state.recompute_effective_size(&request.key);
+                #[cfg(not(target_os = "android"))]
+                let _ = changed;
             }
             #[cfg(target_os = "android")]
             if focus_changed {
@@ -6255,16 +6236,10 @@ impl AnotherOneApp {
     /// exists.
     pub(crate) fn unregister_tab_from_registry(&self, key: &TerminalRuntimeKey) {
         if let Ok(mut state) = self.registry_state.lock() {
-            state.broadcasts.remove(key);
-            state.writers.remove(key);
-            state.active_viewers.remove(key);
-            state.effective_sizes.remove(key);
-            state.in_flight_launches.remove(key);
-            // Any viewer still focused on this key has a dangling
-            // pointer — clear it so the next TabResize from that
-            // viewer doesn't take the "drop old focus" branch
-            // against a ghost key.
-            state.viewer_focus.retain(|_, focus_key| focus_key != key);
+            // One funnel for the full bookkeeping-drop sequence.
+            // Adding a new per-tab field only has to land in
+            // `RegistryState::forget_tab`, not here. See #51.
+            state.forget_tab(key);
         }
     }
 
