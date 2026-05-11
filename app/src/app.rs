@@ -5727,6 +5727,37 @@ impl AnotherOneApp {
                             }
                             updated = true;
                         }
+                        daemon_proto::WorkerReply::AttachDropped {
+                            section_id,
+                            tab_id,
+                            reason,
+                        } => {
+                            // Daemon's forwarder broke out of its
+                            // broadcast recv (lagged past buffer
+                            // capacity). In-band bytes for this tab
+                            // are desynced; re-issue AttachTab so
+                            // the daemon replays scrollback + resets
+                            // VT state on its end. See #53.
+                            log::info!(
+                                "session AttachDropped(section={section_id}, tab={tab_id}): {reason}; reattaching"
+                            );
+                            let session = self.session_handle();
+                            crate::session_host::dispatch_fire_and_forget(
+                                session,
+                                daemon_proto::Control::AttachTab {
+                                    section_id,
+                                    tab_id,
+                                },
+                                |result| {
+                                    if let Err(err) = result {
+                                        log::warn!(
+                                            "AttachDropped auto-reattach failed: {err}"
+                                        );
+                                    }
+                                },
+                            );
+                            updated = true;
+                        }
                         other => {
                             log::debug!(
                                 "session pushed unsolicited reply: {:?}",

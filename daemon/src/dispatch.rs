@@ -1062,6 +1062,19 @@ fn handle_attach(
                         lagged = n,
                         "attach forwarder lagged; dropping attachment to force reattach"
                     );
+                    // Push the drop notice so the client (mobile or
+                    // desktop paired-to-itself) can re-issue
+                    // AttachTab without the user having to touch
+                    // anything — see #53. Ignoring the send error is
+                    // fine: if the push fails the session is gone
+                    // and no client is listening anyway.
+                    let _ = session_for_task
+                        .push_reply(WorkerReply::AttachDropped {
+                            section_id: section_id_for_task.clone(),
+                            tab_id: tab_id_for_task.clone(),
+                            reason: format!("broadcast lagged ({n} chunks dropped)"),
+                        })
+                        .await;
                     break;
                 }
             }

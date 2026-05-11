@@ -908,6 +908,27 @@ pub enum WorkerReply {
     /// side: an unknown id still produces this reply rather than an
     /// `Err`.
     ProjectRemoved { project_id: String },
+    /// **Daemon-pushed** (request_id == 0) notification that a live
+    /// PTY attachment just died on the server side — the daemon's
+    /// forwarder task broke out of its broadcast recv loop because
+    /// the per-tab channel lagged past its capacity and the client
+    /// missed chunks. Clients must re-issue [`Control::AttachTab`]
+    /// to get a clean replay + fresh VT state; no other recovery
+    /// is possible since the in-band byte stream is desynced.
+    ///
+    /// Scope: only emitted on `broadcast::RecvError::Lagged`. The
+    /// `RecvError::Closed` case (PTY runtime dropped) is
+    /// deliberately *not* signalled here because reattaching would
+    /// fail with `unknown tab` — the client finds out about the
+    /// exit via the existing `TabClosed` push instead.
+    ///
+    /// `reason` is a short human-readable string for logs/toast;
+    /// clients should not parse it. See #53.
+    AttachDropped {
+        section_id: String,
+        tab_id: String,
+        reason: String,
+    },
     /// Reply to [`Control::OpenInState`]. `state.enabled_apps` is in
     /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
     /// is `None` when no Open-In app is detected on the host.
