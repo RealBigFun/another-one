@@ -64,31 +64,56 @@ URL=$(cat "$PAIR_URL_FILE")
 echo "[test-mobile-pair] pair URL: ${URL:0:60}..."
 
 # 2. Write into the phone's pair-trigger path. `run-as` sandboxes
-#    into the package-private dir (same place the app writes its
-#    iroh secret key). Works on debug builds without root.
-$ADB shell run-as dev.anotherone.app sh -c "printf %s '$URL' > files/pair-trigger" \
+#    into the package-private dir. Works on debug builds without
+#    root. Wrap the whole sub-command in a single quoted string for
+#    `adb shell` — passing the args split doesn't preserve cwd
+#    semantics inside the nested shell on every Android build we've
+#    tested.
+printf '%s' "$URL" \
+  | $ADB shell 'run-as dev.anotherone.app sh -c "cat > files/pair-trigger"' \
   || die "failed to write pair-trigger on device"
 echo "[test-mobile-pair] wrote pair-trigger to device"
 
-# 3. Wait for the round-trip. First the desktop sees the Hello
-#    consume and logs `TOFU pair complete`. Then the phone receives
-#    the initial ProjectList push. Polling loop keyed off the
-#    desktop log because it's a deterministic monotonic text file;
-#    logcat's ring buffer is unreliable for this.
+# 3. Wait for the round-trip. The phone's dial lands one of two
+#    ways: (a) first-pair — daemon runs `consume_hello` and logs
+#    `TOFU pair complete`; (b) reconnect as already-paired — the
+#    viewer's stable secret key (persisted on device since
+#    #TODO) matches an allowlist entry, and the daemon skips
+#    Hello, going straight to `serve_session: pushing initial
+#    ProjectList viewer_id=<hex>` (not the gui:desktop one). Either
+#    is success; failure is no progress within the timeout.
+count_matches() {
+  local pat=$1 path=$2 n
+  if [[ -f "$path" ]]; then
+    n=$(grep -cE "$pat" "$path" || true)
+  else
+    n=0
+  fi
+  echo "${n:-0}"
+}
+
+# Matches either the first-pair log line or an already-paired
+# reconnect from a non-desktop viewer_id. Pattern is lenient about
+# ANSI color codes the tracing-subscriber prints on an isatty
+# stderr — each field in the `key=value` structured part is
+# wrapped in escape sequences that don't show when cat-ing the
+# file through `grep`.
+SUCCESS_PATTERN='TOFU pair complete|pushing initial ProjectList.*"[0-9a-f]{64}"'
+
 start=$(date +%s)
-initial=$(grep -c 'TOFU pair complete' "$DESKTOP_LOG" 2>/dev/null || echo 0)
-echo "[test-mobile-pair] waiting up to ${TIMEOUT}s for TOFU pair complete (baseline=$initial)…"
+initial=$(count_matches "$SUCCESS_PATTERN" "$DESKTOP_LOG")
+echo "[test-mobile-pair] waiting up to ${TIMEOUT}s for pair/reconnect (baseline=$initial)…"
 while :; do
-  current=$(grep -c 'TOFU pair complete' "$DESKTOP_LOG" 2>/dev/null || echo 0)
+  current=$(count_matches "$SUCCESS_PATTERN" "$DESKTOP_LOG")
   if (( current > initial )); then
-    echo "[test-mobile-pair] TOFU pair complete observed"
+    echo "[test-mobile-pair] pair/reconnect observed"
     break
   fi
   now=$(date +%s)
   if (( now - start > TIMEOUT )); then
     echo "---desktop log tail---"
     tail -30 "$DESKTOP_LOG"
-    die "timed out waiting for TOFU pair complete"
+    die "timed out waiting for pair/reconnect"
   fi
   sleep 1
 done

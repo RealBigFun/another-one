@@ -99,6 +99,17 @@ pub async fn run_embedded(
     let nonce = generate_pair_nonce();
     let pairing_url = build_pairing_url_with_token(&addr, &nonce);
     let qr_png_bytes = render_qr_png_bytes(&pairing_url).context("render pairing QR PNG")?;
+    // Also stash the pair URL on disk so the test harness (see
+    // scripts/test-mobile-pair.sh) can read the current scannable
+    // URL without screen-scraping the QR. `rotate_pair_state` keeps
+    // it fresh on every nonce roll; this initial write handles the
+    // between-boot-and-first-rotate window.
+    if let Some(cache_dir) = dirs::cache_dir() {
+        let dir = cache_dir.join("another-one");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let _ = std::fs::write(dir.join("pair-url.txt"), pairing_url.as_bytes());
+        }
+    }
     let pair_state = Arc::new(Mutex::new(PairState {
         nonce: Some(nonce),
         addr: addr.clone(),

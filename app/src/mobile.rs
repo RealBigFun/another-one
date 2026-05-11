@@ -51,6 +51,28 @@ pub fn set_activity_ptr(ptr: *mut std::ffi::c_void) {
 #[cfg(target_os = "android")]
 static INTERNAL_DATA_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
+/// Latched OS dark-mode preference read once at `android_main`
+/// entry from `AndroidApp::config().ui_mode_night()`. GPUI
+/// (via gpui-mobile) only updates its own window-appearance state
+/// on `ConfigChanged`, which doesn't fire at app start — so the
+/// first render sees the default `Light` appearance regardless of
+/// the actual OS theme. Reading the config at init + exposing it
+/// to our theme resolver (`theme::resolve_theme`) lets
+/// `ThemeMode::System` render correctly from the first frame. See
+/// #TODO (system theme on android).
+#[cfg(target_os = "android")]
+static SYSTEM_PREFERS_DARK: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Sentinel values inside `SYSTEM_PREFERS_DARK`: 0 = unknown (no
+/// activity-lifecycle hook has run yet, fall through to
+/// `window.appearance()`), 1 = light, 2 = dark.
+#[cfg(target_os = "android")]
+const SYSTEM_THEME_UNKNOWN: u8 = 0;
+#[cfg(target_os = "android")]
+const SYSTEM_THEME_LIGHT: u8 = 1;
+#[cfg(target_os = "android")]
+const SYSTEM_THEME_DARK: u8 = 2;
+
 /// Stash the app's internal data directory so non-android-activity
 /// callers (notably `daemon-client`'s dial helper) can persist
 /// state that should outlive a single process but stay within the
@@ -59,6 +81,44 @@ static INTERNAL_DATA_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::
 #[cfg(target_os = "android")]
 pub fn set_internal_data_path(path: std::path::PathBuf) {
     let _ = INTERNAL_DATA_PATH.set(path);
+}
+
+/// Record the OS dark-mode preference from
+/// `AndroidApp::config().ui_mode_night()`. Called once at
+/// `android_main` entry and again on any future `ConfigChanged`
+/// event that we choose to route through here. Later reads pick
+/// this up via [`system_prefers_dark`].
+#[cfg(target_os = "android")]
+pub fn set_system_prefers_dark(prefers_dark: bool) {
+    let sentinel = if prefers_dark {
+        SYSTEM_THEME_DARK
+    } else {
+        SYSTEM_THEME_LIGHT
+    };
+    SYSTEM_PREFERS_DARK.store(sentinel, std::sync::atomic::Ordering::Release);
+}
+
+/// The OS dark-mode preference previously stashed by
+/// [`set_system_prefers_dark`], or `None` when nothing's recorded
+/// (pre-`android_main` call paths, host-target tests). The theme
+/// resolver uses this to shortcut `ThemeMode::System` on Android
+/// — otherwise the first render sees gpui-mobile's default
+/// `WindowAppearance::Light` regardless of the phone's real
+/// setting.
+#[cfg(target_os = "android")]
+pub fn system_prefers_dark() -> Option<bool> {
+    match SYSTEM_PREFERS_DARK.load(std::sync::atomic::Ordering::Acquire) {
+        SYSTEM_THEME_LIGHT => Some(false),
+        SYSTEM_THEME_DARK => Some(true),
+        _ => None,
+    }
+}
+
+/// Host-target stub — no OS-theme plumbing on desktop (GPUI's
+/// `window.appearance()` already reads the real value there).
+#[cfg(not(target_os = "android"))]
+pub fn system_prefers_dark() -> Option<bool> {
+    None
 }
 
 /// The path [`set_internal_data_path`] stashed, or `None` if the

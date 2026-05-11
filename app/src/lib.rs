@@ -217,6 +217,21 @@ pub fn android_main(android_app: android_activity::AndroidApp) {
         log::warn!("android_main: internal_data_path unavailable; iroh key will stay ephemeral");
     }
 
+    // Read the OS dark-mode preference before the first render.
+    // gpui-mobile's window-appearance tracking only updates on
+    // `ConfigChanged`, which doesn't fire at app start, so without
+    // this seeding the first frame renders Light regardless of
+    // the phone's setting. See `mobile::system_prefers_dark`.
+    {
+        use android_activity::ndk::configuration::UiModeNight;
+        let prefers_dark = matches!(
+            android_app.config().ui_mode_night(),
+            UiModeNight::Yes
+        );
+        crate::mobile::set_system_prefers_dark(prefers_dark);
+        log::info!("android_main: system prefers_dark={prefers_dark}");
+    }
+
     let _platform = gpui_mobile::android::jni::init_platform(&android_app);
     let shared = match gpui_mobile::android::jni::shared_platform() {
         Some(s) => s,

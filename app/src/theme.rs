@@ -145,10 +145,24 @@ pub fn resolve_theme(window: &Window, mode: ThemeMode) -> ResolvedTheme {
     match mode {
         ThemeMode::Light => ResolvedTheme::Light,
         ThemeMode::Dark => ResolvedTheme::Dark,
-        ThemeMode::System => match window.appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => ResolvedTheme::Dark,
-            _ => ResolvedTheme::Light,
-        },
+        ThemeMode::System => {
+            // Android's window.appearance() is stuck at Light until
+            // the first ConfigChanged fires. Prefer the seeded
+            // OS-preference from `android_main` when available
+            // (target-gated no-op on desktop). See
+            // `mobile::system_prefers_dark`.
+            if let Some(dark) = crate::mobile::system_prefers_dark() {
+                return if dark {
+                    ResolvedTheme::Dark
+                } else {
+                    ResolvedTheme::Light
+                };
+            }
+            match window.appearance() {
+                WindowAppearance::Dark | WindowAppearance::VibrantDark => ResolvedTheme::Dark,
+                _ => ResolvedTheme::Light,
+            }
+        }
     }
 }
 
