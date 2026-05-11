@@ -836,12 +836,6 @@ impl AnotherOneApp {
             .and_then(|name| name.to_str())
             .unwrap_or(file.path.as_str())
             .to_string();
-        let parent_dir = Path::new(&file.path)
-            .parent()
-            .and_then(|parent| parent.to_str())
-            .filter(|parent| !parent.is_empty() && *parent != ".")
-            .unwrap_or_default()
-            .to_string();
 
         let mut stats = div().flex().flex_row().items_center().gap(px(8.));
         if file.additions > 0 {
@@ -887,32 +881,13 @@ impl AnotherOneApp {
                             )
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(6.))
                                     .min_w(px(0.))
                                     .flex_1()
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .min_w(px(0.))
-                                            .truncate()
-                                            .text_size(rems(12. / 16.))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(title_col)
-                                            .child(file_name),
-                                    )
-                                    .when(!parent_dir.is_empty(), |entry| {
-                                        entry.child(
-                                            div()
-                                                .min_w(px(0.))
-                                                .truncate()
-                                                .text_size(rems(11. / 16.))
-                                                .text_color(path_col)
-                                                .child(parent_dir.clone()),
-                                        )
-                                    }),
+                                    .truncate()
+                                    .text_size(rems(12. / 16.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(title_col)
+                                    .child(file_name),
                             ),
                     )
                     .child(div().flex_shrink_0().child(stats)),
