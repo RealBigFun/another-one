@@ -100,10 +100,23 @@ pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession
     let bridge_session = Arc::clone(&inner);
     let bridge_attached = Arc::clone(&attached);
     tokio::spawn(async move {
-        while let Some(bytes) = bridge_session.next_incoming_bytes().await {
-            let (section_id, tab_id) = match &*bridge_attached.lock().await {
-                Some(pair) => pair.clone(),
-                None => continue,
+        // Each inbound chunk is now tagged by the daemon per #138,
+        // so we forward the tuple directly instead of re-tagging
+        // from the local `attached` mutex — which was the race
+        // that let mid-stream attach switches mislabel bytes into
+        // the newly-attached tab. Legacy untagged frames arrive
+        // with empty ids; fall back to the local attach snapshot
+        // so pre-#138 daemons still work.
+        while let Some((section_id, tab_id, bytes)) =
+            bridge_session.next_incoming_bytes().await
+        {
+            let (section_id, tab_id) = if !section_id.is_empty() && !tab_id.is_empty() {
+                (section_id, tab_id)
+            } else {
+                match &*bridge_attached.lock().await {
+                    Some(pair) => pair.clone(),
+                    None => continue,
+                }
             };
             if events_tx
                 .send(SessionEvent::PtyBytes {
@@ -174,18 +187,17 @@ impl AbstractSession for IrohSession {
 
     fn push_data<'a>(
         &'a self,
-        _section_id: &'a str,
-        _tab_id: &'a str,
+        section_id: &'a str,
+        tab_id: &'a str,
         bytes: &'a [u8],
     ) -> SessionFuture<'a, Result<(), TransportError>> {
-        // Today's wire fans every attached tab's input through the
-        // single TY_DATA path — section/tab args are accepted to keep
-        // the trait surface clean but ignored. Multi-attach demuxing
-        // is future work; documented in the file-level note.
-        let payload = bytes.to_vec();
+        // Tag per-frame with (section_id, tab_id) so the daemon
+        // demuxes from the frame, not from its stale attach
+        // snapshot (see #138). `send_tab_data` is the tagged
+        // counterpart to the legacy `send(bytes)` path.
         Box::pin(async move {
             self.inner
-                .send(payload)
+                .send_tab_data(section_id, tab_id, bytes)
                 .await
                 .map_err(|e| TransportError::Other(format!("{e:#}")))
         })

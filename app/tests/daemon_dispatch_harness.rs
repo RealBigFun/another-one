@@ -139,7 +139,7 @@ async fn harness_round_trips_list_projects() {
         .await
         .expect("ListProjects call");
     match reply {
-        WorkerReply::ProjectList { projects, ui: _ } => {
+        WorkerReply::ProjectList { projects, ui: _, .. } => {
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].id, "p1");
             assert_eq!(projects[0].tasks.len(), 1);
@@ -317,7 +317,7 @@ mod mutators {
         reply: WorkerReply,
     ) -> (Vec<daemon_proto::ProjectSummary>, daemon_proto::UiSnapshot) {
         match reply {
-            WorkerReply::ProjectList { projects, ui } => (projects, ui),
+            WorkerReply::ProjectList { projects, ui, .. } => (projects, ui),
             other => panic!("expected ProjectList push, got {other:?}"),
         }
     }

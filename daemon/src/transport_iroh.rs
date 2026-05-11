@@ -382,13 +382,34 @@ impl ServerSession for IrohServerSession {
             loop {
                 match read_frame(&mut incoming.recv).await {
                     Ok(Some((TY_DATA, payload))) => {
-                        // Route directly into the registry's tab
-                        // input based on the live attach target. No
-                        // attachment → silently drop (clients may
-                        // type during the AttachTab → first-reply
-                        // race).
-                        if let Some((section_id, tab_id)) = incoming.attach.snapshot_target() {
+                        // Route by the frame's own tag, not by
+                        // whatever `AttachState` happens to show.
+                        // The client tags every inbound TY_DATA
+                        // since #138, so stale/racing frames from
+                        // an old attach land in the right tab's
+                        // input instead of being misrouted into the
+                        // newly-attached tab's PTY. Legacy untagged
+                        // frames (`decode_pty_data` returns `None`)
+                        // fall back to the attach-snapshot path so
+                        // the transport keeps working against a
+                        // pre-#138 client if one ever connects.
+                        if let Some((section_id, tab_id, body)) =
+                            daemon_proto::decode_pty_data(&payload)
+                        {
+                            incoming.registry.tab_input(&section_id, &tab_id, &body);
+                        } else if let Some((section_id, tab_id)) =
+                            incoming.attach.snapshot_target()
+                        {
+                            debug!(
+                                bytes = payload.len(),
+                                "iroh: legacy untagged TY_DATA routed via attach snapshot"
+                            );
                             incoming.registry.tab_input(&section_id, &tab_id, &payload);
+                        } else {
+                            debug!(
+                                bytes = payload.len(),
+                                "iroh: dropped untagged TY_DATA with no attach target"
+                            );
                         }
                     }
                     Ok(Some((TY_CONTROL, payload))) => {
@@ -440,16 +461,17 @@ impl ServerSession for IrohServerSession {
 
     fn push_data<'a>(
         &'a self,
-        _section_id: &'a str,
-        _tab_id: &'a str,
+        section_id: &'a str,
+        tab_id: &'a str,
         bytes: &'a [u8],
     ) -> SessionFuture<'a, Result<(), TransportError>> {
-        // Today's wire is a single TY_DATA fan — bytes for the
-        // (single) currently-attached tab go untagged. The
-        // (section_id, tab_id) plumbing exists for the future
-        // multi-attach world; for now we ignore them on the wire and
-        // rely on the client's attach state to demultiplex.
-        let payload = bytes.to_vec();
+        // Tag every PTY chunk with (section_id, tab_id) so the
+        // client can demux authoritatively instead of trusting its
+        // own attach state. Before #138 the payload was the raw
+        // PTY bytes alone and a mid-stream `AttachTab` would
+        // silently re-label in-flight bytes under the new tab —
+        // see the regression captured at `transport_iroh::push_data`.
+        let payload = daemon_proto::encode_pty_data(section_id, tab_id, bytes);
         Box::pin(async move {
             self.outbound_tx
                 .send(OutboundFrame {

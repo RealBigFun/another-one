@@ -196,16 +196,27 @@ async fn client_reader_loop(
         };
         match frame.0 {
             TY_DATA => {
-                // Today's wire emits TY_DATA from the server with no
-                // section/tab tag — single-attach matches the iroh
-                // shape. Bridge to PtyBytes with empty tags; consumers
-                // that need real demuxing wait on the multi-attach
-                // wire revision.
-                let _ = events_tx.send(SessionEvent::PtyBytes {
-                    section_id: String::new(),
-                    tab_id: String::new(),
-                    bytes: frame.1,
-                });
+                // Server→client: decode the #138 (section_id,
+                // tab_id) tag from the frame payload so consumers
+                // get correctly-demuxed PtyBytes events. Legacy
+                // untagged frames fall through to empty tags, same
+                // shape the pre-tagging code emitted — consumers
+                // that don't care (single-attach) keep working.
+                if let Some((section_id, tab_id, body)) =
+                    daemon_proto::decode_pty_data(&frame.1)
+                {
+                    let _ = events_tx.send(SessionEvent::PtyBytes {
+                        section_id,
+                        tab_id,
+                        bytes: body,
+                    });
+                } else {
+                    let _ = events_tx.send(SessionEvent::PtyBytes {
+                        section_id: String::new(),
+                        tab_id: String::new(),
+                        bytes: frame.1,
+                    });
+                }
             }
             TY_WORKER_REPLY => {
                 let envelope: WorkerReplyEnvelope = match serde_json::from_slice(&frame.1) {
@@ -295,11 +306,16 @@ impl Session for UdsSession {
 
     fn push_data<'a>(
         &'a self,
-        _section_id: &'a str,
-        _tab_id: &'a str,
+        section_id: &'a str,
+        tab_id: &'a str,
         bytes: &'a [u8],
     ) -> SessionFuture<'a, Result<(), TransportError>> {
-        let payload = bytes.to_vec();
+        // Client→server data (user input into the attached tab).
+        // Tag with (section_id, tab_id) so the server routes by the
+        // frame's own label instead of its stale attach snapshot;
+        // prevents the mid-stream-attach-switch race described at
+        // #138.
+        let payload = daemon_proto::encode_pty_data(section_id, tab_id, bytes);
         Box::pin(async move {
             self.outbound_tx
                 .send(OutboundFrame {
@@ -471,12 +487,23 @@ async fn server_reader_loop(
                 }
             }
             TY_DATA => {
-                // Push-data arriving server-side has no consumer in
-                // the abstract trait surface today (handlers don't
-                // observe inbound bytes; that's wire-level for
-                // attached PTYs). Drop on the floor; the iroh impl
-                // does the same.
-                debug!(bytes = frame.1.len(), "uds: dropped inbound TY_DATA");
+                // Client→server input arriving here. Today no
+                // UDS-backed server handler consumes it (the dispatch
+                // layer has its own path), so we drop on the floor;
+                // decoding + logging the tag for visibility when
+                // it's eventually wired up.
+                if let Some((section_id, tab_id, body)) =
+                    daemon_proto::decode_pty_data(&frame.1)
+                {
+                    debug!(
+                        section_id,
+                        tab_id,
+                        bytes = body.len(),
+                        "uds: dropped inbound TY_DATA"
+                    );
+                } else {
+                    debug!(bytes = frame.1.len(), "uds: dropped inbound TY_DATA (untagged)");
+                }
             }
             other => debug!(ty = other, "uds: unhandled inbound frame type"),
         }
@@ -526,11 +553,14 @@ impl ServerSession for UdsServerSession {
 
     fn push_data<'a>(
         &'a self,
-        _section_id: &'a str,
-        _tab_id: &'a str,
+        section_id: &'a str,
+        tab_id: &'a str,
         bytes: &'a [u8],
     ) -> SessionFuture<'a, Result<(), TransportError>> {
-        let payload = bytes.to_vec();
+        // Server→client push for the UDS transport. Same #138 tag
+        // shape as the iroh server push so the client demux is
+        // transport-independent.
+        let payload = daemon_proto::encode_pty_data(section_id, tab_id, bytes);
         Box::pin(async move {
             self.outbound_tx
                 .send(OutboundFrame {
