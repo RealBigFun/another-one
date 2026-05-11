@@ -42,6 +42,56 @@ pub fn set_activity_ptr(ptr: *mut std::ffi::c_void) {
     ACTIVITY_PTR.store(ptr, Ordering::Release);
 }
 
+/// Internal (app-private, survives `adb install -r`) storage path
+/// stashed at `android_main` entry from
+/// `AndroidApp::internal_data_path`. Other modules that want to
+/// persist small per-install state (iroh secret key, future
+/// pairing metadata) read it via [`internal_data_path`] instead of
+/// re-deriving from JNI.
+#[cfg(target_os = "android")]
+static INTERNAL_DATA_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Stash the app's internal data directory so non-android-activity
+/// callers (notably `daemon-client`'s dial helper) can persist
+/// state that should outlive a single process but stay within the
+/// app-private storage sandbox. Idempotent — first call wins. See
+/// #TODO(secret-key-persist) for the iroh-client-side follow-up.
+#[cfg(target_os = "android")]
+pub fn set_internal_data_path(path: std::path::PathBuf) {
+    let _ = INTERNAL_DATA_PATH.set(path);
+}
+
+/// The path [`set_internal_data_path`] stashed, or `None` if the
+/// activity glue never reported one (shouldn't happen under
+/// `android-activity` 0.6, but keep the probe total so host-target
+/// tests that don't enter `android_main` can still link).
+#[cfg(target_os = "android")]
+pub fn internal_data_path() -> Option<&'static std::path::Path> {
+    INTERNAL_DATA_PATH.get().map(|p| p.as_path())
+}
+
+/// File inside the app-private internal storage where the iroh
+/// client's secret key persists across reconnects and `adb
+/// install -r` cycles. Ephemeral key-per-dial (the pre-#TODO
+/// behaviour) meant every reconnect presented a fresh viewer_id,
+/// which the daemon rejected with "no outstanding pair nonce"
+/// because the allowlist entry was keyed on the first-pair
+/// identity.
+#[cfg(target_os = "android")]
+pub fn iroh_secret_key_path() -> Option<std::path::PathBuf> {
+    Some(internal_data_path()?.join("iroh-client.key"))
+}
+
+/// Host-target stub — mobile's persistent-identity path concept
+/// doesn't apply on the desktop iroh client path (desktop runs the
+/// iroh *server*, persisting its own key via the daemon's
+/// `load_or_create_secret_key`). Returning `None` lets shared
+/// callers fall through to ephemeral-key semantics.
+#[cfg(not(target_os = "android"))]
+pub fn iroh_secret_key_path() -> Option<std::path::PathBuf> {
+    None
+}
+
 /// Queue of pairing URLs delivered by the QR scanner. The JNI callback
 /// pushes; the render tick drains. Wrapped in `OnceLock` so it can be
 /// referenced from both the JNI thread and the GPUI thread without

@@ -53,6 +53,82 @@ fn tokio_rt() -> &'static Runtime {
     })
 }
 
+/// Load the iroh-client secret key from `path`, or generate and
+/// persist a fresh one if the file doesn't exist. Mirrors the
+/// server-side `load_or_create_secret_key` in
+/// `daemon::transport_iroh` (same hex-encoded 32-byte shape,
+/// trimmed on read) so the two sides can swap implementations if
+/// the types ever unify. Writes go through a straight `fs::write`
+/// today — crash-consistency fsync is the daemon-side concern in
+/// #57, mirror here when the corresponding client-side failure
+/// surfaces.
+fn load_or_create_client_secret_key(path: &std::path::Path) -> anyhow::Result<SecretKey> {
+    use anyhow::Context;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create iroh key dir {}", parent.display()))?;
+    }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        let trimmed = content.trim();
+        let bytes = hex_decode_32(trimmed)
+            .with_context(|| format!("parse iroh key at {}", path.display()))?;
+        return Ok(SecretKey::from_bytes(&bytes));
+    }
+    let sk = SecretKey::generate();
+    let hex = hex_encode_32(&sk.to_bytes());
+    std::fs::write(path, format!("{hex}\n"))
+        .with_context(|| format!("write iroh key to {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    tracing::info!(path = %path.display(), "daemon-client: generated new persistent secret key");
+    Ok(sk)
+}
+
+fn hex_encode_32(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
+    if s.len() != 64 {
+        anyhow::bail!("secret key must be 64 hex chars, got {}", s.len());
+    }
+    let mut out = [0u8; 32];
+    for (i, byte_out) in out.iter_mut().enumerate() {
+        let hi = hex_nibble(
+            s.as_bytes()
+                .get(i * 2)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("hex index out of bounds"))?,
+        )?;
+        let lo = hex_nibble(
+            s.as_bytes()
+                .get(i * 2 + 1)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("hex index out of bounds"))?,
+        )?;
+        *byte_out = (hi << 4) | lo;
+    }
+    Ok(out)
+}
+
+fn hex_nibble(c: u8) -> anyhow::Result<u8> {
+    match c {
+        b'0'..=b'9' => Ok(c - b'0'),
+        b'a'..=b'f' => Ok(10 + c - b'a'),
+        b'A'..=b'F' => Ok(10 + c - b'A'),
+        _ => anyhow::bail!("invalid hex digit {c:#x}"),
+    }
+}
+
 /// Events the UI may want beyond raw incoming bytes / worker replies.
 /// Placeholder for now — the connect/recv plumbing currently emits no
 /// `SessionEvent`s; growth happens as UI code asks for more signal.
@@ -115,17 +191,43 @@ pub struct Session {
 /// Wrapped in `tokio_rt().spawn(...).await` so callers can be on any
 /// executor — same pattern as the legacy `iroh_connect`.
 pub async fn connect(pairing_url: &str) -> anyhow::Result<Session> {
+    connect_with_secret_key(pairing_url, None).await
+}
+
+/// `connect`, but with an optional on-disk path to persist the
+/// iroh-client secret key at. When `None`, the dial uses an
+/// ephemeral `SecretKey::generate()` — the historical behaviour,
+/// fine for one-shot tools and the `daemon-sandbox` smoke test.
+///
+/// When `Some(path)`, a 32-byte hex key file at that path is
+/// loaded; if absent, a fresh key is generated, written to the
+/// path, and returned. Persisting the identity across dials keeps
+/// the daemon's allowlist entry stable — without it, every
+/// reconnect after the first pair is rejected as an unpaired peer
+/// because the TOFU nonce only rolls on explicit reset.
+///
+/// Mobile callers pass the app's internal-data path
+/// (`AndroidApp::internal_data_path`), which survives
+/// `adb install -r` but wipes on uninstall — matching the
+/// lifecycle of the pairing relationship itself.
+pub async fn connect_with_secret_key(
+    pairing_url: &str,
+    secret_key_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<Session> {
     let url = pairing_url.to_string();
     tokio_rt()
-        .spawn(async move { connect_inner(url).await })
+        .spawn(async move { connect_inner(url, secret_key_path).await })
         .await
         .map_err(|e| anyhow::anyhow!("connect task panicked: {e}"))?
 }
 
-async fn connect_inner(pairing_url: String) -> anyhow::Result<Session> {
+async fn connect_inner(
+    pairing_url: String,
+    secret_key_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<Session> {
     // Wrap the body so any early-return error gets surfaced as a
     // `DialStatus::Error` before being propagated to the caller.
-    match connect_inner_impl(pairing_url).await {
+    match connect_inner_impl(pairing_url, secret_key_path).await {
         Ok(session) => Ok(session),
         Err(e) => {
             push_status(DialStatus::Error(e.to_string()));
@@ -134,7 +236,10 @@ async fn connect_inner(pairing_url: String) -> anyhow::Result<Session> {
     }
 }
 
-async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
+async fn connect_inner_impl(
+    pairing_url: String,
+    secret_key_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<Session> {
     let parsed = parse_pairing_url(&pairing_url).context("parse pairing url")?;
     tracing::info!(
         endpoint_id = %parsed.endpoint_id,
@@ -198,8 +303,15 @@ async fn connect_inner_impl(pairing_url: String) -> anyhow::Result<Session> {
         .unwrap_or_else(|| "1.1.1.1:53".parse().expect("static ipv4 socket addr"));
     tracing::info!(%dns_addr, "daemon-client connect: using configured DNS resolver");
     let dns = DnsResolver::with_nameserver(dns_addr);
-    // Ephemeral identity for now; persistent device key is a follow-up.
-    let secret_key = SecretKey::generate();
+    // Client-side iroh identity. When `secret_key_path` is `Some`,
+    // persist-or-create so the daemon's allowlist entry stays
+    // valid across reconnects (see `connect_with_secret_key`
+    // docs). When `None`, fall through to the legacy
+    // ephemeral-per-dial behaviour.
+    let secret_key = match secret_key_path.as_deref() {
+        Some(path) => load_or_create_client_secret_key(path)?,
+        None => SecretKey::generate(),
+    };
     let endpoint = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         Endpoint::builder(presets::Minimal)
