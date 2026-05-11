@@ -1969,3 +1969,188 @@ pub const ALPN: &[u8] = b"anotherone/pty/1";
 /// lockstep with the ALPN suffix; mismatches close the connection
 /// with `anotherone/incompatible-version`.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+#[cfg(test)]
+mod wire_roundtrip_tests {
+    //! Serde round-trip coverage for the wire envelopes + a
+    //! representative sample of `Control` / `WorkerReply` variants.
+    //!
+    //! Philosophy: we can't realistically snapshot-test every
+    //! variant (the enum has 40+ arms and grows every sprint) and
+    //! serde-derive already guarantees structural faithfulness,
+    //! so exhaustive fixtures would just be restating the
+    //! derive macro. What we **do** care about is:
+    //!
+    //!   - the `ControlEnvelope` / `WorkerReplyEnvelope` flatten
+    //!     shape (request_id at top level, variant tag inline)
+    //!   - back-compat fields (`#[serde(default)]` on optional
+    //!     additions like `Hello::pair_token`,
+    //!     `ProjectList::repos`)
+    //!   - recently-added variants the integration risk is
+    //!     highest on: `WorkerReply::AttachDropped` (#53),
+    //!     `RepoSummary` / `RepoBranchSummary` (#134).
+    //!
+    //! Anything stricter than this belongs in the pre-release
+    //! schema-snapshot workflow (#52's stretch item).
+
+    use super::*;
+
+    /// Assert a serde-shaped value survives a JSON round-trip
+    /// byte-for-byte after re-serialization. Catches drift where
+    /// a field's `#[serde(default)]` makes the round-trip fuzzy
+    /// (value serializes, decodes to default, re-serializes
+    /// different). Compares parsed JSON values rather than raw
+    /// strings so field ordering in maps doesn't break the test.
+    fn assert_json_roundtrip<T>(value: &T)
+    where
+        T: serde::Serialize + for<'de> serde::Deserialize<'de>,
+    {
+        let encoded = serde_json::to_string(value).expect("serialize");
+        let decoded: T = serde_json::from_str(&encoded).expect("deserialize");
+        let reencoded = serde_json::to_string(&decoded).expect("re-serialize");
+        let lhs: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let rhs: serde_json::Value = serde_json::from_str(&reencoded).unwrap();
+        assert_eq!(lhs, rhs, "roundtrip changed JSON shape");
+    }
+
+    #[test]
+    fn control_envelope_flattens_request_id_at_top_level() {
+        let env = ControlEnvelope {
+            request_id: 17,
+            control: Control::ListProjects,
+        };
+        let json: serde_json::Value = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["request_id"], 17);
+        assert_eq!(json["type"], "list_projects");
+        assert_json_roundtrip(&env);
+    }
+
+    #[test]
+    fn control_hello_roundtrips_with_and_without_pair_token() {
+        // With token — freshly-paired client.
+        let with = Control::Hello {
+            pair_token: Some("abc123".into()),
+            protocol_version: PROTOCOL_VERSION,
+        };
+        assert_json_roundtrip(&with);
+
+        // Without token — re-connecting paired client that
+        // already has an entry in the allowlist.
+        let without = Control::Hello {
+            pair_token: None,
+            protocol_version: PROTOCOL_VERSION,
+        };
+        assert_json_roundtrip(&without);
+
+        // Forward-compat: an older daemon that didn't know about
+        // `pair_token` serialized Hello without the field. A
+        // current daemon must still decode that as `pair_token: None`.
+        let legacy_bytes = format!(
+            r#"{{"type":"hello","protocol_version":{PROTOCOL_VERSION}}}"#
+        );
+        let decoded: Control = serde_json::from_str(&legacy_bytes).expect("legacy decode");
+        match decoded {
+            Control::Hello {
+                pair_token: None, ..
+            } => {}
+            other => panic!("expected Hello with None pair_token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn worker_reply_envelope_flattens_and_carries_kind() {
+        let env = WorkerReplyEnvelope {
+            request_id: 42,
+            reply: WorkerReply::ProjectList {
+                projects: Vec::new(),
+                repos: Vec::new(),
+                ui: UiSnapshot::default(),
+            },
+        };
+        let json: serde_json::Value = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["request_id"], 42);
+        assert_eq!(json["kind"], "project_list");
+        assert_json_roundtrip(&env);
+    }
+
+    #[test]
+    fn worker_reply_project_list_accepts_legacy_missing_repos() {
+        // A daemon built before #134 shipped would emit a
+        // ProjectList without the `repos` field. The current
+        // `#[serde(default)]` must still decode it cleanly so a
+        // mixed-build deployment doesn't error out on connect.
+        let legacy = r#"{"kind":"project_list","projects":[],"ui":{}}"#;
+        let decoded: WorkerReply = serde_json::from_str(legacy).expect("legacy decode");
+        match decoded {
+            WorkerReply::ProjectList { repos, ui, .. } => {
+                assert!(repos.is_empty(), "repos must default to empty");
+                assert!(ui.expanded_repo_ids.is_empty());
+            }
+            other => panic!("expected ProjectList, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repo_summary_roundtrips_with_branches() {
+        let repo = RepoSummary {
+            id: "repo-a".into(),
+            common_dir: Some("/tmp/checkouts/repo-a/.git".into()),
+            branch_order: vec!["main".into(), "feat/x".into()],
+            branches: vec![
+                RepoBranchSummary {
+                    name: "main".into(),
+                    last_commit_relative: "2 hours ago".into(),
+                    is_default: true,
+                    ahead_count: 0,
+                    behind_count: 0,
+                },
+                RepoBranchSummary {
+                    name: "feat/x".into(),
+                    last_commit_relative: "5 minutes ago".into(),
+                    is_default: false,
+                    ahead_count: 3,
+                    behind_count: 1,
+                },
+            ],
+        };
+        assert_json_roundtrip(&repo);
+    }
+
+    #[test]
+    fn worker_reply_attach_dropped_roundtrips() {
+        // Recently added (#53). Pin the on-wire shape so a future
+        // rename of the fields doesn't silently break mobile
+        // auto-reattach.
+        let reply = WorkerReply::AttachDropped {
+            section_id: "proj-a:sec-1".into(),
+            tab_id: "7".into(),
+            reason: "broadcast lagged (128 chunks dropped)".into(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&reply).unwrap();
+        assert_eq!(json["kind"], "attach_dropped");
+        assert_eq!(json["section_id"], "proj-a:sec-1");
+        assert_eq!(json["tab_id"], "7");
+        assert_json_roundtrip(&reply);
+    }
+
+    #[test]
+    fn ui_snapshot_roundtrips_with_defaults_on_missing_fields() {
+        // Every field on UiSnapshot is `#[serde(default)]` so an
+        // older daemon that didn't carry a given field still
+        // decodes under a current client. Exercise that by feeding
+        // an empty JSON object.
+        let decoded: UiSnapshot = serde_json::from_str("{}").expect("empty-object decode");
+        assert!(decoded.expanded_repo_ids.is_empty());
+        assert!(decoded.pinned_task_ids.is_empty());
+        assert!(decoded.last_active_section_id.is_none());
+        assert_json_roundtrip(&decoded);
+    }
+
+    #[test]
+    fn push_request_id_sentinel_is_zero() {
+        // The daemon uses request_id == 0 for unsolicited pushes
+        // and the client-side router keys on it. Freezing the
+        // value at the wire layer so nothing can drift it.
+        assert_eq!(PUSH_REQUEST_ID, 0);
+    }
+}
