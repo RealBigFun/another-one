@@ -7104,10 +7104,32 @@ impl AnotherOneApp {
             if t.section_id != section_store_key {
                 return None;
             }
-            t.tabs
+            // Exact match first. If the phone's cached tab_id is
+            // stale (see #152: mobile holds an old projection while
+            // desktop rotates tabs underneath), fall back to the
+            // task's active-or-first tab so the attach still lands
+            // rather than silently erroring — the push pump will
+            // deliver an updated projection shortly after, and the
+            // phone's subsequent AttachTab retries continue to use
+            // the original requested id, so serving the current
+            // tab's `launch_config` under that id keeps the retries
+            // finding a live broadcast.
+            if let Some(pt) = t.tabs.iter().find(|pt| pt.id == req.tab_id) {
+                return Some((t.clone(), pt.clone()));
+            }
+            let fallback = t
+                .tabs
                 .iter()
-                .find(|pt| pt.id == req.tab_id)
-                .map(|pt| (t.clone(), pt.clone()))
+                .find(|pt| pt.id == t.active_tab_id)
+                .or_else(|| t.tabs.first())
+                .cloned()?;
+            tracing::warn!(
+                section_id = %section_store_key,
+                requested_tab = %req.tab_id,
+                resolved_tab = %fallback.id,
+                "mobile AttachTab requested stale tab_id; falling back to task's current tab"
+            );
+            Some((t.clone(), fallback))
         });
         let (persisted_tab, cwd) = match task_match {
             Some((task, persisted_tab)) => {
@@ -7129,18 +7151,35 @@ impl AnotherOneApp {
                             req.tab_id
                         )
                     })?;
-                let persisted_tab = section
-                    .tabs
-                    .iter()
-                    .find(|pt| pt.id == req.tab_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "no persisted tab for section {} / tab {}",
-                            section_store_key,
-                            req.tab_id
-                        )
-                    })?;
+                // Same stale-id fallback as the task path above:
+                // prefer exact match, otherwise the section's
+                // active-or-first tab. See #152.
+                let persisted_tab = if let Some(pt) =
+                    section.tabs.iter().find(|pt| pt.id == req.tab_id)
+                {
+                    pt.clone()
+                } else {
+                    let fallback = section
+                        .tabs
+                        .iter()
+                        .find(|pt| pt.id == section.active_tab_id)
+                        .or_else(|| section.tabs.first())
+                        .cloned()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "no persisted tab for section {} / tab {}",
+                                section_store_key,
+                                req.tab_id
+                            )
+                        })?;
+                    tracing::warn!(
+                        section_id = %section_store_key,
+                        requested_tab = %req.tab_id,
+                        resolved_tab = %fallback.id,
+                        "mobile AttachTab requested stale tab_id; falling back to section's current tab"
+                    );
+                    fallback
+                };
                 (persisted_tab, section.cwd.clone())
             }
         };
