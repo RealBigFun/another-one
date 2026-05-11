@@ -74,7 +74,7 @@ use std::borrow::Cow;
 use gpui::{px, size, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
 
 use app::{
-    AnotherOneApp, TerminalFind, TerminalSearchNext, TerminalSearchPrev, ZoomIn, ZoomOut, ZoomReset,
+    AnotherOneApp, TerminalFind, TerminalSearchNext, TerminalSearchPrev,
 };
 use assets::{asset_root, ProjectAssets};
 use platform::{CurrentPlatform, PlatformServices};
@@ -135,10 +135,6 @@ fn finish_launching(cx: &mut App) {
     let titlebar = CurrentPlatform::titlebar_options("AnotherOne");
 
     cx.bind_keys([
-        KeyBinding::new("cmd-=", ZoomIn, None),
-        KeyBinding::new("cmd-+", ZoomIn, None),
-        KeyBinding::new("cmd--", ZoomOut, None),
-        KeyBinding::new("cmd-0", ZoomReset, None),
         KeyBinding::new("cmd-f", TerminalFind, None),
         KeyBinding::new("cmd-g", TerminalSearchNext, None),
         KeyBinding::new("cmd-shift-g", TerminalSearchPrev, None),

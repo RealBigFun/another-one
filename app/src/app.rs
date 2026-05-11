@@ -17,7 +17,12 @@ use gpui::{
     WeakEntity, Window,
 };
 
-actions!(zoom, [ZoomIn, ZoomOut, ZoomReset]);
+// Legacy GPUI action definitions. `ZoomIn/ZoomOut/ZoomReset` used to
+// be bound via `cx.bind_keys` but were never fired on Linux/Windows
+// because the `cmd-` modifier token resolves to Super/Meta there,
+// not Ctrl (#62). Zoom now flows through the shortcut-system path
+// (`ShortcutAction::ZoomIn` and friends) so platforms advertise a
+// sane default and users can remap through the settings page.
 actions!(
     terminal_search,
     [
@@ -8643,19 +8648,19 @@ impl AnotherOneApp {
         cx.notify();
     }
 
-    fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn zoom_in(&mut self, cx: &mut Context<Self>) {
         self.font_size = (self.font_size + 1.0).min(32.0);
         self.sync_workspace_layout(cx);
         cx.notify();
     }
 
-    fn zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn zoom_out(&mut self, cx: &mut Context<Self>) {
         self.font_size = (self.font_size - 1.0).max(8.0);
         self.sync_workspace_layout(cx);
         cx.notify();
     }
 
-    fn zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn zoom_reset(&mut self, cx: &mut Context<Self>) {
         self.font_size = 13.0;
         self.sync_workspace_layout(cx);
         cx.notify();
@@ -15621,9 +15626,6 @@ impl AnotherOneApp {
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_key_down(cx.listener(Self::handle_global_key_down))
-                .on_action(cx.listener(Self::zoom_in))
-                .on_action(cx.listener(Self::zoom_out))
-                .on_action(cx.listener(Self::zoom_reset))
                 .on_action(cx.listener(Self::next_tab))
                 .on_action(cx.listener(Self::previous_tab))
                 .on_action(cx.listener(Self::next_task))
@@ -15935,9 +15937,6 @@ impl Render for AnotherOneApp {
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_key_down(cx.listener(Self::handle_global_key_down))
-                    .on_action(cx.listener(Self::zoom_in))
-                    .on_action(cx.listener(Self::zoom_out))
-                    .on_action(cx.listener(Self::zoom_reset))
                     .on_action(cx.listener(Self::next_tab))
                     .on_action(cx.listener(Self::previous_tab))
                     .on_action(cx.listener(Self::next_task))
@@ -16045,9 +16044,6 @@ impl Render for AnotherOneApp {
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                 .on_key_down(cx.listener(Self::handle_global_key_down))
-                .on_action(cx.listener(Self::zoom_in))
-                .on_action(cx.listener(Self::zoom_out))
-                .on_action(cx.listener(Self::zoom_reset))
                 .on_action(cx.listener(Self::next_tab))
                 .on_action(cx.listener(Self::previous_tab))
                 .on_action(cx.listener(Self::next_task))
