@@ -1943,6 +1943,15 @@ pub struct AnotherOneApp {
     pub(crate) project_pull_request_checked: HashSet<String>,
     /// Last successful lookup completion time keyed by `project_id:branch_name`.
     pub(crate) project_pull_request_checked_at: HashMap<String, Instant>,
+    /// Project paths we've confirmed are not under git and therefore
+    /// can't produce PRs, check runs, or GitHub-link metadata.
+    /// Populated lazily by [`is_project_path_git_backed`] the first
+    /// time a PR/project-page lookup is requested for a non-git
+    /// project, and short-circuits every subsequent lookup so the
+    /// UI stops retrying on every refresh tick and stops surfacing
+    /// the `Could not load pull requests: no git remotes found`
+    /// toast. See #38.
+    pub(crate) pr_lookup_disabled_paths: HashSet<std::path::PathBuf>,
     /// Cached PR check-run state keyed by `project_id:branch_name`.
     pub(crate) project_check_runs_states: HashMap<String, ProjectCheckRunsState>,
     /// In-flight PR check lookups keyed by `project_id:branch_name`.
@@ -4703,6 +4712,7 @@ impl AnotherOneApp {
             project_page_pull_requests_errors: HashMap::new(),
             project_pull_request_checked: HashSet::new(),
             project_pull_request_checked_at: HashMap::new(),
+            pr_lookup_disabled_paths: HashSet::new(),
             project_check_runs_states: HashMap::new(),
             project_check_runs_requests: HashSet::new(),
             project_check_runs_checked_at: HashMap::new(),
@@ -11091,6 +11101,20 @@ impl AnotherOneApp {
             return;
         }
 
+        if !self.is_project_path_git_backed(project_path) {
+            // Mark the lookup as "checked" so anything reading
+            // `project_pull_request_checked_at` stops retrying, and
+            // skip the spawn entirely — `gh pr list` against a
+            // non-git folder returns the toast-worthy
+            // "no git remotes found" error on every refresh tick.
+            // See #38.
+            self.project_pull_request_checked
+                .insert(lookup_key.to_string());
+            self.project_pull_request_checked_at
+                .insert(lookup_key.to_string(), Instant::now());
+            return;
+        }
+
         self.project_pull_request_requests
             .insert(lookup_key.to_string());
         another_one_core::git_service::spawn_pull_request_lookup(
@@ -11099,6 +11123,31 @@ impl AnotherOneApp {
             project_path.to_path_buf(),
             branch_name.to_string(),
         );
+    }
+
+    /// Lazily cached `.git`-existence check for
+    /// `request_project_pull_request_lookup` /
+    /// `request_project_page_pull_requests`. First call per path
+    /// hits `path_has_git_marker` (one stat syscall), subsequent
+    /// calls are HashSet lookups. Disabled paths are never
+    /// promoted back to enabled during a session — if the user
+    /// runs `git init` in a project, they can restart the app to
+    /// re-evaluate. That's acceptable because the alternative is
+    /// running a stat syscall on every render tick to catch a
+    /// rare user action.
+    ///
+    /// Returns `true` when the path *is* git-backed (lookups
+    /// proceed) and `false` when the cached-miss short-circuits.
+    fn is_project_path_git_backed(&mut self, project_path: &std::path::Path) -> bool {
+        if self.pr_lookup_disabled_paths.contains(project_path) {
+            return false;
+        }
+        if another_one_core::git_operation::path_has_git_marker(project_path) {
+            return true;
+        }
+        self.pr_lookup_disabled_paths
+            .insert(project_path.to_path_buf());
+        false
     }
 
     pub(crate) fn project_page_pr_query_key(
@@ -11123,6 +11172,19 @@ impl AnotherOneApp {
         if self.project_page_pull_requests.contains_key(&key)
             || self.project_page_pull_requests_loading.contains(&key)
         {
+            return;
+        }
+
+        if !self.is_project_path_git_backed(project_path) {
+            // Cache an empty result so the project page renders
+            // the "no PRs" empty state once instead of retrying
+            // every render. Non-git folders can never produce
+            // PRs; the previous behaviour surfaced
+            // `Could not load pull requests: no git remotes found`
+            // as a warning toast on each tick. See #38.
+            self.project_page_pull_requests_errors.remove(&key);
+            self.project_page_pull_requests
+                .insert(key, Arc::from(Vec::new()));
             return;
         }
 

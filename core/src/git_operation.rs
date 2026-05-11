@@ -124,6 +124,25 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
     Some(canonicalize_if_possible(&common_dir).unwrap_or(common_dir))
 }
 
+/// Cheap filesystem probe for "does this directory live under git?".
+///
+/// Used by the sidebar's PR / check-runs polling to short-circuit
+/// before the `gh` subprocess fires on a non-git folder (#38). The
+/// failure path there surfaces a warning toast per tick, which
+/// floods the UI for users who added a plain directory as a
+/// project. Existence of a `.git` entry at the project root covers
+/// both the root-repo case (directory) and the worktree case
+/// (gitfile); neither spawns a git subprocess here.
+///
+/// Returns `false` for: path does not exist, path exists but has
+/// no `.git` child, and any filesystem error in between. Callers
+/// that need a precise yes/no (e.g. detecting a bare repo or a
+/// path inside a repo's subdirectory) should keep using
+/// [`resolve_git_common_dir`].
+pub fn path_has_git_marker(repo_path: &Path) -> bool {
+    repo_path.join(".git").exists()
+}
+
 fn canonicalize_if_possible(path: &Path) -> Option<PathBuf> {
     path.canonicalize().ok()
 }
@@ -135,12 +154,40 @@ fn stable_path_key(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        git_operation_lock_key_for_path, run_serialized_git_operation_for_path, GitOperationLock,
-        GitOperationLocks, GLOBAL_GIT_OPERATION_LOCK_KEY,
+        git_operation_lock_key_for_path, path_has_git_marker, run_serialized_git_operation_for_path,
+        GitOperationLock, GitOperationLocks, GLOBAL_GIT_OPERATION_LOCK_KEY,
     };
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
+
+    /// `path_has_git_marker` is the cheap filesystem probe we lean
+    /// on in #38 to stop the PR-toast flood on non-git folders.
+    /// Regression-guards it against both the plain-directory
+    /// (no `.git` anywhere) and git-root (`.git` dir) cases. The
+    /// worktree-gitfile case is covered by the worktree test suite
+    /// in `project_store`; this one just guarantees the probe
+    /// doesn't regress into always-true / always-false.
+    #[test]
+    fn path_has_git_marker_classifies_plain_directory_and_git_root() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            !path_has_git_marker(dir.path()),
+            "plain dir must read as non-git"
+        );
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        assert!(
+            path_has_git_marker(dir.path()),
+            "dir with .git child must read as git-backed"
+        );
+    }
+
+    #[test]
+    fn path_has_git_marker_returns_false_for_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nonexistent-subdir");
+        assert!(!path_has_git_marker(&missing));
+    }
 
     #[test]
     fn run_should_serialize_concurrent_callers() {
