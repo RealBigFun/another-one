@@ -13,7 +13,7 @@ use crate::app::{
     SidebarTaskMenuState, SidebarTaskRenameState, WorkspaceKeyboardFocus,
 };
 use crate::mobile::MobileView;
-use crate::project_store::{Branch, Project, ProjectKind, TaskKind};
+use crate::project_store::{Branch, Project, ProjectKind, Task, TaskKind};
 use crate::project_workflows;
 use crate::shortcuts::{shortcut_matches_event, ShortcutAction};
 use crate::theme;
@@ -72,6 +72,45 @@ fn sidebar_root_index(projects: &[Project], indices: &[usize]) -> Option<usize> 
         .find(|index| matches!(projects[*index].kind, ProjectKind::Root))
 }
 
+fn sidebar_root_project_for_project(projects: &[Project], project_id: &str) -> Option<Project> {
+    let project = projects.iter().find(|project| project.id == project_id)?;
+    let group_key = AnotherOneApp::sidebar_group_key(project);
+
+    projects
+        .iter()
+        .find(|candidate| {
+            AnotherOneApp::sidebar_group_key(candidate) == group_key
+                && matches!(candidate.kind, ProjectKind::Root)
+        })
+        .cloned()
+        .or_else(|| Some(project.clone()))
+}
+
+fn sidebar_task_delete_target(
+    projects: &[Project],
+    tasks: &HashMap<String, Vec<Task>>,
+    project_id: &str,
+    task_id: Option<&str>,
+) -> Option<(Project, PathBuf)> {
+    if let Some(project) = projects.iter().find(|project| project.id == project_id) {
+        let root_project = sidebar_root_project_for_project(projects, project_id)?;
+        return Some((root_project, project.path.clone()));
+    }
+
+    let task_id = task_id?;
+    let task = tasks.values().flatten().find(|task| task.id == task_id)?;
+    let worktree = task.worktree.as_ref()?;
+    if task.target_project_id != project_id && worktree.id != project_id {
+        return None;
+    }
+
+    let root_project = projects
+        .iter()
+        .find(|project| project.id == task.root_project_id)?
+        .clone();
+    Some((root_project, worktree.path.clone()))
+}
+
 impl AnotherOneApp {
     fn sidebar_group_key(project: &Project) -> String {
         project
@@ -91,22 +130,7 @@ impl AnotherOneApp {
     }
 
     fn sidebar_root_project_for_project(&self, project_id: &str) -> Option<Project> {
-        let project = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)?;
-        let group_key = Self::sidebar_group_key(project);
-
-        self.project_store
-            .projects
-            .iter()
-            .find(|candidate| {
-                Self::sidebar_group_key(candidate) == group_key
-                    && matches!(candidate.kind, ProjectKind::Root)
-            })
-            .cloned()
-            .or_else(|| Some(project.clone()))
+        sidebar_root_project_for_project(&self.project_store.projects, project_id)
     }
 
     fn sidebar_task_is_pinned(&self, task_id: &str) -> bool {
@@ -486,13 +510,12 @@ impl AnotherOneApp {
         branch_name: &str,
         is_worktree: bool,
     ) -> Option<SidebarTaskDeleteConfirmState> {
-        let project = self
-            .project_store
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)?
-            .clone();
-        let root_project = self.sidebar_root_project_for_project(project_id)?;
+        let (root_project, project_path) = sidebar_task_delete_target(
+            &self.project_store.projects,
+            &self.project_store.tasks,
+            project_id,
+            task_id,
+        )?;
         let other_tasks_in_worktree = is_worktree
             .then(|| self.sidebar_other_tasks_in_worktree(project_id, task_id))
             .unwrap_or(0);
@@ -509,7 +532,7 @@ impl AnotherOneApp {
             task_id: task_id.map(str::to_string),
             task_name: task_name.to_string(),
             branch_name: branch_name.to_string(),
-            project_path: project.path,
+            project_path,
             repo_path: root_project.path,
             is_worktree,
             other_tasks_in_worktree,
@@ -3524,6 +3547,71 @@ mod tests {
             repo_common_dir: None,
             archived: false,
         }
+    }
+
+    fn sample_worktree_task(root_project_id: &str, worktree_project_id: &str) -> Task {
+        Task {
+            id: "task-1".to_string(),
+            name: "Task 1".to_string(),
+            kind: TaskKind::Worktree,
+            root_project_id: root_project_id.to_string(),
+            target_project_id: worktree_project_id.to_string(),
+            branch_name: "feature/wt".to_string(),
+            section_id: "section-1".to_string(),
+            worktree: Some(crate::project_store::TaskWorktree {
+                id: worktree_project_id.to_string(),
+                repo_id: "repo-a".to_string(),
+                name: "feature-wt".to_string(),
+                path: PathBuf::from("/tmp/feature-wt"),
+                checkout: crate::project_store::ProjectCheckoutState::default(),
+                worktree_name: Some("feature-wt".to_string()),
+            }),
+            worktree_project_id: Some(worktree_project_id.to_string()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        }
+    }
+
+    #[test]
+    fn sidebar_task_delete_target_uses_embedded_worktree_when_project_was_migrated() {
+        let projects = vec![sample_project(
+            "root",
+            "repo-a",
+            crate::project_store::ProjectKind::Root,
+            None,
+        )];
+        let tasks = HashMap::from([(
+            "root".to_string(),
+            vec![sample_worktree_task("root", "worktree")],
+        )]);
+
+        let (root_project, project_path) =
+            sidebar_task_delete_target(&projects, &tasks, "worktree", Some("task-1"))
+                .expect("embedded worktree should resolve");
+
+        assert_eq!(root_project.id, "root");
+        assert_eq!(project_path, PathBuf::from("/tmp/feature-wt"));
+    }
+
+    #[test]
+    fn sidebar_task_delete_target_rejects_stale_task_for_different_worktree() {
+        let projects = vec![sample_project(
+            "root",
+            "repo-a",
+            crate::project_store::ProjectKind::Root,
+            None,
+        )];
+        let tasks = HashMap::from([(
+            "root".to_string(),
+            vec![sample_worktree_task("root", "worktree")],
+        )]);
+
+        let target =
+            sidebar_task_delete_target(&projects, &tasks, "other-worktree", Some("task-1"));
+
+        assert!(target.is_none());
     }
 
     #[test]
