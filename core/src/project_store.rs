@@ -1991,6 +1991,28 @@ impl ProjectStore {
                 repo_common_dir: None,
             });
         }
+        // Populate `terminal_sections` from the projection. The wire
+        // format only carries `Task.tabs`, not the per-section
+        // `PersistedSectionState` map — but `set_remote_snapshot` →
+        // `rebuild_runtime_views` re-derives `task.tabs` from
+        // `terminal_sections[section_id].tabs`, wiping the tabs we
+        // just absorbed whenever the client doesn't own that map
+        // (viewer clients like mobile don't persist sections
+        // locally). Synthesise `PersistedSectionState` entries so the
+        // rebuild picks them back up. Desktop overwrites its own
+        // `terminal_sections` with the same values round-trip, so
+        // this is a no-op there.
+        for task in &tasks {
+            self.terminal_sections.insert(
+                task.section_id.clone(),
+                PersistedSectionState {
+                    active_tab_id: task.active_tab_id.clone(),
+                    next_tab_id: task.next_tab_id,
+                    cwd: task.cwd.clone(),
+                    tabs: task.tabs.clone(),
+                },
+            );
+        }
         self.set_remote_snapshot(projects, tasks, repos_from_summaries(repo_summaries));
         self.absorb_ui_snapshot(ui);
     }

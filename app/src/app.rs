@@ -1075,14 +1075,65 @@ impl WorkspacePane {
         changed
     }
 
+    /// Sync `section_states` tabs from the authoritative
+    /// `ProjectStore` snapshot (what the daemon most recently
+    /// projected). Viewer clients (phone, future embedded web)
+    /// don't own their PTYs — task/tab state for their visible
+    /// sections is just a local mirror of what the daemon
+    /// published. Without this reconciliation, a fresh
+    /// `Control::AttachTab` would find a stale tab list and a
+    /// desktop-initiated "new tab in this task" would never
+    /// appear in the phone's tab bar.
+    ///
+    /// Desktop callers invoke this too; it's a no-op there
+    /// because `update_task_tabs` keeps `terminal_sections` and
+    /// `task.tabs` in sync round-trip, so the synthesised
+    /// `PersistedSectionState` below matches whatever
+    /// `section_states` already holds.
+    pub(crate) fn reconcile_section_tabs_from_store(
+        &mut self,
+        store: &another_one_core::project_store::ProjectStore,
+        cx: &mut Context<Self>,
+    ) {
+        use another_one_core::project_store::PersistedSectionState;
+        let mut changed = false;
+        for task in store.tasks.values().flatten() {
+            let Some(section_id) = SectionId::from_store_key(&task.section_id) else {
+                continue;
+            };
+            let Some(existing) = self.section_states.get(&section_id) else {
+                // Don't materialise sections the user hasn't
+                // opened yet — activate_section owns that via
+                // `ensure_section`. This pass only refreshes
+                // already-visible tab lists.
+                continue;
+            };
+            let projected = PersistedSectionState {
+                active_tab_id: task.active_tab_id.clone(),
+                next_tab_id: task.next_tab_id,
+                cwd: task.cwd.clone().or_else(|| existing.cwd.clone()),
+                tabs: task.tabs.clone(),
+            };
+            if existing.to_persisted() == projected {
+                continue;
+            }
+            let fallback_cwd = existing.cwd.clone();
+            self.section_states
+                .insert(section_id, SectionState::from_persisted(projected, fallback_cwd));
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
     pub(crate) fn ensure_section(
         &mut self,
         section_id: SectionId,
         cwd: Option<std::path::PathBuf>,
         launch_config: Option<TerminalLaunchConfig>,
         cx: &mut Context<Self>,
-    ) {
-        let mut changed = false;
+    ) {        let mut changed = false;
 
         if let Some(state) = self.section_states.get_mut(&section_id) {
             changed |= state.update_cwd(cwd);
@@ -2242,10 +2293,32 @@ impl AnotherOneApp {
     #[allow(dead_code)] // wired up by the mobile pair-completion commit
     pub(crate) fn replace_session(&self, session: Arc<dyn daemon_transport::Session>) {
         let events = session.events();
-        *self.session.lock().expect("session slot poisoned") = session;
+        *self.session.lock().expect("session slot poisoned") = Arc::clone(&session);
         let tx = self.session_events_tx.clone();
         crate::session_host::spawn_event_pump(events, move |event| {
             let _ = tx.send(event);
+        });
+        // Keep the daemon's liveness tracking refreshed so the
+        // phone isn't swept out of `active_viewers` while
+        // backgrounded-but-still-connected. Fires every 5 s; the
+        // daemon's sweep threshold is 15 s (3× heartbeat). Loop
+        // exits when the session errors (caller has replaced us
+        // or the iroh endpoint died), at which point there's
+        // nothing left to keep alive anyway. Desktop doesn't need
+        // this — desktop-local viewer's liveness is inferred from
+        // the GPUI render tick touching `claim_viewport` directly.
+        crate::session_host::runtime_handle().spawn(async move {
+            let interval = std::time::Duration::from_secs(5);
+            loop {
+                tokio::time::sleep(interval).await;
+                if session
+                    .call(daemon_proto::Control::Heartbeat)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
         });
     }
 
@@ -5537,6 +5610,8 @@ impl AnotherOneApp {
             let session = self.session_handle();
             let section_id = request.key.section_id.store_key();
             let tab_id = request.key.tab_id.clone();
+            let cols = request.size.cols;
+            let rows = request.size.rows;
             crate::session_host::dispatch_fire_and_forget(
                 session.clone(),
                 daemon_proto::Control::LaunchTab {
@@ -5585,6 +5660,31 @@ impl AnotherOneApp {
                             return;
                         }
                     }
+                }
+                // Send TabResize *after* the attach handshake has
+                // had a chance to land. The daemon's PTY keeps
+                // whatever dimensions it last received (desktop's
+                // grid at task-launch time), so without this the
+                // mobile viewer renders bytes sized for a 120×40
+                // terminal into a 48×46 phone viewport — the
+                // on-screen wrap is visibly wrong. `TabResize`
+                // applies to the currently-attached tab, so it
+                // only matters that the attach has taken effect;
+                // re-firing on every attach attempt would cause
+                // the PTY to ping-pong its SIGWINCH. Single post-
+                // handshake fire with the phone's actual viewport.
+                log::info!(
+                    "TabResize section={} tab={} cols={} rows={}",
+                    section_id,
+                    tab_id,
+                    cols,
+                    rows
+                );
+                if let Err(err) = session
+                    .call(daemon_proto::Control::TabResize { cols, rows })
+                    .await
+                {
+                    log::warn!("session TabResize failed: {err}");
                 }
             });
             return;
@@ -5707,6 +5807,29 @@ impl AnotherOneApp {
                             self.project_store.absorb_projection(projects, repos, ui);
                             self.expanded_projects =
                                 self.project_store.ui.expanded_repo_ids.clone();
+                            // Viewer clients need their
+                            // section_states tab lists refreshed
+                            // from the projection; without this a
+                            // desktop-side "new tab in task"
+                            // never reaches the phone's tab bar.
+                            //
+                            // Desktop is the registry host — its
+                            // `section_states` is the source of
+                            // truth that feeds every outgoing
+                            // projection, so reconciling it from
+                            // its own projection would clobber
+                            // freshly-added tabs whenever a stale
+                            // projection (pre-mutation snapshot,
+                            // still in the debounce queue) landed
+                            // after the mutation. Viewer-only.
+                            #[cfg(target_os = "android")]
+                            {
+                                let store_snapshot = self.project_store.clone();
+                                self.workspace_pane.update(cx, |workspace, cx| {
+                                    workspace
+                                        .reconcile_section_tabs_from_store(&store_snapshot, cx);
+                                });
+                            }
 
                             #[cfg(target_os = "android")]
                             {
@@ -7546,6 +7669,32 @@ impl AnotherOneApp {
         };
         let mut changed = false;
         for request in pending {
+            // On Android the "runtime" is viewer-only — resizing
+            // just reshapes the local grid that renders bytes
+            // pushed from the daemon. The real PTY lives on the
+            // desktop, so every viewport change must also hop the
+            // session as `Control::TabResize` or the remote PTY
+            // keeps reflowing for the desktop's grid and the phone
+            // sees wrong-width lines. Matches the initial
+            // attach-time TabResize dispatched from
+            // `ensure_active_terminal_runtime`.
+            #[cfg(target_os = "android")]
+            {
+                let session = self.session_handle();
+                let cols = request.cols;
+                let rows = request.rows;
+                crate::session_host::dispatch_fire_and_forget(
+                    session,
+                    daemon_proto::Control::TabResize { cols, rows },
+                    move |result| {
+                        if let Err(err) = result {
+                            log::warn!(
+                                "session TabResize failed cols={cols} rows={rows}: {err}"
+                            );
+                        }
+                    },
+                );
+            }
             let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) else {
                 continue;
             };
@@ -15828,6 +15977,21 @@ impl AnotherOneApp {
                         self.project_store.tasks.len()
                     );
                     self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+
+                    // Viewer clients need their `section_states` tab
+                    // lists refreshed from the projection; without
+                    // this a desktop-side "new tab in task" never
+                    // reaches the phone's tab bar. See the sibling
+                    // block in `drain_session_events` — same fix,
+                    // different absorb path (iroh worker-reply queue
+                    // vs session events stream).
+                    #[cfg(target_os = "android")]
+                    {
+                        let store_snapshot = self.project_store.clone();
+                        self.workspace_pane.update(cx, |workspace, cx| {
+                            workspace.reconcile_section_tabs_from_store(&store_snapshot, cx);
+                        });
+                    }
 
                     // The sidebar's expand chevron is rendered with an
                     // SVG that doesn't load on Android (no asset

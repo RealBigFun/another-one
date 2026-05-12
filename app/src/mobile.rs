@@ -114,12 +114,30 @@ pub fn system_prefers_dark() -> Option<bool> {
     }
 }
 
+/// Show the soft keyboard. Called when the user taps a terminal
+/// pane on Android — the terminal surface isn't a GPUI `TextInput`
+/// and wouldn't otherwise trigger the IME to rise, so without this
+/// the phone paired fine but users couldn't type. Idempotent: if
+/// the IME is already visible, the NDK call is a no-op. Desktop
+/// gets a stub that compiles to nothing so the shared panel code
+/// stays target-agnostic.
+#[cfg(target_os = "android")]
+pub fn show_soft_keyboard() {
+    gpui_mobile::android::jni::show_keyboard_android(gpui_mobile::KeyboardType::Default);
+}
+
 /// Host-target stub — no OS-theme plumbing on desktop (GPUI's
 /// `window.appearance()` already reads the real value there).
 #[cfg(not(target_os = "android"))]
 pub fn system_prefers_dark() -> Option<bool> {
     None
 }
+
+/// Host-target stub — desktop has hardware keyboards, no IME to
+/// raise. Compiles to nothing so the shared panel click handlers
+/// can call unconditionally.
+#[cfg(not(target_os = "android"))]
+pub fn show_soft_keyboard() {}
 
 /// The path [`set_internal_data_path`] stashed, or `None` if the
 /// activity glue never reported one (shouldn't happen under
