@@ -54,6 +54,7 @@ mod tests {
             actions: Vec::new(),
             worktree_name: None,
             repo_common_dir: None,
+            archived: false,
         }
     }
 

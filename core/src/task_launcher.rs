@@ -62,24 +62,32 @@ pub fn task_workspace_target(
             .find(|project| project.id == task.target_project_id)
             .unwrap_or(root_project),
         TaskKind::Worktree | TaskKind::MultiWorktree => {
-            let project_id = task
-                .worktree_project_id
-                .as_ref()
-                .unwrap_or(&task.target_project_id);
-            projects.iter().find(|project| project.id == *project_id)?
+            if task.worktree.is_some() {
+                root_project
+            } else {
+                let project_id = task
+                    .worktree_project_id
+                    .as_ref()
+                    .unwrap_or(&task.target_project_id);
+                projects.iter().find(|project| project.id == *project_id)?
+            }
         }
     };
+    let worktree = task.worktree.as_ref();
 
     Some(TaskWorkspaceTarget {
         root_project_id: root_project.id.clone(),
-        project_id: project.id.clone(),
+        project_id: worktree.map_or_else(|| project.id.clone(), |worktree| worktree.id.clone()),
         task_id: task.id.clone(),
-        branch_name: project
-            .checkout
-            .current_branch
-            .clone()
+        branch_name: worktree
+            .and_then(|worktree| worktree.checkout.current_branch.clone())
+            .or_else(|| project.checkout.current_branch.clone())
             .unwrap_or_else(|| task.branch_name.clone()),
-        project_path: task.cwd.clone().unwrap_or_else(|| project.path.clone()),
+        project_path: task
+            .cwd
+            .clone()
+            .or_else(|| worktree.map(|worktree| worktree.path.clone()))
+            .unwrap_or_else(|| project.path.clone()),
     })
 }
 
@@ -121,6 +129,7 @@ mod tests {
             name: id.to_string(),
             path: PathBuf::from(format!("/tmp/{id}")),
             kind,
+            archived: false,
             checkout: crate::project_store::ProjectCheckoutState {
                 current_branch: Some(branch.to_string()),
                 lines_added: 0,
@@ -150,6 +159,7 @@ mod tests {
             target_project_id: target_project_id.to_string(),
             branch_name: branch_name.to_string(),
             section_id: format!("{target_project_id}::{branch_name}::{id}"),
+            worktree: None,
             worktree_project_id: worktree_project_id.map(str::to_string),
             tabs: Vec::new(),
             active_tab_id: String::new(),
@@ -209,6 +219,39 @@ mod tests {
         assert_eq!(target.project_id, "worktree");
         assert_eq!(target.branch_name, "feature/wt");
         assert_eq!(target.project_path, worktree.path);
+    }
+
+    #[test]
+    fn task_workspace_target_prefers_embedded_worktree_branch_over_root_branch() {
+        let root = sample_project("root", "repo-1", ProjectKind::Root, "main");
+        let mut task = sample_task(
+            "task-1",
+            TaskKind::Worktree,
+            "root",
+            "worktree",
+            "feature/stale",
+            None,
+            None,
+        );
+        task.worktree = Some(crate::project_store::TaskWorktree {
+            id: "worktree".to_string(),
+            repo_id: "repo-1".to_string(),
+            name: "worktree-wt".to_string(),
+            path: PathBuf::from("/tmp/worktree-wt"),
+            checkout: crate::project_store::ProjectCheckoutState {
+                current_branch: Some("feature/wt".to_string()),
+                lines_added: 0,
+                lines_removed: 0,
+            },
+            worktree_name: Some("worktree-wt".to_string()),
+        });
+
+        let target = task_workspace_target(std::slice::from_ref(&root), &root, &task)
+            .expect("embedded worktree task target should resolve");
+
+        assert_eq!(target.project_id, "worktree");
+        assert_eq!(target.branch_name, "feature/wt");
+        assert_eq!(target.project_path, PathBuf::from("/tmp/worktree-wt"));
     }
 
     #[test]

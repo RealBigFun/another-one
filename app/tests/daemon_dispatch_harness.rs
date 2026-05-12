@@ -23,7 +23,6 @@ use another_one_core::project_store::{Project, ProjectStore, Task};
 use daemon_proto::{Control, WorkerReply};
 use daemon_transport::{in_memory::pair, DialTarget, Session as ClientSession, SessionEvent};
 use futures_core::Stream;
-use futures_util::StreamExt;
 
 /// Test fixture wiring: `RegistryState` + `DesktopTerminalRegistry` +
 /// `daemon_transport::in_memory::pair` + a tokio task running
@@ -96,6 +95,7 @@ fn seed_one_project_one_task() -> (Vec<Project>, Vec<Task>) {
         name: "p1".into(),
         path: std::path::PathBuf::from("/tmp/p1"),
         kind: ProjectKind::Root,
+        archived: false,
         checkout: Default::default(),
         branch_settings: Default::default(),
         actions: Vec::new(),
@@ -110,6 +110,7 @@ fn seed_one_project_one_task() -> (Vec<Project>, Vec<Task>) {
         target_project_id: "p1".into(),
         branch_name: "main".into(),
         section_id: "p1::main::t1".into(),
+        worktree: None,
         worktree_project_id: None,
         tabs: Vec::new(),
         active_tab_id: String::new(),
@@ -130,14 +131,16 @@ async fn harness_health_ok() {
 #[tokio::test]
 async fn harness_round_trips_list_projects() {
     let (projects, tasks) = seed_one_project_one_task();
-    let mut harness = Harness::new_seeded(projects, tasks).await;
+    let harness = Harness::new_seeded(projects, tasks).await;
     let reply = harness
         .client
         .call(Control::ListProjects)
         .await
         .expect("ListProjects call");
     match reply {
-        WorkerReply::ProjectList { projects, ui: _, .. } => {
+        WorkerReply::ProjectList {
+            projects, ui: _, ..
+        } => {
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].id, "p1");
             assert_eq!(projects[0].tasks.len(), 1);
@@ -211,6 +214,7 @@ async fn worktree_task_survives_projection_round_trip() {
         name: "root".into(),
         path: std::path::PathBuf::from("/tmp/root"),
         kind: ProjectKind::Root,
+        archived: false,
         checkout: Default::default(),
         branch_settings: Default::default(),
         actions: Vec::new(),
@@ -223,6 +227,7 @@ async fn worktree_task_survives_projection_round_trip() {
         name: "root".into(),
         path: std::path::PathBuf::from("/tmp/root-wt"),
         kind: ProjectKind::Worktree,
+        archived: false,
         checkout: Default::default(),
         branch_settings: Default::default(),
         actions: Vec::new(),
@@ -237,6 +242,9 @@ async fn worktree_task_survives_projection_round_trip() {
         target_project_id: "wt1".into(),
         branch_name: "feat/wt".into(),
         section_id: "wt1::feat/wt::wt-task".into(),
+        worktree: Some(another_one_core::project_store::TaskWorktree::from_project(
+            &worktree,
+        )),
         worktree_project_id: Some("wt1".into()),
         tabs: Vec::new(),
         active_tab_id: String::new(),
@@ -253,13 +261,13 @@ async fn worktree_task_survives_projection_round_trip() {
     };
     let target_present = projects.iter().any(|p| p.id == "wt1");
     assert!(
-        target_present,
-        "worktree project must appear in projection so absorb/sanitize keeps the task"
+        !target_present,
+        "worktree project should not appear as a top-level project"
     );
     let task_present = projects
         .iter()
         .flat_map(|p| p.tasks.iter())
-        .any(|t| t.id == "wt-task" && t.target_project_id == "wt1");
+        .any(|t| t.id == "wt-task" && t.target_project_id == "wt1" && t.worktree.is_some());
     assert!(task_present, "worktree task missing from projection");
     harness.shutdown();
 }

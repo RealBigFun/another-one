@@ -13,7 +13,7 @@ use crate::app::{
     SidebarTaskMenuState, SidebarTaskRenameState, WorkspaceKeyboardFocus,
 };
 use crate::mobile::MobileView;
-use crate::project_store::{Branch, Project, TaskKind};
+use crate::project_store::{Branch, Project, ProjectKind, TaskKind};
 use crate::project_workflows;
 use crate::shortcuts::{shortcut_matches_event, ShortcutAction};
 use crate::theme;
@@ -65,6 +65,13 @@ struct SidebarTaskMenuItemStyle {
     hover_bg: gpui::Hsla,
 }
 
+fn sidebar_root_index(projects: &[Project], indices: &[usize]) -> Option<usize> {
+    indices
+        .iter()
+        .copied()
+        .find(|index| matches!(projects[*index].kind, ProjectKind::Root))
+}
+
 impl AnotherOneApp {
     fn sidebar_group_key(project: &Project) -> String {
         project
@@ -83,22 +90,6 @@ impl AnotherOneApp {
             .primary_branch_for_project(&project.id, prefer_default)
     }
 
-    fn sidebar_branch_named(&self, project: &Project, branch_name: &str) -> Branch {
-        self.project_store
-            .branch_view(&project.id, branch_name)
-            .or_else(|| self.sidebar_branch_for_project(project, false))
-            .unwrap_or_else(|| Branch {
-                name: branch_name.to_string(),
-                lines_added: 0,
-                lines_removed: 0,
-                ahead_count: 0,
-                behind_count: 0,
-                last_commit_relative: String::new(),
-                is_default: false,
-                is_current: false,
-            })
-    }
-
     fn sidebar_root_project_for_project(&self, project_id: &str) -> Option<Project> {
         let project = self
             .project_store
@@ -111,7 +102,8 @@ impl AnotherOneApp {
             .projects
             .iter()
             .find(|candidate| {
-                Self::sidebar_group_key(candidate) == group_key && candidate.worktree_name.is_none()
+                Self::sidebar_group_key(candidate) == group_key
+                    && matches!(candidate.kind, ProjectKind::Root)
             })
             .cloned()
             .or_else(|| Some(project.clone()))
@@ -146,11 +138,9 @@ impl AnotherOneApp {
                 continue;
             };
 
-            let root_index = indices
-                .iter()
-                .copied()
-                .find(|index| self.project_store.projects[*index].worktree_name.is_none())
-                .unwrap_or(indices[0]);
+            let Some(root_index) = sidebar_root_index(&self.project_store.projects, indices) else {
+                continue;
+            };
             let root_project = self.project_store.projects[root_index].clone();
 
             let mut child_entries = Vec::new();
@@ -163,15 +153,20 @@ impl AnotherOneApp {
                     ) else {
                         continue;
                     };
-                    let Some(project) = self
+                    let branch = self
                         .project_store
-                        .projects
-                        .iter()
-                        .find(|project| project.id == target.project_id)
-                    else {
-                        continue;
-                    };
-                    let branch = self.sidebar_branch_named(project, &target.branch_name);
+                        .branch_view(&target.project_id, &target.branch_name)
+                        .or_else(|| self.sidebar_branch_for_project(&root_project, false))
+                        .unwrap_or_else(|| Branch {
+                            name: target.branch_name.clone(),
+                            lines_added: 0,
+                            lines_removed: 0,
+                            ahead_count: 0,
+                            behind_count: 0,
+                            last_commit_relative: String::new(),
+                            is_default: false,
+                            is_current: false,
+                        });
                     child_entries.push(SidebarTaskEntry {
                         project_id: target.project_id,
                         project_path: target.project_path,
@@ -3226,10 +3221,8 @@ fn terminal_key_bytes(ev: &KeyDownEvent) -> Option<Vec<u8>> {
     // paths would either drop the modifier (control_key_byte
     // rejects nav key names) or emit the legacy ESC-prefix shape
     // (`\x1b\x1b[D`) which many TUIs don't parse.
-    let nav_modifier_bits: u8 = 1
-        + (modifiers.shift as u8)
-        + ((modifiers.alt as u8) << 1)
-        + ((control_pressed as u8) << 2);
+    let nav_modifier_bits: u8 =
+        1 + (modifiers.shift as u8) + ((modifiers.alt as u8) << 1) + ((control_pressed as u8) << 2);
     if nav_modifier_bits != 1 {
         let modified = match key {
             "up" => Some(format!("\x1b[1;{nav_modifier_bits}A")),
@@ -3529,6 +3522,7 @@ mod tests {
             actions: Vec::new(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
+            archived: false,
         }
     }
 
@@ -3607,6 +3601,38 @@ mod tests {
             project_workflows::removed_repo_ids_without_remaining_projects(&projects, &removed);
 
         assert_eq!(removed_repo_ids, HashSet::from(["repo-a".to_string()]));
+    }
+
+    #[test]
+    fn sidebar_root_index_uses_project_kind_not_missing_worktree_name() {
+        let projects = vec![
+            sample_project(
+                "worktree",
+                "repo-a",
+                crate::project_store::ProjectKind::Worktree,
+                None,
+            ),
+            sample_project(
+                "root",
+                "repo-a",
+                crate::project_store::ProjectKind::Root,
+                None,
+            ),
+        ];
+
+        assert_eq!(sidebar_root_index(&projects, &[0, 1]), Some(1));
+    }
+
+    #[test]
+    fn sidebar_root_index_skips_worktree_only_groups() {
+        let projects = vec![sample_project(
+            "worktree",
+            "repo-a",
+            crate::project_store::ProjectKind::Worktree,
+            None,
+        )];
+
+        assert_eq!(sidebar_root_index(&projects, &[0]), None);
     }
 }
 
