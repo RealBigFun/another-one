@@ -1522,6 +1522,20 @@ pub struct UiSnapshot {
     /// the wire for stable JSON ordering.
     #[serde(default)]
     pub enabled_agents: Option<Vec<String>>,
+    /// Agent ids whose executable the **daemon** can actually
+    /// invoke. Populated by the daemon's own `$PATH` + filesystem
+    /// probe — NOT the client's. This is the single source of
+    /// truth for "which agents can be launched" because the
+    /// daemon is the process that fork/execs them. Clients
+    /// render/filter UI from this list instead of probing their
+    /// own filesystem (a mobile client has no `claude` / `codex`
+    /// binary locally, but the paired desktop daemon does, and
+    /// the phone should offer every agent the desktop can run).
+    /// Empty list = no agents installed on the daemon host.
+    /// Wire-additive; older daemons omit the field and clients
+    /// should treat that as "unknown, don't filter".
+    #[serde(default)]
+    pub available_agent_ids: Option<Vec<String>>,
     /// Opaque JSON-serialised
     /// `HashMap<OpenInAppKind, OpenInAppKindState>` from
     /// `UiState::open_in_apps`.

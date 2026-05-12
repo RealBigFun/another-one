@@ -47,7 +47,7 @@ actions!(
 );
 
 use crate::agents::{
-    agent_executable_available, agent_id_for_provider, agent_output_indicates_missing_session,
+    agent_id_for_provider, agent_output_indicates_missing_session,
     effective_enabled_agents, terminal_launch_config_for_selected_agent,
     terminal_launch_config_for_selected_agents, AgentDef, TerminalLaunchConfig, TerminalSessionRef,
     AGENTS,
@@ -3555,9 +3555,23 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn enabled_agents(&self) -> Vec<&'static AgentDef> {
+        // Availability is owned by the daemon — it's the process
+        // that fork/execs agents, so its `$PATH` is the one that
+        // matters. The client's own filesystem probe was wrong on
+        // mobile (phone has no `claude` / `codex` binary locally
+        // even though the paired desktop daemon does) and
+        // redundant on desktop (daemon and GUI shared a process,
+        // so the probe had to be identical to the daemon's).
+        // Filter by `project_store.ui.available_agent_ids`, which
+        // the daemon stamps into every UiSnapshot. Treat `None` as
+        // "daemon hasn't reported yet / older protocol" — fall
+        // back to the unfiltered enabled list so a pre-projection
+        // client at least shows something instead of an empty
+        // modal.
+        let available = self.project_store.ui.available_agent_ids.as_ref();
         effective_enabled_agents(self.project_store.ui.enabled_agents.as_ref())
             .into_iter()
-            .filter(|agent| agent.provider.map_or(true, agent_executable_available))
+            .filter(|agent| available.map_or(true, |set| set.contains(agent.id)))
             .collect()
     }
 

@@ -752,6 +752,17 @@ pub struct UiState {
     pub preferred_open_in_app: Option<OpenInAppKind>,
     #[serde(default)]
     pub enabled_agents: Option<HashSet<String>>,
+    /// Agent ids the **daemon** reports as executable on its host.
+    /// Not persisted (the daemon recomputes from its live `$PATH`
+    /// on every state refresh and stamps every projection with the
+    /// current list). `None` = the connected daemon is older than
+    /// the `available_agent_ids` wire field or we haven't received
+    /// a projection yet; treat that as "unknown, don't filter".
+    /// `Some(set)` = authoritative list of ids the daemon can
+    /// actually fork/exec, which is what every UI filter should
+    /// consult instead of the client's own filesystem.
+    #[serde(skip)]
+    pub available_agent_ids: Option<HashSet<String>>,
     #[serde(default)]
     pub default_agent_id: Option<String>,
     #[serde(default)]
@@ -786,6 +797,7 @@ impl Default for UiState {
             enabled_open_in_apps: None,
             preferred_open_in_app: None,
             enabled_agents: None,
+            available_agent_ids: None,
             default_agent_id: None,
             agent_launch_args: HashMap::new(),
             git_commit_generation_script: None,
@@ -1933,6 +1945,9 @@ impl ProjectStore {
         }
         self.ui.default_agent_id = snapshot.default_agent_id;
         self.ui.enabled_agents = snapshot.enabled_agents.map(|v| v.into_iter().collect());
+        self.ui.available_agent_ids = snapshot
+            .available_agent_ids
+            .map(|v| v.into_iter().collect());
         if let Some(value) = snapshot.open_in_apps {
             if let Ok(parsed) = serde_json::from_value(value) {
                 self.ui.enabled_open_in_apps = Some(parsed);
@@ -5695,6 +5710,7 @@ mod tests {
                 enabled_open_in_apps: None,
                 preferred_open_in_app: None,
                 enabled_agents: None,
+                available_agent_ids: None,
                 default_agent_id: None,
                 agent_launch_args: HashMap::new(),
                 git_commit_generation_script: None,

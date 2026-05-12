@@ -709,6 +709,17 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                     .enabled_agents
                     .as_ref()
                     .map(|set| set.iter().cloned().collect()),
+                available_agent_ids: Some(
+                    another_one_core::agents::AGENTS
+                        .iter()
+                        .filter(|agent| {
+                            agent
+                                .provider
+                                .map_or(true, another_one_core::agents::agent_executable_available)
+                        })
+                        .map(|agent| agent.id.to_string())
+                        .collect(),
+                ),
                 open_in_apps: ui
                     .enabled_open_in_apps
                     .as_ref()

@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::agent_icons::branded_icon;
-use crate::agents::{agent_executable_available, AgentProviderKind, AGENTS};
+use crate::agents::{AgentProviderKind, AGENTS};
 use crate::app::{AnotherOneApp, SettingsGitActionLlmDropdown};
 use crate::git_actions::{
     default_commit_generation_script, default_pr_generation_script, GitActionLlmSettings,
@@ -1867,11 +1867,15 @@ impl AnotherOneApp {
         let button_hover = settings_button_hover(self.project_store.ui.theme_mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
         let enabled_agents = self.enabled_agents();
+        // Daemon-reported availability — see the comment on
+        // `AnotherOneApp::enabled_agents` for why the filesystem
+        // probe moved daemon-side.
+        let daemon_available = self.project_store.ui.available_agent_ids.as_ref();
 
         let mut rows = div().flex().flex_col();
         for (index, agent) in AGENTS.iter().enumerate() {
             let args = self.project_store.agent_launch_args(agent.id);
-            let is_installed = agent.provider.map_or(true, agent_executable_available);
+            let is_installed = daemon_available.map_or(true, |set| set.contains(agent.id));
             let is_enabled = self.agent_enabled(agent.id) && is_installed;
             let is_default = self.agent_is_default(agent.id) && is_installed;
             let draft = self
@@ -2909,13 +2913,23 @@ impl AnotherOneApp {
         button_hover: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let daemon_available = self.project_store.ui.available_agent_ids.clone();
         [
             AgentProviderKind::ClaudeCode,
             AgentProviderKind::CursorAgent,
             AgentProviderKind::Codex,
         ]
         .into_iter()
-        .filter(|provider| agent_executable_available(*provider))
+        .filter(move |provider| {
+            // Use the daemon's availability list, not the client's
+            // own `$PATH` — agents run on the daemon, not here.
+            match crate::agents::agent_id_for_provider(*provider) {
+                Some(agent_id) => daemon_available
+                    .as_ref()
+                    .map_or(true, |set| set.contains(agent_id)),
+                None => true,
+            }
+        })
         .map(|provider| {
             let selected = selected_provider == provider;
             let icon_path = AGENTS
