@@ -250,6 +250,17 @@ pub enum Control {
     /// Resize the currently-attached tab's PTY. Silently no-ops
     /// when nothing is attached.
     TabResize { cols: u16, rows: u16 },
+    /// Refresh the daemon's liveness tracking for this viewer.
+    /// Clients send one periodically (every few seconds) while
+    /// they have an attached tab. When the daemon stops seeing
+    /// heartbeats from a viewer, a sweep removes the viewer from
+    /// `active_viewers` + `viewer_focus` and recomputes the PTY's
+    /// effective viewport — so a backgrounded / killed phone
+    /// stops holding the desktop's PTY at a small phone viewport
+    /// after connection drop. No-op when nothing is attached (the
+    /// viewer has no viewport claim to refresh); see also
+    /// [`AttachTab`], [`DetachTab`] for the lifecycle pair.
+    Heartbeat,
     /// Ask the daemon to launch the task's tab as a live PTY if it
     /// isn't running. If already running, no-op. After this call,
     /// [`AttachTab`] will succeed. Both the desktop GUI and mobile

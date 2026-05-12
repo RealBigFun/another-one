@@ -1079,6 +1079,12 @@ impl WorkspacePane {
                     cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         this.keyboard_focus = WorkspaceKeyboardFocus::MainPane;
                         this.focus_handle.focus(window, cx);
+                        // Raise the Android soft keyboard on tap.
+                        // The terminal surface isn't a GPUI
+                        // `TextInput`, so the IME wouldn't come up
+                        // from the usual focus-driven path.
+                        // No-op on desktop.
+                        crate::mobile::show_soft_keyboard();
                         let _ = this.app.update(cx, |app, app_cx| {
                             if app.open_terminal_link_at_click(&selection_key, ev, window, app_cx) {
                                 app_cx.stop_propagation();

@@ -364,6 +364,10 @@ async fn dispatch_call(
             }
             Some(WorkerReply::Empty)
         }
+        Control::Heartbeat => {
+            registry.note_viewer_heartbeat(viewer_id);
+            Some(WorkerReply::Empty)
+        }
         Control::LaunchTab { section_id, tab_id } => {
             registry.launch_tab(&section_id, &tab_id);
             Some(WorkerReply::Empty)

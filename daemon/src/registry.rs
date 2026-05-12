@@ -69,6 +69,9 @@ pub struct EndpointHandle {
     /// Dropped when the handle drops; aborts the endpoint's root
     /// task and all per-connection tasks it spawned.
     pub(crate) _root_task: tokio::task::AbortHandle,
+    /// Same lifecycle as `_root_task` for the heartbeat-sweep
+    /// task that ticks viewport liveness every 5 s.
+    pub(crate) _sweep_task: tokio::task::AbortHandle,
 }
 
 impl EndpointHandle {
@@ -323,6 +326,21 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// the viewer's session ends so its stale viewport doesn't keep
     /// clamping the PTY down forever.
     fn viewer_disconnected(&self, _viewer_id: &str) {}
+
+    /// Refresh the liveness timestamp for this viewer. The daemon
+    /// uses it to detect viewers that went silent without a clean
+    /// disconnect (backgrounded phone, network flake, process
+    /// kill) and sweep their viewport claims via
+    /// [`sweep_stale_viewers`]. Default impl is a no-op for
+    /// registries that don't need liveness tracking.
+    fn note_viewer_heartbeat(&self, _viewer_id: &str) {}
+
+    /// Remove viewers whose last activity is older than
+    /// `stale_ms`. Called periodically by the daemon's accept loop.
+    /// Returns the set of tab keys whose `effective_size` may have
+    /// changed so callers (the desktop's render tick) can rerun
+    /// the resize pump. Default impl is a no-op.
+    fn sweep_stale_viewers(&self, _stale_ms: u64) {}
 
     /// Launch the tab's PTY if it isn't already running. No-op if
     /// the tab is already live. After this returns, subsequent

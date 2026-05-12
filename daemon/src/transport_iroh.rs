@@ -136,10 +136,29 @@ pub async fn run_embedded(
         }
     });
 
+    // Periodic sweep of viewers that stopped heartbeating. Runs
+    // independently of the accept loop so a burst of connections
+    // doesn't stall liveness checks. Interval + stale threshold
+    // are tuned for the mobile client (5s heartbeat cadence) so a
+    // backgrounded phone drops out of `active_viewers` before the
+    // desktop user notices their PTY stuck at the phone viewport.
+    let sweep_registry = registry.clone();
+    let sweep_handle = tokio::spawn(async move {
+        const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+        const STALE_MS: u64 = 15_000;
+        let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            sweep_registry.sweep_stale_viewers(STALE_MS);
+        }
+    });
+
     Ok(EndpointHandle {
         endpoint_id,
         pair_state,
         _root_task: root_handle.abort_handle(),
+        _sweep_task: sweep_handle.abort_handle(),
     })
 }
 

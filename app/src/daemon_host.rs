@@ -100,6 +100,16 @@ pub struct RegistryState {
     /// Last effective size applied to each tab's PTY; avoids
     /// re-enqueueing identical resize requests on every keystroke.
     pub(crate) effective_sizes: HashMap<TerminalRuntimeKey, (u16, u16)>,
+    /// Liveness tracking for iroh viewers: `viewer_id` → last
+    /// `Instant` we observed activity from them (Heartbeat,
+    /// viewport claim, etc.). The daemon's periodic sweep removes
+    /// entries where `now - last > stale_threshold` and clears the
+    /// viewer's `active_viewers` / `viewer_focus` claims. Prevents
+    /// a silently-gone phone from holding the PTY at the phone's
+    /// viewport forever — the min-across-viewers fallback is the
+    /// next-smallest live viewer (or the desktop alone when
+    /// nothing else is alive).
+    pub(crate) last_viewer_activity: HashMap<String, std::time::Instant>,
     /// Tab-launch requests from any client (mobile). Drained on the
     /// GPUI render tick, where the task's persisted `launch_config`
     /// is resolved from the project store and the PTY is spawned via
@@ -157,6 +167,7 @@ impl RegistryState {
             active_viewers: HashMap::new(),
             viewer_focus: HashMap::new(),
             effective_sizes: HashMap::new(),
+            last_viewer_activity: HashMap::new(),
             state_change_tx,
         }
     }
@@ -230,6 +241,8 @@ impl RegistryState {
             .or_default()
             .insert(viewer_id.to_string(), (cols, rows));
         self.viewer_focus.insert(viewer_id.to_string(), key.clone());
+        self.last_viewer_activity
+            .insert(viewer_id.to_string(), std::time::Instant::now());
         self.recompute_effective_size(&key);
         focus_changed
     }
@@ -252,6 +265,73 @@ impl RegistryState {
         // viewer doesn't take the "drop old focus" branch against
         // a ghost key.
         self.viewer_focus.retain(|_, focus_key| focus_key != key);
+    }
+
+    /// Refresh the liveness timestamp for `viewer_id`. The
+    /// Control::Heartbeat dispatch hits this on every tick from a
+    /// connected iroh client, and the sweep method below uses it
+    /// to decide which viewers have gone silent.
+    pub(crate) fn note_viewer_heartbeat(&mut self, viewer_id: &str) {
+        self.last_viewer_activity
+            .insert(viewer_id.to_string(), std::time::Instant::now());
+    }
+
+    /// Drop viewers whose last-observed activity is older than
+    /// `stale`. For each removed viewer, clear its claims out of
+    /// `active_viewers` + `viewer_focus` + `last_viewer_activity`
+    /// and recompute the effective size of every key whose viewer
+    /// set changed. Returns whether anything was swept (callers
+    /// can use that to trigger a state-change push).
+    ///
+    /// Exempts the desktop-local viewer entirely — it doesn't
+    /// heartbeat on its own, and its viewport claims come from the
+    /// continuous GPUI render tick. Only iroh viewers need liveness
+    /// tracking.
+    pub(crate) fn sweep_stale_viewers(&mut self, stale: std::time::Duration) -> bool {
+        let now = std::time::Instant::now();
+        let stale_ids: Vec<String> = self
+            .last_viewer_activity
+            .iter()
+            .filter(|(id, last)| {
+                id.as_str() != DESKTOP_LOCAL_VIEWER_ID
+                    && now.duration_since(**last) >= stale
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        if stale_ids.is_empty() {
+            return false;
+        }
+        for id in &stale_ids {
+            self.last_viewer_activity.remove(id);
+            self.viewer_focus.remove(id);
+            let touched: Vec<TerminalRuntimeKey> = self
+                .active_viewers
+                .iter_mut()
+                .filter_map(|(key, map)| {
+                    if map.remove(id).is_some() {
+                        if map.is_empty() {
+                            Some(key.clone())
+                        } else {
+                            Some(key.clone())
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for key in touched {
+                if self
+                    .active_viewers
+                    .get(&key)
+                    .is_none_or(|map| map.is_empty())
+                {
+                    self.active_viewers.remove(&key);
+                    self.effective_sizes.remove(&key);
+                }
+                self.recompute_effective_size(&key);
+            }
+        }
+        true
     }
 
     /// Recompute the min-across-viewers size for `key` and, if it
@@ -717,6 +797,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn viewer_disconnected(&self, viewer_id: &str) {
         self.with_state(|state| {
             state.viewer_focus.remove(viewer_id);
+            state.last_viewer_activity.remove(viewer_id);
             // Scan every active_viewers map, not just the one this
             // viewer was "focused" on. The trait contract says
             // "forget *every* size announcement this viewer made",
@@ -753,6 +834,26 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                 }
             }
         });
+    }
+
+    fn note_viewer_heartbeat(&self, viewer_id: &str) {
+        let viewer_id = viewer_id.to_string();
+        self.with_state(|state| {
+            state.note_viewer_heartbeat(&viewer_id);
+        });
+    }
+
+    fn sweep_stale_viewers(&self, stale_ms: u64) {
+        let stale = std::time::Duration::from_millis(stale_ms);
+        let swept = self
+            .with_state(|state| state.sweep_stale_viewers(stale))
+            .unwrap_or(false);
+        // Nudge the push pump so connected peers see the updated
+        // effective viewport (post-sweep the PTY may have resized,
+        // which doesn't itself broadcast a state change).
+        if swept {
+            self.with_state(|state| state.notify_state_changed());
+        }
     }
 
     fn launch_tab(&self, section_id: &str, tab_id: &str) {

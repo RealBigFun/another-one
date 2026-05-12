@@ -3522,6 +3522,7 @@ mod tests {
             actions: Vec::new(),
             worktree_name: worktree_name.map(str::to_string),
             repo_common_dir: None,
+            archived: false,
         }
     }
 
