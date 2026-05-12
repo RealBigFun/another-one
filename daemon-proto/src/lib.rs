@@ -222,11 +222,6 @@ pub const PUSH_REQUEST_ID: u64 = 0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
-    /// Legacy: ask the daemon to spawn `git_refresh` for a literal
-    /// path. Preserved for backward compat with clients built before
-    /// the projects/tasks/tabs protocol. New clients call
-    /// [`Control::ListProjects`] then [`Control::AttachTab`].
-    WatchProject { project_path: String },
     /// Ask the daemon to send its full project tree as a
     /// [`WorkerReply::ProjectList`] frame (projects → tasks → tabs).
     /// The embedded (desktop) daemon projects straight off the
@@ -1728,39 +1723,6 @@ pub enum AgentProvider {
     /// fixtures yields a benign "plain shell" tab.
     #[default]
     Shell,
-}
-
-/// Wire projection of `another_one_core::open_in::OpenInAppKind`
-/// pre-hydrated with the display strings the mobile UI renders. The
-/// daemon resolves them once at projection time so the wire payload
-/// is one round-trip — mobile never needs to re-derive label/icon
-/// from the id.
-///
-/// Field-for-field compatible with the client DTO shape so adapters
-/// can decode the wire payload without a mapping layer per field.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenInAppWire {
-    /// Stable id matching `OpenInAppKind::id()` — `"cursor"`,
-    /// `"zed"`, `"vscode"`, `"file-manager"`.
-    pub id: String,
-    pub label: String,
-    pub description: String,
-    pub icon_path: String,
-}
-
-/// Wire projection of the host's Open In state.
-/// Mobile's titlebar uses `preferred_app_id` for its primary-action
-/// icon and `enabled_apps` for the chevron dropdown. Actual app
-/// launch stays host-local on the daemon (see `openProjectInApp`'s
-/// docstring in `connection.dart`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct OpenInStateWire {
-    /// Apps offered in the dropdown, ordered as `OpenInAppKind::all()`
-    /// declares them.
-    pub enabled_apps: Vec<OpenInAppWire>,
-    /// Id of the app the titlebar's primary action launches, or
-    /// `None` when no app is enabled at all.
-    pub preferred_app_id: Option<String>,
 }
 
 /// Wire projection of one row from Settings → Open In.

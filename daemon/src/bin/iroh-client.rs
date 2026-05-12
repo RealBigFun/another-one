@@ -117,29 +117,6 @@ async fn main() -> anyhow::Result<()> {
         .context("write resize control")?;
     eprintln!("[client] sent resize 100x30");
 
-    // Ask the daemon to watch a project and forward git-refresh
-    // replies. Pick the path from `ANOTHER_ONE_PROJECT_PATH` if set
-    // (preserves the pre-negotiation dev UX of setting it once),
-    // otherwise fall back to the client's current working directory.
-    let project_path = std::env::var_os("ANOTHER_ONE_PROJECT_PATH")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .map(|p| p.to_string_lossy().into_owned());
-    if let Some(project_path) = project_path {
-        let hello = serde_json::to_vec(&ControlEnvelope {
-            request_id: next_id(),
-            control: Control::WatchProject {
-                project_path: project_path.clone(),
-            },
-        })?;
-        frame::write_frame(&mut send, TY_CONTROL, &hello)
-            .await
-            .context("write watch_project control")?;
-        eprintln!("[client] sent watch_project {project_path}");
-    } else {
-        eprintln!("[client] no project path available; skipping watch_project");
-    }
-
     frame::write_frame(&mut send, TY_DATA, b"echo HELLO_FROM_IROH_$((7*6))\n")
         .await
         .context("write input")?;

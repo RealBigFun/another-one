@@ -289,8 +289,8 @@ pub async fn serve_session_with_attach(
 }
 
 /// Map a single `Control` verb to a `WorkerReply`. Returns `None` for
-/// the rare verbs that don't elicit a reply (`WatchProject` legacy
-/// no-op, `LaunchTab`, `Resize`/`TabResize`, `DetachTab`) — the
+/// the rare verbs that don't elicit a reply (`LaunchTab`,
+/// `Resize`/`TabResize`, `DetachTab`) — the
 /// caller skips `session.reply` for those.
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_call(
@@ -914,13 +914,6 @@ async fn dispatch_call(
         }),
 
         // ── Legacy / no-reply / pre-handled ──────────────────────────
-        Control::WatchProject { project_path: _ } => {
-            // Legacy no-op. Kept in the enum for serde-compat with
-            // any lingering clients; new clients use ListProjects +
-            // AttachTab.
-            debug!("legacy Control::WatchProject ignored");
-            None
-        }
         Control::Hello { .. } => {
             // Hello is the dial-time pairing handshake — concrete
             // transports consume it before constructing the
