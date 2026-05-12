@@ -1107,12 +1107,15 @@ impl WorkspacePane {
                 // already-visible tab lists.
                 continue;
             };
-            let projected = PersistedSectionState {
+            let mut projected = PersistedSectionState {
                 active_tab_id: task.active_tab_id.clone(),
                 next_tab_id: task.next_tab_id,
                 cwd: task.cwd.clone().or_else(|| existing.cwd.clone()),
                 tabs: task.tabs.clone(),
             };
+
+            projected = reconcile_projected_section_state(existing, projected);
+
             if existing.to_persisted() == projected {
                 continue;
             }
@@ -7509,7 +7512,11 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         self.client_focus.insert(target.clone(), focus.clone());
-        if target == ClientId::gui_desktop() {
+        // Cross-client focus commands should update bookkeeping and emit the
+        // event, but they should not steal the desktop's visible focus. The
+        // GUI only moves in response to desktop-origin input or tab/task
+        // creation paths that explicitly open new UI.
+        if should_apply_cross_client_focus_to_workspace(&actor, &target) {
             self.apply_focus_to_workspace(&focus, cx);
         }
         self.emit_client_event(ClientEvent::FocusChanged {
@@ -13145,6 +13152,41 @@ where
     })
 }
 
+fn reconcile_projected_section_state(
+    existing: &SectionState,
+    mut projected: PersistedSectionState,
+) -> PersistedSectionState {
+    // Passive ProjectList snapshots may be stale relative to a desktop
+    // click/shortcut that already switched tabs. Preserve the local active tab
+    // whenever it still exists in the projected tab list. The narrow exception
+    // is tab creation: if the projection's active tab is newly introduced by
+    // this snapshot, honor it so newly-created tabs/tasks can still become
+    // visible immediately.
+    let local_active_tab_id = existing.active_tab_id();
+    let projected_has_local_active = !local_active_tab_id.is_empty()
+        && projected
+            .tabs
+            .iter()
+            .any(|tab| tab.id == local_active_tab_id);
+    let projected_active_is_new = !projected.active_tab_id.is_empty()
+        && projected
+            .tabs
+            .iter()
+            .any(|tab| tab.id == projected.active_tab_id)
+        && !existing
+            .tabs
+            .iter()
+            .any(|tab| tab.id == projected.active_tab_id);
+    if projected_has_local_active && !projected_active_is_new {
+        projected.active_tab_id = local_active_tab_id;
+    }
+    projected
+}
+
+fn should_apply_cross_client_focus_to_workspace(actor: &ClientId, target: &ClientId) -> bool {
+    target == &ClientId::gui_desktop() && actor == &ClientId::gui_desktop()
+}
+
 fn apply_terminal_session_backfill(
     section_states: &mut HashMap<SectionId, SectionState>,
     key: &TerminalRuntimeKey,
@@ -13185,8 +13227,9 @@ mod tests {
         has_active_toolbar_git_action, new_tab_seed_agent_id, next_global_tab_navigation_target,
         next_project_navigation_target, next_task_navigation_target,
         open_in_target_path_for_project, persisted_active_section_key,
-        remove_terminal_runtime_state, resolve_new_task_shortcut_target,
-        root_project_navigation_targets, select_active_section, sidebar_task_navigation_targets,
+        reconcile_projected_section_state, remove_terminal_runtime_state,
+        resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
+        should_apply_cross_client_focus_to_workspace, sidebar_task_navigation_targets,
         terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
         terminal_open_link_modifier_held, terminal_scroll_lines, terminal_selected_text,
         terminal_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
@@ -13210,6 +13253,7 @@ mod tests {
         TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
     };
     use crate::theme::{dark_theme, light_theme};
+    use another_one_core::clients::ClientId;
     use daemon_proto::TerminalRestoreStatus;
     use gpui::{point, px, ClipboardItem, Image, ImageFormat, Modifiers, ScrollDelta};
     use std::collections::{HashMap, HashSet};
@@ -13650,6 +13694,103 @@ mod tests {
         assert_eq!(state.active_tab, 0);
         assert_eq!(state.next_tab_id, 1);
         assert_eq!(state.cwd, Some(PathBuf::from("/tmp/project")));
+    }
+
+    #[test]
+    fn projected_section_state_preserves_existing_local_active_tab() {
+        let existing = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "b".to_string(),
+                next_tab_id: 3,
+                cwd: None,
+                tabs: vec![
+                    shell_tab(0, "A"),
+                    agent_tab("b", "B", AgentProviderKind::Codex),
+                ],
+            },
+            None,
+        );
+        let projected = PersistedSectionState {
+            active_tab_id: "0".to_string(),
+            next_tab_id: 3,
+            cwd: None,
+            tabs: vec![
+                shell_tab(0, "A"),
+                agent_tab("b", "B", AgentProviderKind::Codex),
+            ],
+        };
+
+        let reconciled = reconcile_projected_section_state(&existing, projected);
+
+        assert_eq!(reconciled.active_tab_id, "b");
+    }
+
+    #[test]
+    fn projected_section_state_honors_newly_projected_active_tab() {
+        let existing = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "b".to_string(),
+                next_tab_id: 3,
+                cwd: None,
+                tabs: vec![
+                    shell_tab(0, "A"),
+                    agent_tab("b", "B", AgentProviderKind::Codex),
+                ],
+            },
+            None,
+        );
+        let projected = PersistedSectionState {
+            active_tab_id: "c".to_string(),
+            next_tab_id: 4,
+            cwd: None,
+            tabs: vec![
+                shell_tab(0, "A"),
+                agent_tab("b", "B", AgentProviderKind::Codex),
+                agent_tab("c", "C", AgentProviderKind::ClaudeCode),
+            ],
+        };
+
+        let reconciled = reconcile_projected_section_state(&existing, projected);
+
+        assert_eq!(reconciled.active_tab_id, "c");
+    }
+
+    #[test]
+    fn projected_section_state_uses_projected_active_when_local_tab_was_removed() {
+        let existing = SectionState::from_persisted(
+            PersistedSectionState {
+                active_tab_id: "b".to_string(),
+                next_tab_id: 3,
+                cwd: None,
+                tabs: vec![
+                    shell_tab(0, "A"),
+                    agent_tab("b", "B", AgentProviderKind::Codex),
+                ],
+            },
+            None,
+        );
+        let projected = PersistedSectionState {
+            active_tab_id: "0".to_string(),
+            next_tab_id: 3,
+            cwd: None,
+            tabs: vec![shell_tab(0, "A")],
+        };
+
+        let reconciled = reconcile_projected_section_state(&existing, projected);
+
+        assert_eq!(reconciled.active_tab_id, "0");
+    }
+
+    #[test]
+    fn cross_client_focus_does_not_move_desktop_workspace() {
+        assert!(!should_apply_cross_client_focus_to_workspace(
+            &ClientId::mcp("agent"),
+            &ClientId::gui_desktop(),
+        ));
+        assert!(should_apply_cross_client_focus_to_workspace(
+            &ClientId::gui_desktop(),
+            &ClientId::gui_desktop(),
+        ));
     }
 
     #[test]
