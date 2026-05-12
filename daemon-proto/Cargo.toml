@@ -1,6 +1,6 @@
 [package]
 name = "daemon-proto"
-version = "0.1.18"
+version = "0.1.17"
 edition = "2021"
 description = "Wire-protocol types shared between the AnotherOne daemon and its clients. Server and client deserialize the same code path so additions land in one place instead of two."
 publish = false
