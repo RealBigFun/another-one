@@ -131,18 +131,14 @@ pub fn dial(pairing_url: String) {
                 // behaviour off-Android — desktop doesn't run the
                 // iroh *client* against its own daemon.
                 let key_path = crate::mobile::iroh_secret_key_path();
-                let session = match daemon_client::connect_with_secret_key(
-                    &pairing_url,
-                    key_path,
-                )
-                .await
-                {
-                    Ok(s) => s,
-                    Err(_) => {
-                        // `connect_inner` already pushed a `DialStatus::Error`.
-                        return;
-                    }
-                };
+                let session =
+                    match daemon_client::connect_with_secret_key(&pairing_url, key_path).await {
+                        Ok(s) => s,
+                        Err(_) => {
+                            // `connect_inner` already pushed a `DialStatus::Error`.
+                            return;
+                        }
+                    };
                 let session = store_session(session);
 
                 // Additionally wrap the legacy session into the

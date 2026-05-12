@@ -9,21 +9,16 @@
 //! SVG is referenced from the UI. Add a file under `app/assets/`
 //! and it's immediately loadable from every target.
 //!
-//! `ProjectAssets::root` is kept for compatibility with callers
-//! that want a human-readable "where did this come from" path,
-//! though nothing reads through it anymore.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
 
 use gpui::SharedString;
-use include_dir::{Dir, include_dir};
+use include_dir::{include_dir, Dir};
 
 static EMBEDDED_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
-pub struct ProjectAssets {
-    pub root: PathBuf,
-}
+pub struct ProjectAssets;
 
 pub fn asset_root() -> PathBuf {
     // Reports the source-of-truth path the embed snapshotted. Kept

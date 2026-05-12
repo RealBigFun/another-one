@@ -47,10 +47,9 @@ actions!(
 );
 
 use crate::agents::{
-    agent_id_for_provider, agent_output_indicates_missing_session,
-    effective_enabled_agents, terminal_launch_config_for_selected_agent,
-    terminal_launch_config_for_selected_agents, AgentDef, TerminalLaunchConfig, TerminalSessionRef,
-    AGENTS,
+    agent_id_for_provider, agent_output_indicates_missing_session, effective_enabled_agents,
+    terminal_launch_config_for_selected_agent, terminal_launch_config_for_selected_agents,
+    AgentDef, TerminalLaunchConfig, TerminalSessionRef, AGENTS,
 };
 use crate::background_ops::{BroadcastOperation, BroadcastOperationEvent};
 use crate::git_workspace::GitWorkspace;
@@ -1118,8 +1117,10 @@ impl WorkspacePane {
                 continue;
             }
             let fallback_cwd = existing.cwd.clone();
-            self.section_states
-                .insert(section_id, SectionState::from_persisted(projected, fallback_cwd));
+            self.section_states.insert(
+                section_id,
+                SectionState::from_persisted(projected, fallback_cwd),
+            );
             changed = true;
         }
         if changed {
@@ -1133,7 +1134,8 @@ impl WorkspacePane {
         cwd: Option<std::path::PathBuf>,
         launch_config: Option<TerminalLaunchConfig>,
         cx: &mut Context<Self>,
-    ) {        let mut changed = false;
+    ) {
+        let mut changed = false;
 
         if let Some(state) = self.section_states.get_mut(&section_id) {
             changed |= state.update_cwd(cwd);
@@ -7787,9 +7789,7 @@ impl AnotherOneApp {
                     daemon_proto::Control::TabResize { cols, rows },
                     move |result| {
                         if let Err(err) = result {
-                            log::warn!(
-                                "session TabResize failed cols={cols} rows={rows}: {err}"
-                            );
+                            log::warn!("session TabResize failed cols={cols} rows={rows}: {err}");
                         }
                     },
                 );

@@ -73,10 +73,8 @@ use std::borrow::Cow;
 
 use gpui::{px, size, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
 
-use app::{
-    AnotherOneApp, TerminalFind, TerminalSearchNext, TerminalSearchPrev,
-};
-use assets::{asset_root, ProjectAssets};
+use app::{AnotherOneApp, TerminalFind, TerminalSearchNext, TerminalSearchPrev};
+use assets::ProjectAssets;
 use platform::{CurrentPlatform, PlatformServices};
 
 /// Bridge `log` records into the `tracing` subscriber and install a fmt
@@ -168,11 +166,8 @@ fn finish_launching(cx: &mut App) {
 pub fn run_desktop() {
     init_logging();
     leakscope::start_sampler();
-    let asset_root = asset_root();
     gpui_platform::application()
-        .with_assets(ProjectAssets {
-            root: asset_root.clone(),
-        })
+        .with_assets(ProjectAssets)
         .run(finish_launching);
 }
 
@@ -224,10 +219,7 @@ pub fn android_main(android_app: android_activity::AndroidApp) {
     // the phone's setting. See `mobile::system_prefers_dark`.
     {
         use android_activity::ndk::configuration::UiModeNight;
-        let prefers_dark = matches!(
-            android_app.config().ui_mode_night(),
-            UiModeNight::Yes
-        );
+        let prefers_dark = matches!(android_app.config().ui_mode_night(), UiModeNight::Yes);
         crate::mobile::set_system_prefers_dark(prefers_dark);
         log::info!("android_main: system prefers_dark={prefers_dark}");
     }
@@ -241,11 +233,8 @@ pub fn android_main(android_app: android_activity::AndroidApp) {
         }
     };
 
-    let asset_root = asset_root();
     gpui::Application::with_platform(shared.into_rc())
-        .with_assets(ProjectAssets {
-            root: asset_root.clone(),
-        })
+        .with_assets(ProjectAssets)
         .run(finish_launching);
 
     log::info!("android_main: Application.run returned");

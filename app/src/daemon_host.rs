@@ -293,8 +293,7 @@ impl RegistryState {
             .last_viewer_activity
             .iter()
             .filter(|(id, last)| {
-                id.as_str() != DESKTOP_LOCAL_VIEWER_ID
-                    && now.duration_since(**last) >= stale
+                id.as_str() != DESKTOP_LOCAL_VIEWER_ID && now.duration_since(**last) >= stale
             })
             .map(|(id, _)| id.clone())
             .collect();

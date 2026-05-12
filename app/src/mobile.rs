@@ -202,7 +202,10 @@ fn absorb_pair_trigger_file() {
     if url.is_empty() {
         return;
     }
-    log::info!("pair-trigger: injecting URL len={} into QR queue", url.len());
+    log::info!(
+        "pair-trigger: injecting URL len={} into QR queue",
+        url.len()
+    );
     push_qr_scan_result(url);
 }
 
