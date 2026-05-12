@@ -11,6 +11,7 @@
 //!
 
 use std::borrow::Cow;
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
 
 use gpui::SharedString;
@@ -20,6 +21,7 @@ static EMBEDDED_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
 pub struct ProjectAssets;
 
+#[cfg(target_os = "macos")]
 pub fn asset_root() -> PathBuf {
     // Reports the source-of-truth path the embed snapshotted. Kept
     // for logs / diagnostics; the runtime loader itself never
