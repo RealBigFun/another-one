@@ -4572,6 +4572,22 @@ impl AnotherOneApp {
         // `IrohSession`). The `session` field is the only thing
         // call sites read — they do not care which platform branch
         // produced it.
+        // ── Client-role split, NOT a platform split ────────────────
+        //
+        // Desktop and mobile binaries are both *clients* of the
+        // same daemon. The only real divergence here is whether
+        // this binary also *embeds* the daemon in-process. Desktop
+        // does (monolithic binary, loopback in-memory session);
+        // mobile doesn't (talks to a remote daemon over iroh).
+        // Every downstream call site reads `self.session` and
+        // dispatches `Control::*` verbs identically — there is no
+        // mobile-vs-desktop behavior fork past this boot block.
+        //
+        // TODO: once the pairing handshake can land an IrohSession
+        // on desktop too (e.g. headless daemon + separate GUI
+        // process), collapse both arms into one path with the
+        // embed-daemon decision driven by a build feature flag
+        // instead of `target_os`.
         #[cfg(not(target_os = "android"))]
         let (daemon_handle_rx, initial_session) = {
             let handles = crate::daemon_host::spawn(registry_state.clone(), event_bus.clone());
@@ -4895,8 +4911,14 @@ impl AnotherOneApp {
             updater: crate::updater::UpdaterHandle::spawn(crate::updater::BuildIdentity::current()),
             updater_state: crate::updater::UpdateState::Idle,
             gh_check_status: crate::gh_check::GhCheckStatus::Checking,
-            // Desktop only — on android the CLI isn't relevant and the
-            // overlay never paints because `gh_check_completed` stays false.
+            // ── OS-availability split, not a client-role split ──
+            // `gh_check` fork/execs the `gh` CLI to detect a stale
+            // GitHub CLI. Android has no `gh` binary and no
+            // fork/exec-a-binary surface to probe one, so the
+            // check simply never runs there — not because mobile
+            // is a "lesser client" but because the OS doesn't host
+            // the subject of the check. Same reasoning belongs on
+            // any future feature that probes host-OS tooling.
             #[cfg(not(target_os = "android"))]
             gh_check_receiver: Some(crate::gh_check::spawn_check()),
             #[cfg(target_os = "android")]
@@ -5514,15 +5536,34 @@ impl AnotherOneApp {
             // across all current viewers. When a phone attaches at
             // a smaller viewport, the PTY + local grid both follow
             // the phone's size so lines wrap consistently.
+            //
+            // ── Client-role split (NOT a platform split) ───────────
+            // The "registry-host" role (desktop today) claims
+            // viewport on the in-process `RegistryState` directly
+            // because the registry lives in this same process; the
+            // pure-client role (mobile today) additionally
+            // re-issues `Control::AttachTab` over the session when
+            // focus changes, so the remote daemon's forwarder
+            // re-keys which tab it streams bytes for. Both roles
+            // share the same claim_viewport call — the cfg only
+            // gates the focus-change remote-attach nudge, which is
+            // a no-op when the registry is already in this
+            // process. A future refactor can unify the two arms by
+            // routing even the in-process host through its own
+            // loopback session (see the follow-up unify-control-
+            // plane PR referenced in this branch's PR body).
             use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
             #[cfg(target_os = "android")]
             let mut focus_changed = false;
             if let Ok(mut state) = self.registry_state.lock() {
-                // Single-call viewport claim — see #51. On Android
-                // we branch on `focus_changed` to re-issue
-                // `Control::AttachTab` against the paired session
-                // so the daemon's forwarder pushes bytes for the
-                // newly focused tab.
+                // Single-call viewport claim — see #51. The registry
+                // lives in this process on the host role, so
+                // claiming directly skips the session round-trip.
+                // The `focus_changed` bit is only consumed on the
+                // pure-client role below where it triggers a
+                // remote AttachTab over the paired session; on the
+                // host role the attach is already correct via the
+                // in-process dispatch path that created this key.
                 let changed = state.claim_viewport(
                     DESKTOP_LOCAL_VIEWER_ID,
                     request.key.clone(),
@@ -5586,12 +5627,26 @@ impl AnotherOneApp {
 
         #[cfg(target_os = "android")]
         {
-            // Mobile: don't spawn a phone-local PTY. Stand up a
-            // viewer-only runtime that renders bytes pushed via
-            // `SessionEvent::PtyBytes`, then ask the daemon to
-            // launch + attach the real PTY on the desktop side.
+            // ── Client-role split (NOT a platform split) ───────────
+            // Mobile is an *equal* client of the daemon — not a
+            // viewer. What it can't do is host the PTY locally
+            // (Android has no fork/exec shell surface), so the
+            // daemon (which lives on the peer) spawns + owns the
+            // PTY and streams bytes over the session. This branch
+            // stands up a local terminal runtime whose bytes come
+            // from `SessionEvent::PtyBytes` instead of a
+            // locally-owned `portable_pty` child. Control verbs
+            // (LaunchTab / AttachTab / TabResize / TabInput) are
+            // dispatched over the same session — mobile has every
+            // mutation primitive desktop has.
+            //
+            // This whole cfg arm collapses in the follow-up
+            // unify-control-plane PR: every client (desktop too)
+            // will take this path and drive PTY ownership through
+            // the registry-host role, not through a platform
+            // branch. See the branch PR body.
             log::info!(
-                "android: ensure_active_terminal_runtime → viewer-only \
+                "client: ensure_active_terminal_runtime → stream-from-daemon \
                  section={} tab={} size={}x{}",
                 request.key.section_id.store_key(),
                 request.key.tab_id,
@@ -5691,14 +5746,27 @@ impl AnotherOneApp {
         }
 
         #[cfg(not(target_os = "android"))]
-        spawn_terminal_launch(
-            self.terminal_launch_sender.clone(),
-            request.key,
-            Some(request.cwd),
-            request.launch_config,
-            request.agent_launch_args,
-            request.size,
-        );
+        {
+            // ── Client-role split (NOT a platform split) ───────────
+            // Registry-host role: this binary also owns PTYs, so
+            // the spawn goes to the local `terminal_launch` pipe
+            // which runs portable_pty in-process and installs the
+            // LiveTerminalRuntime on completion. The pure-client
+            // arm above dispatches LaunchTab + AttachTab over the
+            // session instead — both produce the same end state
+            // (a live broadcast feeding the local runtime). A
+            // future unify-control-plane pass will collapse this
+            // into a single always-dispatch-through-session path
+            // that the host role handles via its loopback session.
+            spawn_terminal_launch(
+                self.terminal_launch_sender.clone(),
+                request.key,
+                Some(request.cwd),
+                request.launch_config,
+                request.agent_launch_args,
+                request.size,
+            );
+        }
     }
 
     /// Drain any session handoff queued by the QR-pair dial task and
@@ -5731,6 +5799,21 @@ impl AnotherOneApp {
     fn drain_session_events(&mut self, cx: &mut Context<Self>) -> bool {
         let mut updated = false;
         let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        // Coalesce `ProjectList` pushes — the daemon's push pump
+        // debounces at 50ms but can still land several snapshots in
+        // the same drain tick (session-connect bootstrap + a
+        // cascade of mutator notifications). Absorbing every one in
+        // order clobbers local ephemeral state (`section_states`)
+        // from a stale pre-mutation snapshot before the authoritative
+        // post-mutation snapshot lands milliseconds later. Since the
+        // projection is idempotent and last-writer-wins, keep only
+        // the newest snapshot in this batch and absorb once after
+        // the drain loop exits.
+        let mut latest_project_list: Option<(
+            Vec<daemon_proto::ProjectSummary>,
+            Vec<daemon_proto::RepoSummary>,
+            daemon_proto::UiSnapshot,
+        )> = None;
         loop {
             let event = match self.session_events_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
@@ -5797,53 +5880,11 @@ impl AnotherOneApp {
                             repos,
                             ui,
                         } => {
-                            log::info!(
-                                "drain_session_events: absorbed projection ({} projects, {} repos, ui pinned={} expanded={})",
-                                projects.len(),
-                                repos.len(),
-                                ui.pinned_task_ids.len(),
-                                ui.expanded_repo_ids.len(),
-                            );
-                            self.project_store.absorb_projection(projects, repos, ui);
-                            self.expanded_projects =
-                                self.project_store.ui.expanded_repo_ids.clone();
-                            // Viewer clients need their
-                            // section_states tab lists refreshed
-                            // from the projection; without this a
-                            // desktop-side "new tab in task"
-                            // never reaches the phone's tab bar.
-                            //
-                            // Desktop is the registry host — its
-                            // `section_states` is the source of
-                            // truth that feeds every outgoing
-                            // projection, so reconciling it from
-                            // its own projection would clobber
-                            // freshly-added tabs whenever a stale
-                            // projection (pre-mutation snapshot,
-                            // still in the debounce queue) landed
-                            // after the mutation. Viewer-only.
-                            #[cfg(target_os = "android")]
-                            {
-                                let store_snapshot = self.project_store.clone();
-                                self.workspace_pane.update(cx, |workspace, cx| {
-                                    workspace
-                                        .reconcile_section_tabs_from_store(&store_snapshot, cx);
-                                });
-                            }
-
-                            #[cfg(target_os = "android")]
-                            {
-                                for project in &self.project_store.projects {
-                                    if self
-                                        .project_store
-                                        .tasks
-                                        .get(&project.id)
-                                        .is_some_and(|tasks| !tasks.is_empty())
-                                    {
-                                        self.expanded_projects.insert(project.repo_id.clone());
-                                    }
-                                }
-                            }
+                            // See the `latest_project_list`
+                            // comment at the top of the drain —
+                            // newest wins; earlier ones in this
+                            // batch are strictly superseded.
+                            latest_project_list = Some((projects, repos, ui));
                             updated = true;
                         }
                         daemon_proto::WorkerReply::AttachDropped {
@@ -5890,6 +5931,29 @@ impl AnotherOneApp {
                     break;
                 }
             }
+        }
+        if let Some((projects, repos, ui)) = latest_project_list {
+            log::info!(
+                "drain_session_events: absorbed projection ({} projects, {} repos, ui pinned={} expanded={})",
+                projects.len(),
+                repos.len(),
+                ui.pinned_task_ids.len(),
+                ui.expanded_repo_ids.len(),
+            );
+            self.project_store.absorb_projection(projects, repos, ui);
+            self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+            // Mirror the absorbed projection onto the workspace's
+            // ephemeral `section_states` so tab adds/removes from
+            // *any* connected client surface in this one's tab bar.
+            // Safe on every platform now that the drain coalesces
+            // stale snapshots — only the newest ProjectList in a
+            // batch ever reaches here, so there's no window where a
+            // pre-mutation projection can clobber a freshly-added
+            // tab.
+            let store_snapshot = self.project_store.clone();
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.reconcile_section_tabs_from_store(&store_snapshot, cx);
+            });
         }
         if !output_dirty_keys.is_empty() {
             for key in output_dirty_keys {
@@ -7664,15 +7728,22 @@ impl AnotherOneApp {
         };
         let mut changed = false;
         for request in pending {
-            // On Android the "runtime" is viewer-only — resizing
-            // just reshapes the local grid that renders bytes
-            // pushed from the daemon. The real PTY lives on the
-            // desktop, so every viewport change must also hop the
-            // session as `Control::TabResize` or the remote PTY
-            // keeps reflowing for the desktop's grid and the phone
-            // sees wrong-width lines. Matches the initial
-            // attach-time TabResize dispatched from
-            // `ensure_active_terminal_runtime`.
+            // ── Client-role split (NOT a platform split) ───────────
+            // Every client reshapes its own local grid (above
+            // `runtime.resize`). In addition, the pure-client role
+            // hops the session with `Control::TabResize` so the
+            // daemon's registry updates this viewer's claim —
+            // feeding its recompute_effective_size that picks the
+            // min across all connected viewers. The registry-host
+            // role already updated the registry in-process via
+            // `claim_viewport`, so the hop would be a no-op
+            // round-trip — skip it.
+            //
+            // Once the host role routes through a loopback session
+            // too (see the follow-up unify-control-plane PR), this
+            // cfg arm disappears: every client always dispatches
+            // TabResize, and the host's registry handler is
+            // idempotent with the claim it already made.
             #[cfg(target_os = "android")]
             {
                 let session = self.session_handle();
@@ -15941,6 +16012,13 @@ impl AnotherOneApp {
             return false;
         }
         let mut changed = false;
+        // See `drain_session_events` — coalesce ProjectList pushes
+        // so only the newest snapshot in a batch is absorbed.
+        let mut latest_project_list: Option<(
+            Vec<daemon_proto::ProjectSummary>,
+            Vec<daemon_proto::RepoSummary>,
+            daemon_proto::UiSnapshot,
+        )> = None;
         for reply in replies {
             match reply {
                 daemon_proto::WorkerReply::ProjectList {
@@ -15948,65 +16026,7 @@ impl AnotherOneApp {
                     repos: repo_summaries,
                     ui,
                 } => {
-                    let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
-                    log::info!(
-                        "daemon ProjectList: {} project(s), {} repo(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
-                        summaries.len(),
-                        repo_summaries.len(),
-                        task_total,
-                        ui.pinned_task_ids.len(),
-                        ui.expanded_repo_ids.len(),
-                        ui.last_active_section_id
-                    );
-                    // Single absorb path — both clients call this same
-                    // method on the same wire types. No more parallel
-                    // convert_remote_snapshot / set_remote_snapshot
-                    // pair; no more lossy fabrication of defaults.
-                    self.project_store
-                        .absorb_projection(summaries, repo_summaries, ui);
-                    log::info!(
-                        "post-absorb: store has {} projects and tasks for {} root projects",
-                        self.project_store.projects.len(),
-                        self.project_store.tasks.len()
-                    );
-                    self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
-
-                    // Viewer clients need their `section_states` tab
-                    // lists refreshed from the projection; without
-                    // this a desktop-side "new tab in task" never
-                    // reaches the phone's tab bar. See the sibling
-                    // block in `drain_session_events` — same fix,
-                    // different absorb path (iroh worker-reply queue
-                    // vs session events stream).
-                    #[cfg(target_os = "android")]
-                    {
-                        let store_snapshot = self.project_store.clone();
-                        self.workspace_pane.update(cx, |workspace, cx| {
-                            workspace.reconcile_section_tabs_from_store(&store_snapshot, cx);
-                        });
-                    }
-
-                    // The sidebar's expand chevron is rendered with an
-                    // SVG that doesn't load on Android (no asset
-                    // bundling yet), so a freshly-seeded store would
-                    // hide tasks behind an invisible toggle. On Android
-                    // only, pre-mark every project that has at least one
-                    // task as expanded so tasks show inline beneath each
-                    // project. Desktop preserves the user's persisted
-                    // collapsed/expanded state from the daemon.
-                    #[cfg(target_os = "android")]
-                    {
-                        for project in &self.project_store.projects {
-                            if self
-                                .project_store
-                                .tasks
-                                .get(&project.id)
-                                .is_some_and(|tasks| !tasks.is_empty())
-                            {
-                                self.expanded_projects.insert(project.repo_id.clone());
-                            }
-                        }
-                    }
+                    latest_project_list = Some((summaries, repo_summaries, ui));
                     changed = true;
                 }
                 // The daemon may push WorkerReply variants the
@@ -16015,6 +16035,30 @@ impl AnotherOneApp {
                 // and mobile pick up the same variants directly.
                 _ => {}
             }
+        }
+        if let Some((summaries, repo_summaries, ui)) = latest_project_list {
+            let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
+            log::info!(
+                "daemon ProjectList: {} project(s), {} repo(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
+                summaries.len(),
+                repo_summaries.len(),
+                task_total,
+                ui.pinned_task_ids.len(),
+                ui.expanded_repo_ids.len(),
+                ui.last_active_section_id
+            );
+            self.project_store
+                .absorb_projection(summaries, repo_summaries, ui);
+            log::info!(
+                "post-absorb: store has {} projects and tasks for {} root projects",
+                self.project_store.projects.len(),
+                self.project_store.tasks.len()
+            );
+            self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+            let store_snapshot = self.project_store.clone();
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.reconcile_section_tabs_from_store(&store_snapshot, cx);
+            });
         }
         if changed {
             cx.notify();

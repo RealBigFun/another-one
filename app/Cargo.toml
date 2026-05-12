@@ -36,6 +36,7 @@ test-harness = ["another-one-core/test-harness"]
 # gpui-mobile's `gpui::Platform` impl on top of this exact rev, so the
 # whole workspace must agree on it. Rebump only in lockstep with gpui-mobile.
 [dependencies]
+include_dir = "0.7"
 alacritty_terminal = "0.26.0"
 another-one-core = { path = "../core" }
 anyhow = "1"
