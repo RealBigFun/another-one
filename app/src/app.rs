@@ -5153,13 +5153,13 @@ impl AnotherOneApp {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
-            daemon_proto::Control::PersistSectionState {
+            daemon_proto::Control::SetSectionState {
                 section_id: store_key,
                 persisted: value,
             },
             |result| {
                 if let Err(err) = result {
-                    log::warn!("PersistSectionState failed: {err}");
+                    log::warn!("SetSectionState failed: {err}");
                 }
             },
         );
@@ -5169,7 +5169,7 @@ impl AnotherOneApp {
     /// authoritative `terminal_sections` map and fire a state-changed
     /// notification so the projection pump broadcasts it to every
     /// connected client. Avoids the per-keystroke round-trip the
-    /// previous "persist via Control::PersistSectionState" path was
+    /// previous "persist via Control::SetSectionState" path was
     /// paying on every echo. No-op when the runtime is viewer-only
     /// (mobile) — there the remote daemon parses its own PTY output
     /// and the new title arrives via the next projection.
@@ -6404,7 +6404,7 @@ impl AnotherOneApp {
                             }
                             // Daemon-authoritative title via
                             // `apply_pty_title_update` (no
-                            // PersistSectionState round-trip per
+                            // SetSectionState round-trip per
                             // PTY echo).
                             self.apply_pty_title_update(&key, &terminal_update);
                             // Same Output broadcast as the cold-path
@@ -6774,15 +6774,15 @@ impl AnotherOneApp {
         );
     }
 
-    /// Fire `Control::RemoveProject` over the active session.
+    /// Fire `Control::DeleteProject` over the active session.
     pub(crate) fn dispatch_remove_project(&self, project_id: String) {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
-            daemon_proto::Control::RemoveProject { project_id },
+            daemon_proto::Control::DeleteProject { project_id },
             |result| {
                 if let Err(err) = result {
-                    log::warn!("RemoveProject failed: {err}");
+                    log::warn!("DeleteProject failed: {err}");
                 }
             },
         );
@@ -6802,15 +6802,15 @@ impl AnotherOneApp {
         );
     }
 
-    /// Fire `Control::RenameTask` over the active session.
+    /// Fire `Control::SetTaskName` over the active session.
     pub(crate) fn dispatch_rename_task(&self, task_id: String, new_name: String) {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
-            daemon_proto::Control::RenameTask { task_id, new_name },
+            daemon_proto::Control::SetTaskName { task_id, new_name },
             |result| {
                 if let Err(err) = result {
-                    log::warn!("RenameTask failed: {err}");
+                    log::warn!("SetTaskName failed: {err}");
                 }
             },
         );
@@ -6833,7 +6833,7 @@ impl AnotherOneApp {
         );
     }
 
-    /// Fire `Control::UpdateTaskBranch` over the active session.
+    /// Fire `Control::SetTaskBranch` over the active session.
     pub(crate) fn dispatch_update_task_branch(
         &self,
         task_id: String,
@@ -6843,31 +6843,31 @@ impl AnotherOneApp {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
-            daemon_proto::Control::UpdateTaskBranch {
+            daemon_proto::Control::SetTaskBranch {
                 task_id,
                 target_project_id,
                 branch_name,
             },
             |result| {
                 if let Err(err) = result {
-                    log::warn!("UpdateTaskBranch failed: {err}");
+                    log::warn!("SetTaskBranch failed: {err}");
                 }
             },
         );
     }
 
-    /// Fire `Control::RemoveTask` over the active session.
+    /// Fire `Control::DeleteTask` over the active session.
     pub(crate) fn dispatch_remove_task(&self, project_id: String, task_id: String) {
         let session = self.session_handle();
         crate::session_host::dispatch_fire_and_forget(
             session,
-            daemon_proto::Control::RemoveTask {
+            daemon_proto::Control::DeleteTask {
                 project_id,
                 task_id,
             },
             |result| {
                 if let Err(err) = result {
-                    log::warn!("RemoveTask failed: {err}");
+                    log::warn!("DeleteTask failed: {err}");
                 }
             },
         );

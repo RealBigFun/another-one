@@ -266,22 +266,22 @@ pub enum Control {
     /// store. Heavy `prepare_project` work runs on a background
     /// thread on the daemon side so the iroh writer task isn't
     /// blocked. Successful inserts reply with
-    /// [`WorkerReply::ProjectAdded`] carrying the post-mutation
+    /// [`WorkerReply::CreateProjectAck`] carrying the post-mutation
     /// project snapshot — the issuing client updates its tree from
     /// the reply directly without a follow-up `ListProjects` round
     /// trip (mutator inline-snapshot contract). A path that the
     /// store already knows replies with [`WorkerReply::Err`] of
     /// kind [`ErrKind::Internal`] (this is the rare "user added the
     /// same dir twice" case; not worth a dedicated `err_kind`).
-    AddProject { path: String },
+    CreateProject { path: String },
     /// Remove a project from the daemon's store by id. Cascades to
     /// the project's tasks + terminal sections via
     /// [`another_one_core::project_store::ProjectStore::remove_project`].
     /// Idempotent — passing an unknown id is a silent no-op on the
     /// store side, but the daemon still replies with
-    /// [`WorkerReply::ProjectRemoved`] echoing the id so the issuer
+    /// [`WorkerReply::DeleteProjectAck`] echoing the id so the issuer
     /// can drop any stale UI rows.
-    RemoveProject { project_id: String },
+    DeleteProject { project_id: String },
     /// List the merged project + global custom actions for `project_id`,
     /// in the same order the desktop's titlebar split-button dropdown
     /// renders. Empty list when the project is unknown — matches
@@ -298,8 +298,8 @@ pub enum Control {
     /// based on `worktree_mode`, resolves the initial launch config
     /// from `agent_ids`, persists the task + initial section/tab, and
     /// queues the first PTY launch. Reply:
-    /// [`WorkerReply::SubmitNewTaskAck`].
-    SubmitNewTask {
+    /// [`WorkerReply::CreateTaskAck`].
+    CreateTask {
         project_id: String,
         task_name: String,
         source_branch: String,
@@ -309,21 +309,26 @@ pub enum Control {
     },
     /// Append one agent tab (or plain shell when `agent_id` is
     /// empty) to an existing task section, make it active, and queue
-    /// its PTY launch. Reply: [`WorkerReply::AddAgentToSectionAck`].
-    AddAgentToSection {
+    /// its PTY launch. Reply: [`WorkerReply::CreateTabAck`].
+    CreateTab {
         section_id: String,
         agent_id: String,
     },
     /// Persist the active tab for a section. Does not itself launch
     /// or attach — the client's existing selection/attach path owns
-    /// that. Reply: [`WorkerReply::ActivateSectionTabAck`].
-    ActivateSectionTab { section_id: String, tab_id: String },
+    /// that. Reply: [`WorkerReply::SetActiveTabAck`].
+    SetActiveTab { section_id: String, tab_id: String },
     /// Remove one tab from a section and tear down its live PTY if
-    /// present. Reply: [`WorkerReply::CloseSectionTabAck`].
-    CloseSectionTab { section_id: String, tab_id: String },
+    /// present. Reply: [`WorkerReply::DeleteTabAck`].
+    DeleteTab { section_id: String, tab_id: String },
     /// Flip one section tab's `pinned` flag and return its new value.
-    /// Reply: [`WorkerReply::ToggleSectionTabPinnedAck`].
-    ToggleSectionTabPinned { section_id: String, tab_id: String },
+    /// Set the pinned state of a section tab to a specific value.
+    /// Reply: [`WorkerReply::SetTabPinnedAck`].
+    SetTabPinned {
+        section_id: String,
+        tab_id: String,
+        pinned: bool,
+    },
     /// Full agent registry — every agent in `core::agents::AGENTS`
     /// paired with its per-host enabled flag, default flag, and
     /// launch-args list. Drives the Settings → Agents page. Reply:
@@ -372,8 +377,8 @@ pub enum Control {
     },
     /// Upsert one custom action for `project_id`, optionally saving a
     /// global copy instead of a project-local one. Reply:
-    /// [`WorkerReply::SaveProjectActionAck`].
-    SaveProjectAction {
+    /// [`WorkerReply::SetProjectActionAck`].
+    SetProjectAction {
         project_id: String,
         action: ProjectActionWire,
         save_global_copy: bool,
@@ -424,7 +429,7 @@ pub enum Control {
     /// worktree from `source_branch` (the new branch is named after
     /// the slugified `task_name`), prepares the project, and inserts
     /// both the worktree project and the task into the daemon's
-    /// store. Reply is [`WorkerReply::TaskCreated`] carrying the
+    /// store. Reply is [`WorkerReply::CreateWorktreeTaskAck`] carrying the
     /// inline post-mutation [`TaskSummary`] so the issuer can update
     /// its tree without a `ListProjects` follow-up.
     ///
@@ -442,21 +447,21 @@ pub enum Control {
         agent_provider: Option<AgentProvider>,
     },
     /// Rename a task. Empty / whitespace-only names are rejected
-    /// daemon-side. Reply is [`WorkerReply::TaskRenamed`] with the
+    /// daemon-side. Reply is [`WorkerReply::SetTaskNameAck`] with the
     /// post-rename inline `TaskSummary` and a `changed` flag — an
     /// unknown id or no-op rename returns `changed = false`.
-    RenameTask { task_id: String, new_name: String },
+    SetTaskName { task_id: String, new_name: String },
     /// Pin or unpin a task. Pinned tasks float to the top of their
-    /// project's task list. Reply is [`WorkerReply::TaskPinned`]
+    /// project's task list. Reply is [`WorkerReply::SetTaskPinnedAck`]
     /// with the inline `TaskSummary` and a `changed` flag (idempotent
     /// re-set returns `false`).
     SetTaskPinned { task_id: String, pinned: bool },
     /// Remove a task (and its terminal sections) from the daemon's
     /// store. The on-disk worktree branch is left untouched — same
     /// semantics as the desktop side. Reply is
-    /// [`WorkerReply::TaskRemoved`] with `removed = true` if a task
+    /// [`WorkerReply::DeleteTaskAck`] with `removed = true` if a task
     /// was deleted, `false` for an unknown id (idempotent).
-    RemoveTask { project_id: String, task_id: String },
+    DeleteTask { project_id: String, task_id: String },
     /// Persist the desktop's per-section terminal-tab snapshot to
     /// the daemon. Routes to either `update_task_tabs` (when the
     /// section belongs to a task — `task_id` set on the wire
@@ -473,7 +478,7 @@ pub enum Control {
     /// canonical core type.
     ///
     /// Reply is [`WorkerReply::Empty`].
-    PersistSectionState {
+    SetSectionState {
         section_id: String,
         persisted: serde_json::Value,
     },
@@ -509,7 +514,7 @@ pub enum Control {
     /// Persist a new branch override on a worktree task — the
     /// desktop renames the on-disk branch via git, then calls this
     /// to update the task's record. Reply is [`WorkerReply::Empty`].
-    UpdateTaskBranch {
+    SetTaskBranch {
         task_id: String,
         target_project_id: String,
         branch_name: String,
@@ -531,15 +536,15 @@ pub enum Control {
     /// the project id is unknown.
     ReadProjectBranches { project_id: String },
     /// Default branch the new-task modal seeds for `project_id`.
-    /// Reply is [`WorkerReply::PrimaryBranchAck`] with `None` when
+    /// Reply is [`WorkerReply::ReadPrimaryBranchAck`] with `None` when
     /// the project has no current branch (fresh repo).
-    PrimaryBranchForProject { project_id: String },
+    ReadPrimaryBranch { project_id: String },
     /// User's preferred default commit action (`"commit"` or
     /// `"commit-and-push"`) for the active project's root repo.
-    /// Reply is [`WorkerReply::RepoDefaultCommitActionAck`] with
+    /// Reply is [`WorkerReply::ReadRepoDefaultCommitActionAck`] with
     /// `None` when no preference has been recorded — UI defaults to
     /// `"commit"` in that case.
-    RepoDefaultCommitAction { project_id: String },
+    ReadRepoDefaultCommitAction { project_id: String },
     /// Snapshot the active project's branch metadata: current branch
     /// name + ahead / behind counts. Powers the titlebar git-actions
     /// split-button's primary-action selection (Push when ahead, Pull
@@ -656,7 +661,7 @@ pub enum Control {
     /// titlebar split-button emits: `"commit"`, `"commit-and-push"`,
     /// `"undo-last-commit"`, `"fetch"`, `"pull"`, `"push"`,
     /// `"force-push"`, `"create-pr"`, `"create-draft-pr"`. Reply is
-    /// [`WorkerReply::ToolbarActionOutcomeAck`] carrying the
+    /// [`WorkerReply::RunToolbarGitActionAck`] carrying the
     /// `outcome` so the UI can surface the toast + decide whether to
     /// invalidate the changed-files / git-state providers.
     RunToolbarGitAction {
@@ -692,11 +697,11 @@ pub enum Control {
     /// Resolve the latest pull-request status for `project_id`'s
     /// current branch — drives the titlebar's "Create PR" / "Open PR"
     /// pill enabledness on every connected client. Reply variant
-    /// is [`WorkerReply::PullRequestStatusAck`]; `status: None`
+    /// is [`WorkerReply::ReadPullRequestStatusAck`]; `status: None`
     /// covers both "no PR for the branch" and "unknown project".
     /// Hard failures (gh CLI missing, network error) come back as
     /// [`WorkerReply::Err`] instead.
-    FindPullRequestStatus { project_id: String },
+    ReadPullRequestStatus { project_id: String },
     /// Read the CI checks attached to `project_id`'s current PR —
     /// drives the right-sidebar Checks pane. Reply variant is
     /// [`WorkerReply::PullRequestChecksAck`] with a three-state
@@ -709,10 +714,10 @@ pub enum Control {
     /// `filter_index` (0=all, 1=needs my review, 2=author:@me,
     /// 3=draft) plus an optional free-text `query` (GitHub search
     /// syntax). Powers the project page's Open PRs section. Reply
-    /// variant is [`WorkerReply::ProjectPullRequestsAck`]; `prs:
+    /// variant is [`WorkerReply::ListProjectPullRequestsAck`]; `prs:
     /// None` covers the unknown-project case. gh CLI / auth /
     /// network failures arrive as [`WorkerReply::Err`].
-    FindProjectPullRequests {
+    ListProjectPullRequests {
         project_id: String,
         filter_index: u32,
         query: String,
@@ -787,8 +792,8 @@ pub enum Control {
 // ## Channel 1: inline-snapshot mutator replies (original ojm.1 design)
 //
 //   Domain mutator verbs return a `WorkerReply::*` variant whose
-//   payload contains the changed entity (`ProjectAdded { project:
-//   ProjectSummary }`, `TaskRenamed { task: TaskSummary }`, etc.).
+//   payload contains the changed entity (`CreateProjectAck { project:
+//   ProjectSummary }`, `SetTaskNameAck { task: TaskSummary }`, etc.).
 //   The issuing client can splice the result into its tree from
 //   the reply directly without a follow-up `ListProjects`
 //   round-trip.
@@ -906,19 +911,19 @@ pub enum WorkerReply {
         #[serde(default)]
         ui: UiSnapshot,
     },
-    /// Response to [`Control::AddProject`] on success. Carries the
+    /// Response to [`Control::CreateProject`] on success. Carries the
     /// inline snapshot of the freshly-inserted project so the
     /// issuing client can splice it into its tree without a
     /// follow-up `ListProjects` (see the "Push vs pull" block above
     /// for the contract). On a duplicate path or a `prepare_project`
     /// failure the daemon emits [`WorkerReply::Err`] instead.
-    ProjectAdded { project: ProjectSummary },
-    /// Response to [`Control::RemoveProject`]. Echoes the id so the
+    CreateProjectAck { project: ProjectSummary },
+    /// Response to [`Control::DeleteProject`]. Echoes the id so the
     /// issuer can drop the matching tree row even if its local
     /// cache had already been pruned. Idempotent on the daemon
     /// side: an unknown id still produces this reply rather than an
     /// `Err`.
-    ProjectRemoved { project_id: String },
+    DeleteProjectAck { project_id: String },
     /// **Daemon-pushed** (request_id == 0) notification that a live
     /// PTY attachment just died on the server side — the daemon's
     /// forwarder task broke out of its broadcast recv loop because
@@ -949,21 +954,21 @@ pub enum WorkerReply {
     /// the canonical `core::agents::AGENTS` order — clients render
     /// without re-sorting.
     EnabledAgentsAck { view: EnabledAgentsViewWire },
-    /// Reply to [`Control::SubmitNewTask`]. `section_id` is the
+    /// Reply to [`Control::CreateTask`]. `section_id` is the
     /// persisted section the caller should focus; its initial tab is
     /// always `"0"`.
-    SubmitNewTaskAck { section_id: String },
-    /// Reply to [`Control::AddAgentToSection`]. `tab_id` is the
+    CreateTaskAck { section_id: String },
+    /// Reply to [`Control::CreateTab`]. `tab_id` is the
     /// freshly-minted tab that was appended and made active.
-    AddAgentToSectionAck { tab_id: String },
-    /// Reply to [`Control::ActivateSectionTab`].
-    ActivateSectionTabAck,
-    /// Reply to [`Control::CloseSectionTab`]. `active_tab_id` is the
+    CreateTabAck { tab_id: String },
+    /// Reply to [`Control::SetActiveTab`].
+    SetActiveTabAck,
+    /// Reply to [`Control::DeleteTab`]. `active_tab_id` is the
     /// section's new active tab after removal, or empty when the
     /// section is now tabless.
-    CloseSectionTabAck { active_tab_id: String },
-    /// Reply to [`Control::ToggleSectionTabPinned`].
-    ToggleSectionTabPinnedAck { pinned: bool },
+    DeleteTabAck { active_tab_id: String },
+    /// Reply to [`Control::SetTabPinned`].
+    SetTabPinnedAck { pinned: bool },
     /// Reply to [`Control::ReadAgentSettings`]. `view.agents`
     /// contains every agent in `core::agents::AGENTS` (canonical
     /// order) regardless of enabled state, so the Settings →
@@ -987,8 +992,8 @@ pub enum WorkerReply {
     /// active-tab-changed event the desktop UI emits) to start
     /// receiving the action's PTY output.
     RunProjectActionAck { tab_id: String },
-    /// Reply to [`Control::SaveProjectAction`].
-    SaveProjectActionAck,
+    /// Reply to [`Control::SetProjectAction`].
+    SetProjectActionAck,
     /// Reply to [`Control::DeleteProjectAction`].
     DeleteProjectActionAck { deleted: bool },
     /// Uniform per-request failure frame. The daemon emits this in
@@ -1020,29 +1025,29 @@ pub enum WorkerReply {
     /// post-mutation [`TaskSummary`] plus the `project_id` it was
     /// inserted under so the issuer can locate the task in its
     /// project tree without a follow-up `ListProjects`.
-    TaskCreated {
+    CreateWorktreeTaskAck {
         project_id: String,
         task: TaskSummary,
     },
-    /// Reply to [`Control::RenameTask`]. `changed` is `false` for an
+    /// Reply to [`Control::SetTaskName`]. `changed` is `false` for an
     /// unknown id or a no-op rename — in that case `task` is the
     /// pre-existing snapshot (or absent if the id was unknown).
-    TaskRenamed {
+    SetTaskNameAck {
         changed: bool,
         task: Option<TaskSummary>,
     },
     /// Reply to [`Control::SetTaskPinned`]. `changed` is `false` for
     /// an idempotent re-set of the same value, or an unknown id.
     /// `task` is the post-mutation snapshot when the task exists.
-    TaskPinned {
+    SetTaskPinnedAck {
         changed: bool,
         task: Option<TaskSummary>,
     },
-    /// Reply to [`Control::RemoveTask`]. `removed` is `false` for an
+    /// Reply to [`Control::DeleteTask`]. `removed` is `false` for an
     /// unknown id (idempotent). `project_id` echoes the request so
     /// the issuer can prune the right project subtree without
     /// re-deriving it.
-    TaskRemoved {
+    DeleteTaskAck {
         project_id: String,
         task_id: String,
         removed: bool,
@@ -1050,13 +1055,13 @@ pub enum WorkerReply {
     /// Reply to [`Control::ReadProjectBranches`]. Empty list for
     /// unknown projects.
     ProjectBranchesAck { branches: Vec<String> },
-    /// Reply to [`Control::PrimaryBranchForProject`]. `None` when
+    /// Reply to [`Control::ReadPrimaryBranch`]. `None` when
     /// the project has no current branch yet.
-    PrimaryBranchAck { branch: Option<String> },
-    /// Reply to [`Control::RepoDefaultCommitAction`]. `action ==
+    ReadPrimaryBranchAck { branch: Option<String> },
+    /// Reply to [`Control::ReadRepoDefaultCommitAction`]. `action ==
     /// None` means the user hasn't recorded a preference; UI
     /// defaults to `"commit"`.
-    RepoDefaultCommitActionAck { action: Option<String> },
+    ReadRepoDefaultCommitActionAck { action: Option<String> },
     /// Reply to [`Control::ReadActiveGitState`]. `state == None`
     /// when the project id is unknown — UI shows the empty state
     /// rather than surfacing an error.
@@ -1113,7 +1118,7 @@ pub enum WorkerReply {
     /// Carries the `ToolbarActionOutcome` (toast + warning/refresh
     /// flags) the issuing client uses to render its snackbar and
     /// invalidate the active git-state / changed-files providers.
-    ToolbarActionOutcomeAck { outcome: ToolbarActionOutcome },
+    RunToolbarGitActionAck { outcome: ToolbarActionOutcome },
     /// `another-one-ojm.5` — ack for [`Control::CreateBranch`].
     /// `section_id` is the new worktree task's section id (empty
     /// string for the current-task branch-swap case) so the issuing
@@ -1131,11 +1136,11 @@ pub enum WorkerReply {
         section_id: String,
         projects: Vec<ProjectSummary>,
     },
-    /// Reply to [`Control::FindPullRequestStatus`]. `status: None`
+    /// Reply to [`Control::ReadPullRequestStatus`]. `status: None`
     /// when the project has no open PR for its current branch (or
     /// the project id is unknown). Mutator-snapshot rules don't
     /// apply — this is a pure read.
-    PullRequestStatusAck { status: Option<PullRequestStatus> },
+    ReadPullRequestStatusAck { status: Option<PullRequestStatus> },
     /// Reply to [`Control::ReadPullRequestChecks`]. Three-state
     /// payload mirrors the GPUI desktop's
     /// `core::git_actions::find_pull_request_checks` contract:
@@ -1143,10 +1148,10 @@ pub enum WorkerReply {
     ///   * `None` — no PR for the branch, or unknown project id.
     ///     gh CLI / network failures come back as [`WorkerReply::Err`].
     PullRequestChecksAck { checks: Option<Vec<Check>> },
-    /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
+    /// Reply to [`Control::ListProjectPullRequests`]. `prs: None`
     /// covers the unknown-project case; gh CLI / auth / network
     /// failures arrive as [`WorkerReply::Err`].
-    ProjectPullRequestsAck {
+    ListProjectPullRequestsAck {
         prs: Option<Vec<ProjectPagePullRequest>>,
     },
     /// Reply to [`Control::ReadGitActionScripts`].

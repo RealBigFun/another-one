@@ -558,7 +558,7 @@ mod mutators {
         let mut harness = fresh_harness_after_initial_push().await;
         let reply = call_then_drain_push(
             &mut harness,
-            Control::RemoveProject {
+            Control::DeleteProject {
                 project_id: "p1".into(),
             },
         )
@@ -602,7 +602,7 @@ mod mutators {
         let mut harness = fresh_harness_after_initial_push().await;
         let reply = call_then_drain_push(
             &mut harness,
-            Control::RenameTask {
+            Control::SetTaskName {
                 task_id: "t1".into(),
                 new_name: "renamed".into(),
             },
@@ -623,7 +623,7 @@ mod mutators {
         let mut harness = fresh_harness_after_initial_push().await;
         let reply = call_then_drain_push(
             &mut harness,
-            Control::RemoveTask {
+            Control::DeleteTask {
                 project_id: "p1".into(),
                 task_id: "t1".into(),
             },
@@ -655,7 +655,7 @@ mod mutators {
         });
         let reply = call_then_drain_push(
             &mut harness,
-            Control::PersistSectionState {
+            Control::SetSectionState {
                 section_id: "p1::main::t1".into(),
                 persisted,
             },
@@ -709,7 +709,7 @@ mod mutators {
         let mut harness = fresh_harness_after_initial_push().await;
         let reply = call_then_drain_push(
             &mut harness,
-            Control::UpdateTaskBranch {
+            Control::SetTaskBranch {
                 task_id: "t1".into(),
                 target_project_id: "p1".into(),
                 branch_name: "feature".into(),

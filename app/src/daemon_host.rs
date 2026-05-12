@@ -612,11 +612,11 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let Ok(persisted) = serde_json::from_value::<
             another_one_core::project_store::PersistedSectionState,
         >(persisted) else {
-            tracing::warn!(section_id, "PersistSectionState payload failed to decode");
+            tracing::warn!(section_id, "SetSectionState payload failed to decode");
             return;
         };
         let Some(parsed) = SectionId::from_store_key(section_id) else {
-            tracing::warn!(section_id, "PersistSectionState section_id malformed");
+            tracing::warn!(section_id, "SetSectionState section_id malformed");
             return;
         };
         self.with_store_mut(|store| {

@@ -408,7 +408,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     /// Create a worktree task on `project_id`. Returns the inserted
     /// task's [`TaskSummary`] — the caller wraps it in
-    /// [`crate::frame::WorkerReply::TaskCreated`]. The future runs
+    /// [`crate::frame::WorkerReply::CreateWorktreeTaskAck`]. The future runs
     /// the heavy `core::project_service::spawn_task_creation` worker
     /// thread under the hood; clients can expect tens of seconds
     /// before resolution. Default impl returns an `unsupported`
@@ -797,8 +797,16 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         Err("unsupported on this daemon".to_string())
     }
 
-    /// Flip one section tab's `pinned` flag and return its new value.
-    fn toggle_section_tab_pinned(&self, _section_id: &str, _tab_id: &str) -> Result<bool, String> {
+    /// Set one section tab's `pinned` flag to a specific value
+    /// (idempotent). Returns the applied value (which equals the
+    /// `pinned` arg unless the tab/section couldn't be resolved
+    /// and an error is returned).
+    fn set_section_tab_pinned(
+        &self,
+        _section_id: &str,
+        _tab_id: &str,
+        _pinned: bool,
+    ) -> Result<bool, String> {
         Err("unsupported on this daemon".to_string())
     }
 

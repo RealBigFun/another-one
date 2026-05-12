@@ -384,15 +384,15 @@ async fn dispatch_call(
         }),
 
         // ── Project mutation ─────────────────────────────────────────
-        Control::AddProject { path } => Some(match registry.add_project(path).await {
-            Ok(project) => WorkerReply::ProjectAdded { project },
+        Control::CreateProject { path } => Some(match registry.add_project(path).await {
+            Ok(project) => WorkerReply::CreateProjectAck { project },
             Err(e) => WorkerReply::Err {
                 message: format!("{e:#}"),
                 kind: ErrKind::Internal,
             },
         }),
-        Control::RemoveProject { project_id } => Some(match registry.remove_project(&project_id) {
-            Ok(()) => WorkerReply::ProjectRemoved { project_id },
+        Control::DeleteProject { project_id } => Some(match registry.remove_project(&project_id) {
+            Ok(()) => WorkerReply::DeleteProjectAck { project_id },
             Err(e) => WorkerReply::Err {
                 message: format!("{e:#}"),
                 kind: ErrKind::Internal,
@@ -400,7 +400,7 @@ async fn dispatch_call(
         }),
 
         // ── Task & section mutation ──────────────────────────────────
-        Control::SubmitNewTask {
+        Control::CreateTask {
             project_id,
             task_name,
             source_branch,
@@ -419,46 +419,46 @@ async fn dispatch_call(
                 )
                 .await
             {
-                Ok(section_id) => WorkerReply::SubmitNewTaskAck { section_id },
+                Ok(section_id) => WorkerReply::CreateTaskAck { section_id },
                 Err(e) => WorkerReply::Err {
                     message: format!("{e:#}"),
                     kind: ErrKind::Internal,
                 },
             },
         ),
-        Control::AddAgentToSection {
+        Control::CreateTab {
             section_id,
             agent_id,
         } => Some(
             match registry.add_agent_to_section(&section_id, &agent_id) {
-                Ok(tab_id) => WorkerReply::AddAgentToSectionAck { tab_id },
+                Ok(tab_id) => WorkerReply::CreateTabAck { tab_id },
                 Err(message) => WorkerReply::Err {
                     kind: classify_unknown_id(&message),
                     message,
                 },
             },
         ),
-        Control::ActivateSectionTab { section_id, tab_id } => {
+        Control::SetActiveTab { section_id, tab_id } => {
             Some(match registry.activate_section_tab(&section_id, &tab_id) {
-                Ok(()) => WorkerReply::ActivateSectionTabAck,
+                Ok(()) => WorkerReply::SetActiveTabAck,
                 Err(message) => WorkerReply::Err {
                     kind: classify_unknown_id(&message),
                     message,
                 },
             })
         }
-        Control::CloseSectionTab { section_id, tab_id } => {
+        Control::DeleteTab { section_id, tab_id } => {
             Some(match registry.close_section_tab(&section_id, &tab_id) {
-                Ok(active_tab_id) => WorkerReply::CloseSectionTabAck { active_tab_id },
+                Ok(active_tab_id) => WorkerReply::DeleteTabAck { active_tab_id },
                 Err(message) => WorkerReply::Err {
                     kind: classify_unknown_id(&message),
                     message,
                 },
             })
         }
-        Control::ToggleSectionTabPinned { section_id, tab_id } => Some(
-            match registry.toggle_section_tab_pinned(&section_id, &tab_id) {
-                Ok(pinned) => WorkerReply::ToggleSectionTabPinnedAck { pinned },
+        Control::SetTabPinned { section_id, tab_id, pinned } => Some(
+            match registry.set_section_tab_pinned(&section_id, &tab_id, pinned) {
+                Ok(applied) => WorkerReply::SetTabPinnedAck { pinned: applied },
                 Err(message) => WorkerReply::Err {
                     kind: classify_unknown_id(&message),
                     message,
@@ -477,7 +477,7 @@ async fn dispatch_call(
                     .create_worktree_task(project_id, task_name, source_branch, agent_provider)
                     .await
                 {
-                    Ok(task) => WorkerReply::TaskCreated {
+                    Ok(task) => WorkerReply::CreateWorktreeTaskAck {
                         project_id: project_id_for_reply,
                         task,
                     },
@@ -488,26 +488,26 @@ async fn dispatch_call(
                 },
             )
         }
-        Control::RenameTask { task_id, new_name } => {
+        Control::SetTaskName { task_id, new_name } => {
             let (changed, task) = registry.rename_task(&task_id, &new_name);
-            Some(WorkerReply::TaskRenamed { changed, task })
+            Some(WorkerReply::SetTaskNameAck { changed, task })
         }
         Control::SetTaskPinned { task_id, pinned } => {
             let (changed, task) = registry.set_task_pinned(&task_id, pinned);
-            Some(WorkerReply::TaskPinned { changed, task })
+            Some(WorkerReply::SetTaskPinnedAck { changed, task })
         }
-        Control::RemoveTask {
+        Control::DeleteTask {
             project_id,
             task_id,
         } => {
             let removed = registry.remove_task(&project_id, &task_id);
-            Some(WorkerReply::TaskRemoved {
+            Some(WorkerReply::DeleteTaskAck {
                 project_id,
                 task_id,
                 removed,
             })
         }
-        Control::PersistSectionState {
+        Control::SetSectionState {
             section_id,
             persisted,
         } => {
@@ -530,7 +530,7 @@ async fn dispatch_call(
             registry.set_repo_default_commit_action(&repo_id, &action);
             Some(WorkerReply::Empty)
         }
-        Control::UpdateTaskBranch {
+        Control::SetTaskBranch {
             task_id,
             target_project_id,
             branch_name,
@@ -565,13 +565,13 @@ async fn dispatch_call(
                 },
             },
         ),
-        Control::SaveProjectAction {
+        Control::SetProjectAction {
             project_id,
             action,
             save_global_copy,
         } => Some(
             match registry.save_project_action(&project_id, action, save_global_copy) {
-                Ok(()) => WorkerReply::SaveProjectActionAck,
+                Ok(()) => WorkerReply::SetProjectActionAck,
                 Err(message) => WorkerReply::Err {
                     message,
                     kind: ErrKind::Internal,
@@ -590,11 +590,11 @@ async fn dispatch_call(
         Control::ReadProjectBranches { project_id } => Some(WorkerReply::ProjectBranchesAck {
             branches: registry.read_project_branches(&project_id),
         }),
-        Control::PrimaryBranchForProject { project_id } => Some(WorkerReply::PrimaryBranchAck {
+        Control::ReadPrimaryBranch { project_id } => Some(WorkerReply::ReadPrimaryBranchAck {
             branch: registry.primary_branch_for_project(&project_id),
         }),
-        Control::RepoDefaultCommitAction { project_id } => {
-            Some(WorkerReply::RepoDefaultCommitActionAck {
+        Control::ReadRepoDefaultCommitAction { project_id } => {
+            Some(WorkerReply::ReadRepoDefaultCommitActionAck {
                 action: registry.repo_default_commit_action(&project_id),
             })
         }
@@ -733,7 +733,7 @@ async fn dispatch_call(
                 .run_toolbar_git_action(&project_id, &action_id)
                 .await
             {
-                Ok(outcome) => WorkerReply::ToolbarActionOutcomeAck { outcome },
+                Ok(outcome) => WorkerReply::RunToolbarGitActionAck { outcome },
                 Err(e) => WorkerReply::Err {
                     message: format!("{e:#}"),
                     kind: ErrKind::Internal,
@@ -785,9 +785,9 @@ async fn dispatch_call(
                 },
             },
         ),
-        Control::FindPullRequestStatus { project_id } => {
+        Control::ReadPullRequestStatus { project_id } => {
             Some(match registry.find_pull_request_status(&project_id) {
-                Ok(status) => WorkerReply::PullRequestStatusAck { status },
+                Ok(status) => WorkerReply::ReadPullRequestStatusAck { status },
                 Err(message) => WorkerReply::Err {
                     message,
                     kind: ErrKind::Internal,
@@ -803,13 +803,13 @@ async fn dispatch_call(
                 },
             })
         }
-        Control::FindProjectPullRequests {
+        Control::ListProjectPullRequests {
             project_id,
             filter_index,
             query,
         } => Some(
             match registry.find_project_pull_requests(&project_id, filter_index, &query) {
-                Ok(prs) => WorkerReply::ProjectPullRequestsAck { prs },
+                Ok(prs) => WorkerReply::ListProjectPullRequestsAck { prs },
                 Err(message) => WorkerReply::Err {
                     message,
                     kind: ErrKind::Internal,
