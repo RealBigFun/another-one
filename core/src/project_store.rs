@@ -2836,7 +2836,7 @@ impl ProjectStore {
         });
     }
 
-    fn rebuild_runtime_views(&mut self) {
+    pub fn rebuild_runtime_views(&mut self) {
         self.projects = self
             .project_order
             .iter()

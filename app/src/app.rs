@@ -5164,6 +5164,58 @@ impl AnotherOneApp {
         );
     }
 
+    /// Apply a PTY-derived title change directly to the daemon's
+    /// authoritative `terminal_sections` map and fire a state-changed
+    /// notification so the projection pump broadcasts it to every
+    /// connected client. Avoids the per-keystroke round-trip the
+    /// previous "persist via Control::PersistSectionState" path was
+    /// paying on every echo. No-op when the runtime is viewer-only
+    /// (mobile) — there the remote daemon parses its own PTY output
+    /// and the new title arrives via the next projection.
+    fn apply_pty_title_update(
+        &self,
+        key: &TerminalRuntimeKey,
+        terminal_update: &crate::terminal_runtime::TerminalRuntimeUpdate,
+    ) {
+        if !terminal_update.reset_title && terminal_update.title.is_none() {
+            return;
+        }
+        let Ok(mut state) = self.registry_state.lock() else {
+            return;
+        };
+        let section_key = key.section_id.store_key();
+        let mut applied = false;
+        if let Some(section) =
+            state.project_store.terminal_sections.get_mut(&section_key)
+        {
+            if let Some(tab) = section.tabs.iter_mut().find(|t| t.id == key.tab_id)
+            {
+                if tab.fixed_title.is_none() {
+                    if terminal_update.reset_title {
+                        let next = tab
+                            .launch_config
+                            .as_ref()
+                            .map(|c| c.default_title())
+                            .unwrap_or_default();
+                        if tab.title != next {
+                            tab.title = next;
+                            applied = true;
+                        }
+                    } else if let Some(t) = &terminal_update.title {
+                        if &tab.title != t {
+                            tab.title = t.clone();
+                            applied = true;
+                        }
+                    }
+                }
+            }
+        }
+        if applied {
+            state.project_store.rebuild_runtime_views();
+            state.notify_state_changed();
+        }
+    }
+
     fn update_terminal_tab(
         &mut self,
         key: &TerminalRuntimeKey,
@@ -5893,7 +5945,13 @@ impl AnotherOneApp {
                     tab_id,
                     bytes,
                 } => {
-                    log::info!(
+                    // Heavy per-chunk `log::info!` here used to fire
+                    // on every PtyBytes event — multiple times per
+                    // keystroke because of echo + prompt redraw —
+                    // and was a measurable contributor to typing
+                    // lag. Keep at `trace` so `RUST_LOG=trace` can
+                    // still resurrect it when diagnosing.
+                    log::trace!(
                         "drain_session_events PtyBytes section={} tab={} bytes={}",
                         section_id,
                         tab_id,
@@ -5912,13 +5970,20 @@ impl AnotherOneApp {
                         if terminal_update.bell {
                             self.terminal_bell_at.insert(key.clone(), Instant::now());
                         }
-                        self.update_terminal_tab(&key, cx, |tab| {
-                            apply_terminal_title_update(tab, &terminal_update);
-                        });
-                        self.emit_client_event(ClientEvent::Output {
-                            tab_id: key.tab_id.clone(),
-                            bytes: bytes.clone(),
-                        });
+                        // Daemon-authoritative title: parse-and-apply
+                        // happens in-process on desktop (we ARE the
+                        // registry host), no wire round-trip per
+                        // PTY echo.
+                        if runtime.has_local_pty() {
+                            self.apply_pty_title_update(&key, &terminal_update);
+                        }
+                        // Use the receiver-count gated helper —
+                        // `emit_client_event` always constructs the
+                        // event (cloning `bytes` and `tab_id`) even
+                        // when no MCP client is subscribed, which is
+                        // the common case on desktop. Wasted alloc
+                        // per PTY chunk → per keystroke echo.
+                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
                         updated = true;
@@ -6114,9 +6179,10 @@ impl AnotherOneApp {
                         if terminal_update.bell {
                             self.terminal_bell_at.insert(key.clone(), Instant::now());
                         }
-                        self.update_terminal_tab(&key, cx, |tab| {
-                            apply_terminal_title_update(tab, &terminal_update);
-                        });
+                        // Daemon-authoritative title: in-process write
+                        // to `terminal_sections` (no Control::Persist
+                        // round-trip). See `apply_pty_title_update`.
+                        self.apply_pty_title_update(&key, &terminal_update);
                         // Mirror the chunk to MCP subscribers. Each
                         // session has its own broadcast::Receiver so
                         // a slow consumer doesn't stall the daemon's
@@ -6335,9 +6401,11 @@ impl AnotherOneApp {
                             if terminal_update.bell {
                                 self.terminal_bell_at.insert(key.clone(), Instant::now());
                             }
-                            self.update_terminal_tab(&key, cx, |tab| {
-                                apply_terminal_title_update(tab, &terminal_update);
-                            });
+                            // Daemon-authoritative title via
+                            // `apply_pty_title_update` (no
+                            // PersistSectionState round-trip per
+                            // PTY echo).
+                            self.apply_pty_title_update(&key, &terminal_update);
                             // Same Output broadcast as the cold-path
                             // drain — warm-prewarm tabs (MCP spawn,
                             // GUI new-task fast path) also surface
