@@ -446,8 +446,7 @@ impl ServerSession for IrohServerSession {
                             daemon_proto::decode_pty_data(&payload)
                         {
                             incoming.registry.tab_input(&section_id, &tab_id, &body);
-                        } else if let Some((section_id, tab_id)) =
-                            incoming.attach.snapshot_target()
+                        } else if let Some((section_id, tab_id)) = incoming.attach.snapshot_target()
                         {
                             debug!(
                                 bytes = payload.len(),
@@ -799,9 +798,8 @@ pub fn persist_pairing(remote_id: &str, path: &Path) -> anyhow::Result<()> {
     // isn't guaranteed to persist just because the child file was
     // fsynced.
     if let Some(parent) = path.parent() {
-        fsync_dir(parent).with_context(|| {
-            format!("fsync allowlist parent {}", parent.display())
-        })?;
+        fsync_dir(parent)
+            .with_context(|| format!("fsync allowlist parent {}", parent.display()))?;
     }
     Ok(())
 }
@@ -837,8 +835,7 @@ fn persist_file_durable(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .with_context(|| format!("fsync {}", path.display()))?;
     drop(f);
     if let Some(parent) = path.parent() {
-        fsync_dir(parent)
-            .with_context(|| format!("fsync parent {}", parent.display()))?;
+        fsync_dir(parent).with_context(|| format!("fsync parent {}", parent.display()))?;
     }
     Ok(())
 }
@@ -1144,13 +1141,8 @@ mod tests {
         let allowlist = dir.path().join("paired_peers");
         let pair_state = test_pair_state("correct-nonce");
 
-        let err = consume_hello(
-            Control::ListProjects,
-            "peer-1",
-            &pair_state,
-            &allowlist,
-        )
-        .unwrap_err();
+        let err =
+            consume_hello(Control::ListProjects, "peer-1", &pair_state, &allowlist).unwrap_err();
 
         assert!(
             err.to_string().contains("must be Control::Hello"),

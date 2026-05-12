@@ -1139,10 +1139,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
         let (path, available) = self
             .with_state(|state| {
-                let path = state
-                    .project_store
-                    .project(project_id)
-                    .map(|project| project.path.clone());
+                let path = project_path(state, project_id);
                 (path, detect_available_open_in_apps())
             })
             .ok_or_else(registry_unavailable)?;
@@ -1456,10 +1453,7 @@ fn git_action_settings(store: &ProjectStore) -> GitActionSettings {
 }
 
 fn project_path(state: &RegistryState, project_id: &str) -> Option<PathBuf> {
-    state
-        .project_store
-        .project(project_id)
-        .map(|project| project.path.clone())
+    state.project_store.workspace_path(project_id)
 }
 
 fn with_registry_state<R>(
@@ -1886,6 +1880,70 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
                 .map(|err| format!("{}: {err:#}", provider_id(provider)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use another_one_core::project_store::{Project, Task, TaskKind, TaskWorktree};
+
+    fn project(
+        id: &str,
+        path: &str,
+        kind: CoreProjectKind,
+        worktree_name: Option<&str>,
+    ) -> Project {
+        Project {
+            id: id.to_string(),
+            repo_id: "repo".to_string(),
+            name: "root".to_string(),
+            path: PathBuf::from(path),
+            kind,
+            archived: false,
+            checkout: Default::default(),
+            branch_settings: Default::default(),
+            actions: Vec::new(),
+            worktree_name: worktree_name.map(str::to_string),
+            repo_common_dir: None,
+        }
+    }
+
+    #[test]
+    fn project_path_resolves_migrated_worktree_task_ids() {
+        let root = project("root", "/tmp/root", CoreProjectKind::Root, None);
+        let worktree = project(
+            "wt1",
+            "/tmp/root-wt",
+            CoreProjectKind::Worktree,
+            Some("root-wt"),
+        );
+        let task = Task {
+            id: "task-wt".to_string(),
+            name: "Worktree task".to_string(),
+            kind: TaskKind::Worktree,
+            root_project_id: root.id.clone(),
+            target_project_id: worktree.id.clone(),
+            branch_name: "feature/wt".to_string(),
+            section_id: "wt1::feature/wt::task-wt".to_string(),
+            worktree: Some(TaskWorktree::from_project(&worktree)),
+            worktree_project_id: Some(worktree.id.clone()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        };
+        let state =
+            RegistryState::new(ProjectStore::from_projects_for_test(vec![root], vec![task]));
+
+        assert!(
+            state.project_store.project("wt1").is_none(),
+            "worktree projects are migrated into task metadata"
+        );
+        assert_eq!(
+            project_path(&state, "wt1"),
+            Some(PathBuf::from("/tmp/root-wt"))
+        );
+    }
 }
 
 /// Bundle of handles the daemon-host thread hands back to the GUI.

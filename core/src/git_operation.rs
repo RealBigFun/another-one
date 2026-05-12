@@ -154,8 +154,9 @@ fn stable_path_key(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        git_operation_lock_key_for_path, path_has_git_marker, run_serialized_git_operation_for_path,
-        GitOperationLock, GitOperationLocks, GLOBAL_GIT_OPERATION_LOCK_KEY,
+        git_operation_lock_key_for_path, path_has_git_marker,
+        run_serialized_git_operation_for_path, GitOperationLock, GitOperationLocks,
+        GLOBAL_GIT_OPERATION_LOCK_KEY,
     };
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::{mpsc, Arc};

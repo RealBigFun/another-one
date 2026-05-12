@@ -202,9 +202,7 @@ async fn client_reader_loop(
                 // untagged frames fall through to empty tags, same
                 // shape the pre-tagging code emitted — consumers
                 // that don't care (single-attach) keep working.
-                if let Some((section_id, tab_id, body)) =
-                    daemon_proto::decode_pty_data(&frame.1)
-                {
+                if let Some((section_id, tab_id, body)) = daemon_proto::decode_pty_data(&frame.1) {
                     let _ = events_tx.send(SessionEvent::PtyBytes {
                         section_id,
                         tab_id,
@@ -492,9 +490,7 @@ async fn server_reader_loop(
                 // layer has its own path), so we drop on the floor;
                 // decoding + logging the tag for visibility when
                 // it's eventually wired up.
-                if let Some((section_id, tab_id, body)) =
-                    daemon_proto::decode_pty_data(&frame.1)
-                {
+                if let Some((section_id, tab_id, body)) = daemon_proto::decode_pty_data(&frame.1) {
                     debug!(
                         section_id,
                         tab_id,
@@ -502,7 +498,10 @@ async fn server_reader_loop(
                         "uds: dropped inbound TY_DATA"
                     );
                 } else {
-                    debug!(bytes = frame.1.len(), "uds: dropped inbound TY_DATA (untagged)");
+                    debug!(
+                        bytes = frame.1.len(),
+                        "uds: dropped inbound TY_DATA (untagged)"
+                    );
                 }
             }
             other => debug!(ty = other, "uds: unhandled inbound frame type"),

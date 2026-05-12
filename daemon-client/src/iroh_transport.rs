@@ -107,9 +107,7 @@ pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession
         // the newly-attached tab. Legacy untagged frames arrive
         // with empty ids; fall back to the local attach snapshot
         // so pre-#138 daemons still work.
-        while let Some((section_id, tab_id, bytes)) =
-            bridge_session.next_incoming_bytes().await
-        {
+        while let Some((section_id, tab_id, bytes)) = bridge_session.next_incoming_bytes().await {
             let (section_id, tab_id) = if !section_id.is_empty() && !tab_id.is_empty() {
                 (section_id, tab_id)
             } else {

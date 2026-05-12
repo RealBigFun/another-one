@@ -4350,14 +4350,14 @@ impl AnotherOneApp {
         app: OpenInAppKind,
         cx: &mut Context<Self>,
     ) {
-        let Some(project) = self.project_store.project(project_id) else {
+        let Some(project_path) = self.project_path(project_id) else {
             self.show_error_toast("Could not find the selected project.", cx);
             return;
         };
 
         let active_git_diff = self.workspace_pane.read(cx).active_git_diff.clone();
         let target_path =
-            open_in_target_path_for_project(project_id, &project.path, active_git_diff.as_ref());
+            open_in_target_path_for_project(project_id, &project_path, active_git_diff.as_ref());
         self.dismiss_titlebar_dropdowns();
         if let Err(err) = open_path_in_app(&target_path, app) {
             self.show_error_toast(err, cx);

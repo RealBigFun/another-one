@@ -394,8 +394,7 @@ async fn connect_inner_impl(
     // reserved for future use. Unknown types are logged and dropped
     // so older clients stay forwards-compatible as the daemon adds
     // variants.
-    let (incoming_tx, incoming_rx) =
-        mpsc::channel::<(String, String, Vec<u8>)>(128);
+    let (incoming_tx, incoming_rx) = mpsc::channel::<(String, String, Vec<u8>)>(128);
     let (worker_replies_tx, worker_replies_rx) = mpsc::channel::<WorkerReply>(64);
     let (close_tx, mut close_rx) = oneshot::channel::<()>();
     let conn_for_close = conn.clone();
