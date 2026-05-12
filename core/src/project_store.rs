@@ -2972,11 +2972,37 @@ impl ProjectStore {
             return StoreFileV4::default();
         };
         match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(version) if version == u64::from(STORE_VERSION) => serde_json::from_value(value)
-                .unwrap_or_else(|_| {
-                    Self::backup_incompatible_store(path);
-                    StoreFileV4::default()
-                }),
+            Some(version) if version == u64::from(STORE_VERSION) => serde_json::from_value(
+                value.clone(),
+            )
+            .or_else(|_| {
+                // Tolerant fallback: an earlier dev cut wrote a V4
+                // file whose `tasks` field was still a
+                // `HashMap<task_id, Task>` (legacy V3 shape). The
+                // strict V4 deserializer rejects that and the
+                // file gets backed up + the user's projects
+                // disappear. Detect that exact mismatch and fix
+                // it up in-place: turn the map into a Vec of its
+                // values, then re-deserialize.
+                let mut value = value.clone();
+                if let Some(tasks) = value.get_mut("tasks") {
+                    if tasks.is_object() {
+                        let entries = tasks.as_object_mut().unwrap();
+                        let arr: Vec<serde_json::Value> =
+                            entries.values().cloned().collect();
+                        *tasks = serde_json::Value::Array(arr);
+                    }
+                }
+                serde_json::from_value::<StoreFileV4>(value).inspect(|migrated| {
+                    // Persist the normalised shape so the next
+                    // load takes the strict path.
+                    write_store_sync(path, migrated);
+                })
+            })
+            .unwrap_or_else(|_| {
+                Self::backup_incompatible_store(path);
+                StoreFileV4::default()
+            }),
             Some(version) if version == u64::from(LEGACY_STORE_VERSION) => {
                 serde_json::from_value::<StoreFile>(value)
                     .map(|store| {
