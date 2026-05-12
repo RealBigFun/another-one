@@ -816,6 +816,14 @@ pub struct UiState {
     /// consult instead of the client's own filesystem.
     #[serde(skip)]
     pub available_agent_ids: Option<HashSet<String>>,
+    /// Latest result of the daemon's `gh auth status` probe.
+    /// Pushed in via `absorb_ui_snapshot`; not persisted (the
+    /// daemon recomputes on boot/recheck and stamps every
+    /// projection). `None` = no projection yet from a daemon
+    /// new enough to publish the field; treat as "unknown,
+    /// don't paint the overlay". See #156.
+    #[serde(skip)]
+    pub gh_auth_status: Option<daemon_proto::GhAuthStatusWire>,
     #[serde(default)]
     pub default_agent_id: Option<String>,
     #[serde(default)]
@@ -851,6 +859,7 @@ impl Default for UiState {
             preferred_open_in_app: None,
             enabled_agents: None,
             available_agent_ids: None,
+            gh_auth_status: None,
             default_agent_id: None,
             agent_launch_args: HashMap::new(),
             git_commit_generation_script: None,
@@ -2274,6 +2283,7 @@ impl ProjectStore {
         self.ui.available_agent_ids = snapshot
             .available_agent_ids
             .map(|v| v.into_iter().collect());
+        self.ui.gh_auth_status = snapshot.gh_auth_status;
         if let Some(value) = snapshot.open_in_apps {
             if let Ok(parsed) = serde_json::from_value(value) {
                 self.ui.enabled_open_in_apps = Some(parsed);
@@ -6083,6 +6093,7 @@ mod tests {
                 preferred_open_in_app: None,
                 enabled_agents: None,
                 available_agent_ids: None,
+                gh_auth_status: None,
                 default_agent_id: None,
                 agent_launch_args: HashMap::new(),
                 git_commit_generation_script: None,

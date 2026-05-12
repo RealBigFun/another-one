@@ -776,6 +776,13 @@ pub enum Control {
     /// Settings → MCP: remove one entry from the registry. Runs
     /// `sync_all` on success. Reply: [`WorkerReply::McpRemoveAck`].
     McpRemove { entry_id: String },
+    /// Re-run the daemon-side `gh auth status` probe. Fire-and-forget
+    /// from the client's PoV — the new status is published through
+    /// the next `UiSnapshot.gh_auth_status` projection rather than
+    /// inline on the reply, so the same code path that delivers the
+    /// boot-time result also delivers Recheck results. Reply:
+    /// [`WorkerReply::RecheckGhAuthAck`]. See #156.
+    RecheckGhAuth,
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -898,6 +905,10 @@ pub enum WorkerReply {
     SetExpandedReposAck,
     SetGitCommitLlmAck,
     SetGitPrLlmAck,
+    /// Reply to [`Control::RecheckGhAuth`]. Empty Ack — the actual
+    /// status flows through the next `UiSnapshot.gh_auth_status`
+    /// projection.
+    RecheckGhAuthAck,
     /// Response to [`Control::ListProjects`]. Order matches the
     /// desktop sidebar's `project_order`; worktrees of a root are
     /// emitted as their own entries rather than nested children
@@ -1476,6 +1487,27 @@ pub struct RepoBranchSummary {
     pub behind_count: usize,
 }
 
+/// Result of the daemon-side `gh auth status` probe. The daemon owns
+/// the fork/exec; clients render from the projection. `tag`/`content`
+/// serialisation keeps the JSON form identical to a Rust enum and
+/// lets us add variants (e.g. an explicit `Error { message }`) later
+/// without breaking older clients — unknown variants will fail decode
+/// and clients will fall back to `None` (= "unknown, don't paint").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum GhAuthStatusWire {
+    /// Probe in flight. Set when the daemon kicks the worker off
+    /// at boot or on Recheck so clients can show a spinner button
+    /// instead of the stale answer.
+    Checking,
+    /// `gh auth status` exited 0.
+    Authenticated,
+    /// `gh` was found on `$PATH` but `auth status` exited non-zero.
+    NotAuthenticated,
+    /// `gh` was not found on the daemon's `$PATH`.
+    GhMissing,
+}
+
 /// Per-user UI state mirrored from `core::project_store::UiState`.
 /// Wire-additive on `WorkerReply::ProjectList` so both clients render
 /// the same expand/pin/focus state from the daemon's projection
@@ -1542,6 +1574,14 @@ pub struct UiSnapshot {
     /// should treat that as "unknown, don't filter".
     #[serde(default)]
     pub available_agent_ids: Option<Vec<String>>,
+    /// Result of the daemon's `gh auth status` probe. The desktop
+    /// client used to fork/exec `gh` itself, but the architectural
+    /// rule is the daemon owns host-process probes — clients (mobile
+    /// or desktop) just render this projection. `None` = older
+    /// daemon / probe hasn't completed; treat as "unknown, don't
+    /// surface the overlay yet". Wire-additive (#156).
+    #[serde(default)]
+    pub gh_auth_status: Option<GhAuthStatusWire>,
     /// Opaque JSON-serialised
     /// `HashMap<OpenInAppKind, OpenInAppKindState>` from
     /// `UiState::open_in_apps`.

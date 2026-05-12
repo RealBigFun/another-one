@@ -2180,14 +2180,6 @@ pub struct AnotherOneApp {
     pub(crate) updater: crate::updater::UpdaterHandle,
     /// Latest updater state surfaced in Settings → General.
     pub(crate) updater_state: crate::updater::UpdateState,
-    /// Latest result of the background GitHub CLI install/auth probe.
-    pub(crate) gh_check_status: crate::gh_check::GhCheckStatus,
-    /// In-flight receiver for the GitHub CLI probe; `None` once drained.
-    pub(crate) gh_check_receiver: Option<mpsc::Receiver<crate::gh_check::GhCheckStatus>>,
-    /// `true` once the first GitHub CLI probe has produced a status; the
-    /// overlay won't paint until this flips so a fast cold boot doesn't
-    /// flash an empty scrim before the worker reports back.
-    pub(crate) gh_check_completed: bool,
 }
 
 impl Focusable for AnotherOneApp {
@@ -4969,20 +4961,6 @@ impl AnotherOneApp {
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
             updater: crate::updater::UpdaterHandle::spawn(crate::updater::BuildIdentity::current()),
             updater_state: crate::updater::UpdateState::Idle,
-            gh_check_status: crate::gh_check::GhCheckStatus::Checking,
-            // ── OS-availability split, not a client-role split ──
-            // `gh_check` fork/execs the `gh` CLI to detect a stale
-            // GitHub CLI. Android has no `gh` binary and no
-            // fork/exec-a-binary surface to probe one, so the
-            // check simply never runs there — not because mobile
-            // is a "lesser client" but because the OS doesn't host
-            // the subject of the check. Same reasoning belongs on
-            // any future feature that probes host-OS tooling.
-            #[cfg(not(target_os = "android"))]
-            gh_check_receiver: Some(crate::gh_check::spawn_check()),
-            #[cfg(target_os = "android")]
-            gh_check_receiver: None,
-            gh_check_completed: false,
         };
 
         let mut app = app;
@@ -16549,7 +16527,6 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_iroh_dial_status(cx);
                             should_notify |= this.drain_remote_worker_replies(cx);
                             should_notify |= this.drain_updater_events(cx);
-                            should_notify |= this.drain_gh_check();
                             should_notify |= this.drain_terminal_drag_autoscroll(cx);
                             should_notify |= this.tick_toasts();
                             should_notify |= this.tick_resource_usage();

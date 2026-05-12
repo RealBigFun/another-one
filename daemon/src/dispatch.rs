@@ -912,6 +912,10 @@ async fn dispatch_call(
                 kind: ErrKind::Internal,
             },
         }),
+        Control::RecheckGhAuth => {
+            registry.recheck_gh_auth();
+            Some(WorkerReply::RecheckGhAuthAck)
+        }
 
         // ── Legacy / no-reply / pre-handled ──────────────────────────
         Control::Hello { .. } => {

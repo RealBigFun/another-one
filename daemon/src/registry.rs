@@ -246,6 +246,14 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// section state.
     fn persist_section_state(&self, _section_id: &str, _persisted: serde_json::Value) {}
 
+    /// Re-run the `gh auth status` probe and publish the new
+    /// status through `UiSnapshot.gh_auth_status`. Fire-and-forget
+    /// from the dispatch handler's PoV — the registry kicks a
+    /// background worker (or no-op when not supported), then
+    /// returns immediately. Default impl is a no-op for sandbox /
+    /// test registries that have no `gh` to probe.
+    fn recheck_gh_auth(&self) {}
+
     /// Update the user's last-active-section pointer. `None` clears
     /// it (no active section). Default impl is a no-op for
     /// registries that don't track UI state.

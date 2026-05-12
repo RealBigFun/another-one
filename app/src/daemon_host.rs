@@ -146,6 +146,13 @@ pub struct RegistryState {
     /// `project_store` mutation. Connected mobile sessions push a
     /// fresh `WorkerReply::ProjectList` to their peer on each tick.
     pub(crate) state_change_tx: tokio::sync::broadcast::Sender<()>,
+    /// Latest result of the daemon-side `gh auth status` probe.
+    /// `None` until the first probe completes; the daemon kicks
+    /// the initial probe at boot and re-kicks it on
+    /// `Control::RecheckGhAuth`. Owned through an `Arc<Mutex<_>>`
+    /// so the background worker can mutate it without racing the
+    /// `ui_snapshot` reader on the daemon's tokio thread. See #156.
+    pub(crate) gh_auth_status: Arc<Mutex<Option<daemon_proto::GhAuthStatusWire>>>,
 }
 
 impl RegistryState {
@@ -169,6 +176,7 @@ impl RegistryState {
             effective_sizes: HashMap::new(),
             last_viewer_activity: HashMap::new(),
             state_change_tx,
+            gh_auth_status: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -751,6 +759,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                         .map(|agent| agent.id.to_string())
                         .collect(),
                 ),
+                gh_auth_status: state.gh_auth_status.lock().unwrap_or_else(|p| p.into_inner()).clone(),
                 open_in_apps: ui
                     .enabled_open_in_apps
                     .as_ref()
@@ -766,6 +775,21 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             }
         })
         .unwrap_or_default()
+    }
+
+    fn recheck_gh_auth(&self) {
+        // Pull the slot + sender out of `RegistryState` first so the
+        // background worker doesn't keep the daemon's state lock
+        // held across its `gh auth status` fork/exec. Same reasoning
+        // as the writer-clone in `tab_input`: never hold the
+        // registry lock across a syscall whose latency the user can
+        // notice.
+        let Some((slot, tx)) = self.with_state(|state| {
+            (state.gh_auth_status.clone(), state.state_change_tx.clone())
+        }) else {
+            return;
+        };
+        spawn_gh_auth_check(slot, tx);
     }
 
     fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
@@ -1287,6 +1311,51 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         } else {
             Err(format!("MCP sync failed: {}", sync_errors.join("; ")))
         }
+    }
+}
+
+/// Run `gh auth status` on a worker thread and write the result
+/// into `slot`, then fan a state-change tick out so connected
+/// peers re-snapshot the projection. The probe forks a host
+/// process, which is exactly the kind of thing the architectural
+/// rule (#156) says belongs daemon-side; the desktop client used
+/// to do this itself.
+pub(crate) fn spawn_gh_auth_check(
+    slot: Arc<Mutex<Option<daemon_proto::GhAuthStatusWire>>>,
+    state_change_tx: tokio::sync::broadcast::Sender<()>,
+) {
+    // Surface "checking" immediately so a stale
+    // `Authenticated` doesn't linger across a Recheck while the
+    // worker is running. Setting it before spawning the thread
+    // (rather than inside it) means the next projection emitted
+    // by `notify_state_changed` reflects the in-flight state.
+    {
+        let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some(daemon_proto::GhAuthStatusWire::Checking);
+    }
+    let _ = state_change_tx.send(());
+    thread::spawn(move || {
+        let status = perform_gh_auth_check();
+        {
+            let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+            *guard = Some(status);
+        }
+        let _ = state_change_tx.send(());
+    });
+}
+
+fn perform_gh_auth_check() -> daemon_proto::GhAuthStatusWire {
+    let cwd = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+    let Some(gh) = another_one_core::git_actions::find_gh_cli(&cwd) else {
+        return daemon_proto::GhAuthStatusWire::GhMissing;
+    };
+    match std::process::Command::new(&gh)
+        .args(["auth", "status"])
+        .output()
+    {
+        Ok(output) if output.status.success() => daemon_proto::GhAuthStatusWire::Authenticated,
+        Ok(_) => daemon_proto::GhAuthStatusWire::NotAuthenticated,
+        Err(_) => daemon_proto::GhAuthStatusWire::GhMissing,
     }
 }
 
@@ -1961,6 +2030,17 @@ pub(crate) fn spawn(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
 ) -> DaemonHostHandles {
+    // Kick the boot-time `gh auth status` probe before we hand
+    // control off to the daemon thread. Done daemon-side (#156)
+    // rather than client-side because the daemon is the process
+    // that owns host-process probes; clients render the result
+    // through `UiSnapshot.gh_auth_status`. Mobile peers paired
+    // to this daemon get the answer for free — the desktop's
+    // `$PATH` is the canonical one for `gh`.
+    {
+        let guard = registry_state.lock().unwrap_or_else(|p| p.into_inner());
+        spawn_gh_auth_check(guard.gh_auth_status.clone(), guard.state_change_tx.clone());
+    }
     let (endpoint_tx, endpoint_rx) = mpsc::channel();
     // Build the in-memory pair *before* spawning the daemon thread so
     // we can hand the client half back synchronously. `pair()` itself
