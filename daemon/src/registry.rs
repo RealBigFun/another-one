@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
     ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView,
-    OpenInSettingsViewWire, OpenInStateWire, ProjectActionWire, ProjectPagePullRequest,
+    OpenInSettingsViewWire, ProjectActionWire, ProjectPagePullRequest,
     ProjectSummary, PullRequestStatus, RecentCommitsWire, ResolvedBranchSettingsWire,
     ShortcutSettingsView, TaskSummary, ToolbarActionOutcome,
 };
@@ -461,13 +461,6 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     // that can't answer. Production registry implementations override
     // each method with a real delegation as the verbs land.
 
-    /// Compute the canonical branch slug for a free-text input.
-    /// Pure — no project state involved. Default impl forwards to
-    /// [`another_one_core::project_store::slugify_branch_name`].
-    fn slugify_branch_name(&self, name: &str) -> String {
-        another_one_core::project_store::slugify_branch_name(name)
-    }
-
     /// Branch names available on `project_id`'s git repo. Empty
     /// list for unknown projects.
     fn read_project_branches(&self, _project_id: &str) -> Vec<String> {
@@ -751,16 +744,6 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     }
 
     // ── Custom actions + Open In + agents (another-one-ojm.7) ─────
-
-    /// Snapshot of the host's "Open In" config — installed-and-enabled
-    /// apps + preferred default. Read-only (the actual `xdg-open`
-    /// spawn stays host-local on the daemon, by design — see
-    /// `connection.dart::openProjectInApp` for why). Default impl
-    /// returns `None` for registries that don't surface Open-In
-    /// (the sandbox binary has no host editor detection).
-    fn open_in_state(&self) -> Option<OpenInStateWire> {
-        None
-    }
 
     /// Project + global custom actions for `project_id`, in the same
     /// dropdown order GPUI's titlebar split-button renders. Empty

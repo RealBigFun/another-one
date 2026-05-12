@@ -35,7 +35,7 @@ use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
     McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto,
-    OpenInAppSettingsRowWire, OpenInAppWire, OpenInSettingsViewWire, OpenInStateWire, ProjectKind,
+    OpenInAppSettingsRowWire, OpenInSettingsViewWire, ProjectKind,
     ProjectSummary, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
     ToolbarActionOutcome as WireToolbarActionOutcome,
 };
@@ -1056,18 +1056,6 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         })
     }
 
-    fn open_in_state(&self) -> Option<OpenInStateWire> {
-        let available = detect_available_open_in_apps();
-        self.with_state(|state| {
-            let enabled = state.project_store.enabled_open_in_apps(&available);
-            let preferred = state.project_store.preferred_open_in_app(&available);
-            OpenInStateWire {
-                enabled_apps: enabled.into_iter().map(open_in_app_wire).collect(),
-                preferred_app_id: preferred.map(|app| app.id().to_string()),
-            }
-        })
-    }
-
     fn read_enabled_agents(&self) -> EnabledAgentsViewWire {
         self.with_state(|state| {
             let enabled_ids = state
@@ -1761,15 +1749,6 @@ fn ensure_agent_id(agent_id: &str) -> Result<(), String> {
 
 fn registry_unavailable() -> String {
     "desktop registry state is unavailable".to_string()
-}
-
-fn open_in_app_wire(app: OpenInAppKind) -> OpenInAppWire {
-    OpenInAppWire {
-        id: app.id().to_string(),
-        label: app.label().to_string(),
-        description: app.description().to_string(),
-        icon_path: app.icon_path().to_string(),
-    }
 }
 
 fn open_in_app_from_id(id: &str) -> Option<OpenInAppKind> {

@@ -40,7 +40,10 @@ fn is_loopback(addr: &SocketAddr) -> bool {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Control {
-    Resize { cols: u16, rows: u16 },
+    // No control verbs; the legacy WS transport is opt-in and
+    // unused. Kept around as a stub so the JSON parser still
+    // succeeds + the warn!() below keeps a record of any client
+    // attempting to drive it.
 }
 
 pub async fn serve<F>(addr: SocketAddr, shutdown: F) -> anyhow::Result<()>
@@ -102,13 +105,7 @@ async fn handle_session(mut ws: WebSocket) {
                 }
                 Some(Ok(Message::Text(text))) => {
                     match serde_json::from_str::<Control>(&text) {
-                        Ok(Control::Resize { cols, rows }) => {
-                            if let Err(e) = session.resize(cols, rows) {
-                                warn!(error = %e, "pty resize failed");
-                            } else {
-                                debug!(cols, rows, "ws resized");
-                            }
-                        }
+                        Ok(_) => warn!("ws transport: Control::Resize was removed; legacy WS clients no longer supported"),
                         Err(e) => warn!(error = %e, text = %text, "bad ws control"),
                     }
                 }

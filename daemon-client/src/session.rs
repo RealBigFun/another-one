@@ -563,14 +563,6 @@ impl Session {
         self.send_frame(TY_DATA, payload).await
     }
 
-    /// Request a PTY resize on the daemon's end (legacy standalone
-    /// sandbox path). Goes through the same stream as data,
-    /// multiplexed by frame type. For tab-routed resizes use
-    /// [`Session::tab_resize`] after [`Session::attach_tab`].
-    pub async fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.send_control(Control::Resize { cols, rows }).await
-    }
-
     /// Ask the daemon to send back its current project list as a
     /// [`WorkerReply::ProjectList`] frame.
     pub async fn list_projects(&self) -> anyhow::Result<()> {

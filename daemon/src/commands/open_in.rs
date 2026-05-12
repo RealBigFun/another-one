@@ -3,10 +3,6 @@ use daemon_proto::{Control, ErrKind, WorkerReply};
 
 pub(crate) fn handle(ctrl: Control, registry: &dyn DaemonRegistry) -> Result<WorkerReply, Control> {
     match ctrl {
-        Control::OpenInState => Ok(match registry.open_in_state() {
-            Some(state) => WorkerReply::OpenInStateAck { state },
-            None => unsupported("open_in_state"),
-        }),
         Control::ReadOpenInSettings => Ok(match registry.read_open_in_settings() {
             Some(view) => WorkerReply::OpenInSettingsAck { view },
             None => unsupported("read_open_in_settings"),

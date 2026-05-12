@@ -222,11 +222,6 @@ pub const PUSH_REQUEST_ID: u64 = 0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
-    /// Legacy resize for the standalone sandbox shell. On embedded
-    /// (desktop-hosted) daemons, use [`Control::TabResize`] after
-    /// [`Control::AttachTab`] — that routes the resize to the
-    /// specific tab's PTY.
-    Resize { cols: u16, rows: u16 },
     /// Legacy: ask the daemon to spawn `git_refresh` for a literal
     /// path. Preserved for backward compat with clients built before
     /// the projects/tasks/tabs protocol. New clients call
@@ -287,14 +282,6 @@ pub enum Control {
     /// [`WorkerReply::ProjectRemoved`] echoing the id so the issuer
     /// can drop any stale UI rows.
     RemoveProject { project_id: String },
-    /// Snapshot of the host's "Open In" config — installed-and-enabled
-    /// apps + the user's preferred default. Drives the mobile titlebar
-    /// split-button's primary icon + the chevron dropdown. Reading it
-    /// remotely is fine (display-only); the actual app launch
-    /// (`open_project_in_app`) stays host-local — see the comment on
-    /// `connection.dart::openProjectInApp` for why. Reply:
-    /// [`WorkerReply::OpenInStateAck`].
-    OpenInState,
     /// List the merged project + global custom actions for `project_id`,
     /// in the same order the desktop's titlebar split-button dropdown
     /// renders. Empty list when the project is unknown — matches
@@ -538,11 +525,6 @@ pub enum Control {
     SetGitCommitLlm { settings: serde_json::Value },
     /// Same as `SetGitCommitLlm` but for the PR-generation LLM.
     SetGitPrLlm { settings: serde_json::Value },
-    /// Compute the canonical branch slug for a free-text input.
-    /// Powers the Create Branch modal's live `Branch: …` preview.
-    /// Pure function — no project state involved. Reply is
-    /// [`WorkerReply::SlugifyBranchNameAck`] with the slug.
-    SlugifyBranchName { name: String },
     /// Branch names available on `project_id`'s git repo. Powers the
     /// new-task modal's source-branch dropdown. Reply is
     /// [`WorkerReply::ProjectBranchesAck`] with an empty list when
@@ -899,7 +881,7 @@ pub enum WorkerReply {
     /// worthy to return". Used for fire-and-forget verbs whose
     /// effects are observable elsewhere (e.g. `AttachTab` — bytes
     /// flow on the events stream; `LaunchTab` — runtime appears in
-    /// the registry; `DetachTab`/`Resize`/`TabResize` — state
+    /// the registry; `DetachTab`/`TabResize` — state
     /// updates the next pull observes). Lets clients await
     /// `Session::call` instead of leaking a pending_calls entry.
     Empty,
@@ -958,10 +940,6 @@ pub enum WorkerReply {
         tab_id: String,
         reason: String,
     },
-    /// Reply to [`Control::OpenInState`]. `state.enabled_apps` is in
-    /// canonical `OpenInAppKind::all()` order; `preferred_app_id`
-    /// is `None` when no Open-In app is detected on the host.
-    OpenInStateAck { state: OpenInStateWire },
     /// Reply to [`Control::ListProjectActions`]. Empty `actions` is a
     /// valid result (unknown project, or project with no custom
     /// actions configured) — clients render the empty state rather
@@ -1069,8 +1047,6 @@ pub enum WorkerReply {
         task_id: String,
         removed: bool,
     },
-    /// Reply to [`Control::SlugifyBranchName`].
-    SlugifyBranchNameAck { slug: String },
     /// Reply to [`Control::ReadProjectBranches`]. Empty list for
     /// unknown projects.
     ProjectBranchesAck { branches: Vec<String> },

@@ -610,7 +610,7 @@ fn _keep_alive() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daemon_proto::{ErrKind, ProjectKind, ProjectSummary};
+    use daemon_proto::{ErrKind, ProjectSummary};
 
     #[tokio::test]
     async fn uds_round_trips_a_call() {

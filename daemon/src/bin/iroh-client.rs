@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
     // daemon's PTY is appropriately sized before anything else.
     let resize = serde_json::to_vec(&ControlEnvelope {
         request_id: next_id(),
-        control: Control::Resize {
+        control: Control::TabResize {
             cols: 100,
             rows: 30,
         },

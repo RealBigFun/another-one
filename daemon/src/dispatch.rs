@@ -358,7 +358,7 @@ async fn dispatch_call(
             registry.viewer_disconnected(viewer_id);
             Some(WorkerReply::Empty)
         }
-        Control::Resize { cols, rows } | Control::TabResize { cols, rows } => {
+        Control::TabResize { cols, rows } => {
             if let Some((section_id, tab_id)) = attach.snapshot_target() {
                 registry.tab_resize(viewer_id, &section_id, &tab_id, cols, rows);
             }
@@ -587,9 +587,6 @@ async fn dispatch_call(
         }
 
         // ── Git read verbs ───────────────────────────────────────────
-        Control::SlugifyBranchName { name } => Some(WorkerReply::SlugifyBranchNameAck {
-            slug: registry.slugify_branch_name(&name),
-        }),
         Control::ReadProjectBranches { project_id } => Some(WorkerReply::ProjectBranchesAck {
             branches: registry.read_project_branches(&project_id),
         }),
@@ -939,7 +936,6 @@ async fn dispatch_call(
         | Control::SetAgentEnabled { .. }
         | Control::SetDefaultAgent { .. }
         | Control::SetAgentLaunchArgs { .. }
-        | Control::OpenInState
         | Control::ReadOpenInSettings
         | Control::SetOpenInAppEnabled { .. }
         | Control::OpenProjectInApp { .. } => {
@@ -1129,7 +1125,6 @@ mod tests {
     /// unimplemented verb the test doesn't expect.
     struct StubRegistry {
         projects: Mutex<Vec<ProjectSummary>>,
-        slugified: Mutex<Option<String>>,
     }
 
     impl StubRegistry {
@@ -1142,7 +1137,6 @@ mod tests {
                     current_branch: Some("main".into()),
                     ..Default::default()
                 }]),
-                slugified: Mutex::new(None),
             }
         }
     }
@@ -1163,11 +1157,6 @@ mod tests {
         }
         fn tab_input(&self, _: &str, _: &str, _: &[u8]) {}
         fn tab_resize(&self, _: &str, _: &str, _: &str, _: u16, _: u16) {}
-        fn slugify_branch_name(&self, name: &str) -> String {
-            let slug = format!("slug-of-{name}");
-            *self.slugified.lock().unwrap() = Some(slug.clone());
-            slug
-        }
         fn read_project_branches(&self, _project_id: &str) -> Vec<String> {
             vec!["main".into(), "feat/x".into()]
         }
@@ -1201,26 +1190,6 @@ mod tests {
             .await
             .expect("serve task")
             .expect("serve_session result");
-    }
-
-    #[tokio::test]
-    async fn serve_session_dispatches_slugify_branch_name() {
-        let (server, client) = pair("test-peer");
-        let registry: Arc<dyn DaemonRegistry> = Arc::new(StubRegistry::new());
-        let _server_task = tokio::spawn(serve_session(server_arc(server), Arc::clone(&registry)));
-
-        let reply = client
-            .call(Control::SlugifyBranchName {
-                name: "Add cool feature".into(),
-            })
-            .await
-            .expect("call");
-        match reply {
-            WorkerReply::SlugifyBranchNameAck { slug } => {
-                assert_eq!(slug, "slug-of-Add cool feature");
-            }
-            other => panic!("expected SlugifyBranchNameAck, got {other:?}"),
-        }
     }
 
     #[tokio::test]
