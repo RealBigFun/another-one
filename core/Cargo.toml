@@ -9,7 +9,20 @@ publish = false
 name = "another_one_core"
 
 [features]
-default = []
+default = ["daemon-host"]
+# Compile in `ProjectStore::save` / `load` real bodies (filesystem
+# persistence). Pure-client binaries (mobile today, future
+# embedded web) build without this feature so the binary never
+# touches the user's `~/.config/another-one/projects.json` — the
+# daemon is the only writer of that file. Default-on so desktop's
+# normal `cargo build` keeps working; mobile's build script disables
+# default features and forwards from `app/Cargo.toml`.
+#
+# This is the runtime-role split ("am I the registry host?") encoded
+# at compile time. Replaces the v0.1.18-class bug where a pure-
+# client binary loaded then re-saved a partial copy of the daemon's
+# store and corrupted it on schema drift.
+daemon-host = []
 # Forwarded from the desktop crate's `hotpath` / `hotpath-alloc` features;
 # controls whether `#[hotpath::measure]` in moved code actually records
 # anything. The `hotpath` crate is always linked (the proc-macro needs to

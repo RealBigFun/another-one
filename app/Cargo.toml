@@ -15,7 +15,17 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = []
+# Default *off* on this crate so mobile builds (which set
+# `--no-default-features`) inherit a pure-client binary with no
+# filesystem persistence. Desktop's `cargo build` enables
+# `daemon-host` explicitly via `default-features = true` on
+# `another-one-core` below, plus an explicit re-enable here to make
+# the role clear.
+default = ["daemon-host"]
+# Build the registry-host pieces (filesystem-backed ProjectStore,
+# the MCP UDS, the iroh listener, etc.). Pure-client targets
+# (mobile) ship with `--no-default-features` to omit all of this.
+daemon-host = ["another-one-core/daemon-host"]
 hotpath = ["hotpath/hotpath", "another-one-core/hotpath"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "another-one-core/hotpath-alloc"]
 # Forces the 1 Hz LEAKSCOPE sampler on in release builds (VmRSS, PTY

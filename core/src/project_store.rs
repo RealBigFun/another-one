@@ -1377,38 +1377,62 @@ impl ProjectStore {
     #[hotpath::measure]
     pub fn load() -> Self {
         let file_path = Self::config_path();
-        let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
-            Self::read_from_disk(&file_path).into_parts();
-
-        let mut store = Self {
-            repos,
-            projects_by_id: projects,
-            projects: Vec::new(),
-            project_order,
-            tasks_by_id: tasks,
-            tasks: HashMap::new(),
-            task_ids_by_root_project,
-            terminal_sections: sections,
-            ui: UiState::default(),
-            file_path,
-        };
-        store.sanitize();
-        store.rebuild_runtime_views();
-        ui.expanded_repo_ids
-            .retain(|repo_id| store.repos.contains_key(repo_id));
-        ui.repo_default_commit_actions
-            .retain(|repo_id, _| store.repos.contains_key(repo_id));
-        ui.pinned_task_ids
-            .retain(|task_id| store.tasks_by_id.contains_key(task_id));
-        if ui
-            .last_active_section_id
-            .as_ref()
-            .is_some_and(|section_id| !store.terminal_sections.contains_key(section_id))
+        // Pure-client binaries skip disk read — their store is fed
+        // entirely by `absorb_projection` once the session pairs.
+        // Reading from disk on a pure client risks loading a stale
+        // copy of the daemon's authoritative store and triggering
+        // schema-mismatch backups (the v0.1.18 bug class).
+        #[cfg(not(feature = "daemon-host"))]
         {
-            ui.last_active_section_id = None;
+            let mut store = Self {
+                repos: HashMap::new(),
+                projects_by_id: HashMap::new(),
+                projects: Vec::new(),
+                project_order: Vec::new(),
+                tasks_by_id: HashMap::new(),
+                tasks: HashMap::new(),
+                task_ids_by_root_project: HashMap::new(),
+                terminal_sections: HashMap::new(),
+                ui: UiState::default(),
+                file_path,
+            };
+            store.rebuild_runtime_views();
+            store
         }
-        store.ui = ui;
-        store
+        #[cfg(feature = "daemon-host")]
+        {
+            let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
+                Self::read_from_disk(&file_path).into_parts();
+            let mut store = Self {
+                repos,
+                projects_by_id: projects,
+                projects: Vec::new(),
+                project_order,
+                tasks_by_id: tasks,
+                tasks: HashMap::new(),
+                task_ids_by_root_project,
+                terminal_sections: sections,
+                ui: UiState::default(),
+                file_path,
+            };
+            store.sanitize();
+            store.rebuild_runtime_views();
+            ui.expanded_repo_ids
+                .retain(|repo_id| store.repos.contains_key(repo_id));
+            ui.repo_default_commit_actions
+                .retain(|repo_id, _| store.repos.contains_key(repo_id));
+            ui.pinned_task_ids
+                .retain(|task_id| store.tasks_by_id.contains_key(task_id));
+            if ui
+                .last_active_section_id
+                .as_ref()
+                .is_some_and(|section_id| !store.terminal_sections.contains_key(section_id))
+            {
+                ui.last_active_section_id = None;
+            }
+            store.ui = ui;
+            store
+        }
     }
 
     pub fn project(&self, project_id: &str) -> Option<&Project> {
@@ -2131,30 +2155,45 @@ impl ProjectStore {
 
     #[hotpath::measure]
     pub fn save(&self) {
-        let store = self.snapshot_for_save();
-        // Tests assert on file contents immediately after save(),
-        // so we keep the write synchronous under `#[cfg(test)]`.
-        // Production builds hand off to a background writer thread
-        // so save() doesn't stall the GPUI render thread (see #129):
-        // a CDP-heavy sub-agent produces enough PTY output to fire
-        // `persist_section_state` → `update_task_tabs` → `save()`
-        // dozens of times per second, and each synchronous
-        // `serde_json::to_string_pretty` over the full StoreFile was
-        // blocking render for >2s (captured by the #125 watchdog).
-        #[cfg(test)]
+        // Pure-client binaries (mobile, future embedded web) build
+        // without `daemon-host` and short-circuit save() to a
+        // no-op. The daemon owns persistence; the client mirrors
+        // state from the projection. This is the role split the
+        // v0.1.18 store-corruption bug surfaced — a pure-client
+        // binary that round-tripped through save() could clobber
+        // the daemon's authoritative file with a partial copy.
+        #[cfg(not(feature = "daemon-host"))]
         {
-            write_store_sync(&self.file_path, &store);
+            let _ = self;
+            return;
         }
-        #[cfg(not(test))]
+        #[cfg(feature = "daemon-host")]
         {
-            let worker = save_worker();
-            let mut pending = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
-            // Single-slot mailbox: if a save was already queued, the
-            // newer snapshot wins — callers only care that the latest
-            // state is on disk, not that every intermediate revision
-            // is. That's the coalescing that makes a CDP burst cheap.
-            *pending = Some((self.file_path.clone(), store));
-            worker.cvar.notify_one();
+            let store = self.snapshot_for_save();
+            // Tests assert on file contents immediately after save(),
+            // so we keep the write synchronous under `#[cfg(test)]`.
+            // Production builds hand off to a background writer thread
+            // so save() doesn't stall the GPUI render thread (see #129):
+            // a CDP-heavy sub-agent produces enough PTY output to fire
+            // `persist_section_state` → `update_task_tabs` → `save()`
+            // dozens of times per second, and each synchronous
+            // `serde_json::to_string_pretty` over the full StoreFile was
+            // blocking render for >2s (captured by the #125 watchdog).
+            #[cfg(test)]
+            {
+                write_store_sync(&self.file_path, &store);
+            }
+            #[cfg(not(test))]
+            {
+                let worker = save_worker();
+                let mut pending = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
+                // Single-slot mailbox: if a save was already queued, the
+                // newer snapshot wins — callers only care that the latest
+                // state is on disk, not that every intermediate revision
+                // is. That's the coalescing that makes a CDP burst cheap.
+                *pending = Some((self.file_path.clone(), store));
+                worker.cvar.notify_one();
+            }
         }
     }
 
