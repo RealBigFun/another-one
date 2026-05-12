@@ -155,7 +155,7 @@ impl AnotherOneApp {
                     .on_mouse_down(MouseButton::Left, |_ev: &MouseDownEvent, _window, _cx| {})
                     .child(
                         div()
-                            .text_size(rems(16. / 16.))
+                            .text_size(rems(1.0))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(app_theme.text_primary)
                             .child("Pair mobile device"),
