@@ -979,7 +979,7 @@ impl WorkspacePane {
             section_id: section_id.clone(),
             tab_id: tab.id.clone(),
         };
-        let (snapshot, pending, error) = self
+        let (snapshot, _pending, error) = self
             .app
             .upgrade()
             .map(|app_entity| {

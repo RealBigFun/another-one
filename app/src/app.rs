@@ -485,6 +485,7 @@ impl TerminalTab {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn apply_terminal_title_update(tab: &mut TerminalTab, terminal_update: &TerminalRuntimeUpdate) {
     if tab.fixed_title.is_some() {
         return;
