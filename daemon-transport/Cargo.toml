@@ -1,6 +1,6 @@
 [package]
 name = "daemon-transport"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 description = "Abstract transport surface for the AnotherOne daemon. Daemon handlers and clients work against `Session` / `Transport` / `TransportFactory` here; concrete impls (iroh, UDS, in-memory) live in their own crates so the network stack can be swapped without touching either side."
 publish = false
