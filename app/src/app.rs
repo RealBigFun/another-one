@@ -5796,7 +5796,7 @@ impl AnotherOneApp {
             // runtime yet"). Re-fire AttachTab a few times with
             // backoff so the forwarder lands once the broadcast is
             // registered. The daemon ack's each AttachTab with
-            // WorkerReply::Empty so .await resolves cleanly.
+            // WorkerReply::AttachTabAck so .await resolves cleanly.
             crate::session_host::runtime_handle().spawn(async move {
                 for (i, delay_ms) in [0_u64, 200, 500, 1000, 2000].iter().enumerate() {
                     if *delay_ms > 0 {

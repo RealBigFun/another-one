@@ -477,7 +477,7 @@ pub enum Control {
     /// clients deserialize via `serde_json::from_value` into the
     /// canonical core type.
     ///
-    /// Reply is [`WorkerReply::Empty`].
+    /// Reply is [`WorkerReply::SetSectionStateAck`].
     SetSectionState {
         section_id: String,
         persisted: serde_json::Value,
@@ -487,19 +487,19 @@ pub enum Control {
     /// across both clients. `None` clears the pointer (no section
     /// active).
     ///
-    /// Reply is [`WorkerReply::Empty`].
+    /// Reply is [`WorkerReply::SetLastActiveSectionAck`].
     SetLastActiveSection { section_id: Option<String> },
     /// Toggle whether the projects sidebar shows per-task git
     /// metadata (lines added/removed, last-commit relative). Mirrors
     /// `core::project_store::UiState::show_sidebar_git_metadata`.
-    /// Reply is [`WorkerReply::Empty`].
+    /// Reply is [`WorkerReply::SetSidebarGitMetadataVisibleAck`].
     SetSidebarGitMetadataVisible { visible: bool },
     /// Switch the app-wide theme preference. `mode_id` is the
     /// lowercase variant name from `core::project_store::ThemeMode`
     /// (`"light"` / `"dark"` / `"system"`). Daemon-proto stays
     /// free of the enum shape by passing it as a string; the
     /// daemon decodes via `serde_json::from_value`. Reply is
-    /// [`WorkerReply::Empty`]. Routed through the daemon (not
+    /// [`WorkerReply::SetThemeModeAck`]. Routed through the daemon (not
     /// a direct client-side `ProjectStore::save`) so every paired
     /// client sees the new theme via the next projection instead
     /// of each client persisting a divergent local copy.
@@ -509,11 +509,11 @@ pub enum Control {
     /// titlebar's Commit dropdown. Mirrors
     /// `core::project_store::UiState::repo_default_commit_actions`.
     /// `action` is the string id of the variant (`"commit"`,
-    /// `"commit-and-push"`). Reply is [`WorkerReply::Empty`].
+    /// `"commit-and-push"`). Reply is [`WorkerReply::SetRepoDefaultCommitActionAck`].
     SetRepoDefaultCommitAction { repo_id: String, action: String },
     /// Persist a new branch override on a worktree task — the
     /// desktop renames the on-disk branch via git, then calls this
-    /// to update the task's record. Reply is [`WorkerReply::Empty`].
+    /// to update the task's record. Reply is [`WorkerReply::SetTaskBranchAck`].
     SetTaskBranch {
         task_id: String,
         target_project_id: String,
@@ -521,14 +521,15 @@ pub enum Control {
     },
     /// Persist the user's expanded-project / collapsed-project
     /// state. `expanded_repo_ids` is the full set; the daemon
-    /// replaces its store wholesale. Reply is [`WorkerReply::Empty`].
+    /// replaces its store wholesale. Reply is [`WorkerReply::SetExpandedReposAck`].
     SetExpandedRepos { expanded_repo_ids: Vec<String> },
     /// Update the LLM settings for the AI commit-message generator.
     /// `settings` is an opaque JSON-serialised
     /// `core::project_store::GitActionLlmSettings`. Reply is
-    /// [`WorkerReply::Empty`].
+    /// [`WorkerReply::SetGitCommitLlmAck`].
     SetGitCommitLlm { settings: serde_json::Value },
     /// Same as `SetGitCommitLlm` but for the PR-generation LLM.
+    /// Reply is [`WorkerReply::SetGitPrLlmAck`].
     SetGitPrLlm { settings: serde_json::Value },
     /// Branch names available on `project_id`'s git repo. Powers the
     /// new-task modal's source-branch dropdown. Reply is
@@ -882,14 +883,26 @@ pub enum Control {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkerReply {
-    /// Generic "the daemon handled it, but there's nothing payload-
-    /// worthy to return". Used for fire-and-forget verbs whose
-    /// effects are observable elsewhere (e.g. `AttachTab` — bytes
-    /// flow on the events stream; `LaunchTab` — runtime appears in
-    /// the registry; `DetachTab`/`TabResize` — state
-    /// updates the next pull observes). Lets clients await
-    /// `Session::call` instead of leaking a pending_calls entry.
-    Empty,
+    /// Per-verb acks for fire-and-forget verbs whose effects are
+    /// observable elsewhere (e.g. `AttachTab` — bytes flow on the
+    /// events stream; `LaunchTab` — runtime appears in the
+    /// registry; `DetachTab`/`TabResize` — state updates the next
+    /// pull observes). Each is a unit variant; clients await
+    /// `Session::call` to avoid leaking a pending_calls entry.
+    AttachTabAck,
+    DetachTabAck,
+    TabResizeAck,
+    HeartbeatAck,
+    LaunchTabAck,
+    SetSectionStateAck,
+    SetLastActiveSectionAck,
+    SetSidebarGitMetadataVisibleAck,
+    SetThemeModeAck,
+    SetRepoDefaultCommitActionAck,
+    SetTaskBranchAck,
+    SetExpandedReposAck,
+    SetGitCommitLlmAck,
+    SetGitPrLlmAck,
     /// Response to [`Control::ListProjects`]. Order matches the
     /// desktop sidebar's `project_order`; worktrees of a root are
     /// emitted as their own entries rather than nested children

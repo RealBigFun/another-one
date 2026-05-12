@@ -177,7 +177,7 @@ async fn mutation_broadcast_reaches_session_events() {
     // observe only the mutation-induced push below.
     let _initial = harness.expect_push(Duration::from_millis(250)).await;
     // Fire a write-only mutation that touches `ui`. Reply is
-    // `WorkerReply::Empty`; the projection-changed broadcast follows.
+    // `WorkerReply::SetSidebarGitMetadataVisibleAck`; the projection-changed broadcast follows.
     harness
         .client
         .call(Control::SetSidebarGitMetadataVisible { visible: true })

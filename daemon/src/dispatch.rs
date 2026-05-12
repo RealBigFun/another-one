@@ -343,7 +343,7 @@ async fn dispatch_call(
                 attach_arc,
                 viewer_id,
             );
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::AttachTabAck)
         }
         Control::DetachTab => {
             if let Some((s, t, had_fwd)) = attach.detach() {
@@ -356,21 +356,21 @@ async fn dispatch_call(
             // re-aggregates to the remaining viewers' min (or lifts
             // the clamp entirely if this was the last viewer).
             registry.viewer_disconnected(viewer_id);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::DetachTabAck)
         }
         Control::TabResize { cols, rows } => {
             if let Some((section_id, tab_id)) = attach.snapshot_target() {
                 registry.tab_resize(viewer_id, &section_id, &tab_id, cols, rows);
             }
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::TabResizeAck)
         }
         Control::Heartbeat => {
             registry.note_viewer_heartbeat(viewer_id);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::HeartbeatAck)
         }
         Control::LaunchTab { section_id, tab_id } => {
             registry.launch_tab(&section_id, &tab_id);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::LaunchTabAck)
         }
 
         // ── Read verbs ───────────────────────────────────────────────
@@ -512,23 +512,23 @@ async fn dispatch_call(
             persisted,
         } => {
             registry.persist_section_state(&section_id, persisted);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetSectionStateAck)
         }
         Control::SetLastActiveSection { section_id } => {
             registry.set_last_active_section(section_id);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetLastActiveSectionAck)
         }
         Control::SetSidebarGitMetadataVisible { visible } => {
             registry.set_sidebar_git_metadata_visible(visible);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetSidebarGitMetadataVisibleAck)
         }
         Control::SetThemeMode { mode_id } => {
             registry.set_theme_mode(&mode_id);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetThemeModeAck)
         }
         Control::SetRepoDefaultCommitAction { repo_id, action } => {
             registry.set_repo_default_commit_action(&repo_id, &action);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetRepoDefaultCommitActionAck)
         }
         Control::SetTaskBranch {
             task_id,
@@ -536,19 +536,19 @@ async fn dispatch_call(
             branch_name,
         } => {
             registry.update_task_branch(&task_id, &target_project_id, &branch_name);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetTaskBranchAck)
         }
         Control::SetExpandedRepos { expanded_repo_ids } => {
             registry.set_expanded_repos(expanded_repo_ids);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetExpandedReposAck)
         }
         Control::SetGitCommitLlm { settings } => {
             registry.set_git_commit_llm(settings);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetGitCommitLlmAck)
         }
         Control::SetGitPrLlm { settings } => {
             registry.set_git_pr_llm(settings);
-            Some(WorkerReply::Empty)
+            Some(WorkerReply::SetGitPrLlmAck)
         }
 
         // ── Project actions ──────────────────────────────────────────
