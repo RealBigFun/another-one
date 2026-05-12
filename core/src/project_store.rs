@@ -2100,28 +2100,18 @@ impl ProjectStore {
                 repo_common_dir: None,
             });
         }
-        // Populate `terminal_sections` from the projection. The wire
-        // format only carries `Task.tabs`, not the per-section
-        // `PersistedSectionState` map — but `set_remote_snapshot` →
-        // `rebuild_runtime_views` re-derives `task.tabs` from
-        // `terminal_sections[section_id].tabs`, wiping the tabs we
-        // just absorbed whenever the client doesn't own that map
-        // (viewer clients like mobile don't persist sections
-        // locally). Synthesise `PersistedSectionState` entries so the
-        // rebuild picks them back up. Desktop overwrites its own
-        // `terminal_sections` with the same values round-trip, so
-        // this is a no-op there.
-        for task in &tasks {
-            self.terminal_sections.insert(
-                task.section_id.clone(),
-                PersistedSectionState {
-                    active_tab_id: task.active_tab_id.clone(),
-                    next_tab_id: task.next_tab_id,
-                    cwd: task.cwd.clone(),
-                    tabs: task.tabs.clone(),
-                },
-            );
-        }
+        // Don't synthesise `terminal_sections` entries from the
+        // projection. Desktop (registry host) *owns* that map
+        // authoritatively; overwriting it with whatever
+        // `task.tabs` the projection carried corrupts it whenever
+        // a stale pre-mutation snapshot lands after a local
+        // mutation — attach then can't find the tab it just
+        // persisted (error: "no persisted tab for section ...").
+        //
+        // `rebuild_runtime_views` now preserves `task.tabs` when
+        // `terminal_sections` is missing (see the else-branch
+        // comment there), so viewer clients keep the projection's
+        // authoritative tab list without needing a synthetic map.
         self.set_remote_snapshot(projects, tasks, repos_from_summaries(repo_summaries));
         self.absorb_ui_snapshot(ui);
     }
@@ -2586,10 +2576,32 @@ impl ProjectStore {
                                 task.worktree.as_ref().map(|worktree| worktree.path.clone())
                             });
                         } else {
-                            task.tabs = Vec::new();
-                            task.active_tab_id = String::new();
-                            task.next_tab_id = 0;
-                            task.cwd = task.worktree.as_ref().map(|worktree| worktree.path.clone());
+                            // No local `terminal_sections` entry for
+                            // this task — either the store is fresh
+                            // and nothing's been persisted yet, or
+                            // the caller is a viewer client that
+                            // doesn't own the section-state map
+                            // (e.g. mobile, which ingests
+                            // authoritative `task.tabs` straight
+                            // from the projection instead of
+                            // replaying local persists).
+                            //
+                            // Previously this branch wiped
+                            // `task.tabs` to `Vec::new()`, which
+                            // made `absorb_projection` →
+                            // `set_remote_snapshot` → rebuild
+                            // silently discard the projection's
+                            // authoritative tab list on anyone
+                            // who didn't also own the backing
+                            // section store. Keep whatever the
+                            // caller already populated on `task`;
+                            // only fall back to worktree path for
+                            // the cwd hint, which is the one
+                            // field we can sensibly default.
+                            task.cwd = task
+                                .cwd
+                                .clone()
+                                .or_else(|| task.worktree.as_ref().map(|w| w.path.clone()));
                         }
                         Some(task)
                     })
