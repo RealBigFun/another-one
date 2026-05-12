@@ -27,7 +27,8 @@ use crate::open_in::{effective_enabled_open_in_apps, OpenInAppKind};
 use crate::shortcuts::{ShortcutAction, ShortcutSettings};
 use daemon_proto::TerminalRestoreStatus;
 
-const STORE_VERSION: u8 = 3;
+const LEGACY_STORE_VERSION: u8 = 3;
+const STORE_VERSION: u8 = 4;
 
 // ---------------------------------------------------------------
 // Background save writer (fix for #129; referenced from #125).
@@ -65,7 +66,7 @@ const STORE_VERSION: u8 = 3;
 
 #[cfg(not(test))]
 struct SaveWorker {
-    pending: Mutex<Option<(PathBuf, StoreFile)>>,
+    pending: Mutex<Option<(PathBuf, StoreFileV4)>>,
     cvar: Condvar,
 }
 
@@ -140,7 +141,7 @@ fn flush_pending_save() {
     }
 }
 
-fn write_store_sync(path: &Path, store: &StoreFile) {
+fn write_store_sync<T: Serialize>(path: &Path, store: &T) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -621,6 +622,58 @@ impl TaskWorktree {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedTaskV4 {
+    pub id: String,
+    pub name: String,
+    pub kind: TaskKind,
+    pub root_project_id: String,
+    pub target_project_id: String,
+    pub branch_name: String,
+    #[serde(default)]
+    pub worktree: Option<TaskWorktree>,
+    #[serde(default)]
+    pub section: Option<PersistedSectionState>,
+}
+
+impl PersistedTaskV4 {
+    fn section_id(&self) -> String {
+        crate::section::SectionId::for_task(&self.target_project_id, &self.branch_name, &self.id)
+            .store_key()
+    }
+
+    fn into_task(self) -> Task {
+        Task {
+            section_id: self.section_id(),
+            id: self.id,
+            name: self.name,
+            kind: self.kind,
+            root_project_id: self.root_project_id,
+            target_project_id: self.target_project_id,
+            branch_name: self.branch_name,
+            worktree: self.worktree,
+            worktree_project_id: None,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        }
+    }
+
+    fn from_task(task: &Task, section: Option<PersistedSectionState>) -> Self {
+        Self {
+            id: task.id.clone(),
+            name: task.name.clone(),
+            kind: task.kind,
+            root_project_id: task.root_project_id.clone(),
+            target_project_id: task.target_project_id.clone(),
+            branch_name: task.branch_name.clone(),
+            worktree: task.worktree.clone(),
+            section,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CreatedTaskWorktree {
     pub path: PathBuf,
@@ -999,7 +1052,7 @@ struct StoreFile {
 impl Default for StoreFile {
     fn default() -> Self {
         Self {
-            version: STORE_VERSION,
+            version: LEGACY_STORE_VERSION,
             repos: HashMap::new(),
             projects: HashMap::new(),
             project_order: Vec::new(),
@@ -1009,6 +1062,229 @@ impl Default for StoreFile {
             ui: UiState::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedRepoV4 {
+    pub id: String,
+    #[serde(default)]
+    pub common_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub branches: Vec<RepoBranchRecord>,
+}
+
+impl From<PersistedRepoV4> for RepoRecord {
+    fn from(repo: PersistedRepoV4) -> Self {
+        let branch_order = repo
+            .branches
+            .iter()
+            .map(|branch| branch.name.clone())
+            .collect::<Vec<_>>();
+        let branches_by_name = repo
+            .branches
+            .into_iter()
+            .map(|branch| (branch.name.clone(), branch))
+            .collect::<HashMap<_, _>>();
+        Self {
+            id: repo.id,
+            common_dir: repo.common_dir,
+            branch_order,
+            branches_by_name,
+        }
+    }
+}
+
+impl From<&RepoRecord> for PersistedRepoV4 {
+    fn from(repo: &RepoRecord) -> Self {
+        let mut seen = HashSet::new();
+        let mut branches = repo
+            .branch_order
+            .iter()
+            .filter_map(|branch_name| {
+                let branch = repo.branches_by_name.get(branch_name)?;
+                seen.insert(branch_name.clone());
+                Some(branch.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut missing = repo
+            .branches_by_name
+            .iter()
+            .filter(|(branch_name, _)| !seen.contains(*branch_name))
+            .map(|(_, branch)| branch.clone())
+            .collect::<Vec<_>>();
+        missing.sort_by(|a, b| a.name.cmp(&b.name));
+        branches.extend(missing);
+        Self {
+            id: repo.id.clone(),
+            common_dir: repo.common_dir.clone(),
+            branches,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoreFileV4 {
+    version: u8,
+    #[serde(default)]
+    repos: Vec<PersistedRepoV4>,
+    #[serde(default)]
+    projects: Vec<Project>,
+    #[serde(default)]
+    tasks: Vec<PersistedTaskV4>,
+    #[serde(default)]
+    ui: UiState,
+}
+
+type StoreFileParts = (
+    HashMap<String, RepoRecord>,
+    HashMap<String, Project>,
+    Vec<String>,
+    HashMap<String, Task>,
+    HashMap<String, Vec<String>>,
+    HashMap<String, PersistedSectionState>,
+    UiState,
+);
+
+impl Default for StoreFileV4 {
+    fn default() -> Self {
+        Self {
+            version: STORE_VERSION,
+            repos: Vec::new(),
+            projects: Vec::new(),
+            tasks: Vec::new(),
+            ui: UiState::default(),
+        }
+    }
+}
+
+impl StoreFileV4 {
+    fn from_legacy(store: StoreFile) -> Self {
+        let StoreFile {
+            repos,
+            projects,
+            project_order,
+            tasks,
+            task_ids_by_root_project,
+            sections,
+            ui,
+            ..
+        } = store;
+
+        let repos = ordered_repo_records(&repos)
+            .into_iter()
+            .map(PersistedRepoV4::from)
+            .collect();
+        let projects = ordered_projects(&projects, &project_order);
+        let tasks = ordered_tasks(&tasks, &task_ids_by_root_project)
+            .into_iter()
+            .map(|task| {
+                let section = sections.get(&task.section_id).cloned();
+                PersistedTaskV4::from_task(task, section)
+            })
+            .collect();
+
+        Self {
+            version: STORE_VERSION,
+            repos,
+            projects,
+            tasks,
+            ui,
+        }
+    }
+
+    fn into_parts(self) -> StoreFileParts {
+        let repos = self
+            .repos
+            .into_iter()
+            .map(|repo| {
+                let repo = RepoRecord::from(repo);
+                (repo.id.clone(), repo)
+            })
+            .collect::<HashMap<_, _>>();
+
+        let mut project_order = Vec::new();
+        let mut projects = HashMap::new();
+        for project in self.projects {
+            project_order.push(project.id.clone());
+            projects.insert(project.id.clone(), project);
+        }
+
+        let mut tasks = HashMap::new();
+        let mut task_ids_by_root_project: HashMap<String, Vec<String>> = HashMap::new();
+        let mut sections = HashMap::new();
+        for persisted_task in self.tasks {
+            let section_id = persisted_task.section_id();
+            if let Some(section) = persisted_task.section.clone() {
+                sections.insert(section_id.clone(), section);
+            }
+            let task = persisted_task.into_task();
+            task_ids_by_root_project
+                .entry(task.root_project_id.clone())
+                .or_default()
+                .push(task.id.clone());
+            tasks.insert(task.id.clone(), task);
+        }
+
+        (
+            repos,
+            projects,
+            project_order,
+            tasks,
+            task_ids_by_root_project,
+            sections,
+            self.ui,
+        )
+    }
+}
+
+fn ordered_projects(projects: &HashMap<String, Project>, project_order: &[String]) -> Vec<Project> {
+    let mut ordered = project_order
+        .iter()
+        .filter_map(|project_id| projects.get(project_id).cloned())
+        .collect::<Vec<_>>();
+    let ordered_set = project_order.iter().collect::<HashSet<_>>();
+    let mut missing = projects
+        .iter()
+        .filter(|(project_id, _)| !ordered_set.contains(*project_id))
+        .map(|(_, project)| project.clone())
+        .collect::<Vec<_>>();
+    missing.sort_by(|a, b| a.id.cmp(&b.id));
+    ordered.extend(missing);
+    ordered
+}
+
+fn ordered_tasks<'a>(
+    tasks: &'a HashMap<String, Task>,
+    task_ids_by_root_project: &HashMap<String, Vec<String>>,
+) -> Vec<&'a Task> {
+    let mut ordered = Vec::new();
+    let mut seen = HashSet::new();
+    let mut root_project_ids = task_ids_by_root_project.keys().collect::<Vec<_>>();
+    root_project_ids.sort();
+    for root_project_id in root_project_ids {
+        if let Some(task_ids) = task_ids_by_root_project.get(root_project_id) {
+            for task_id in task_ids {
+                if let Some(task) = tasks.get(task_id) {
+                    seen.insert(task_id.clone());
+                    ordered.push(task);
+                }
+            }
+        }
+    }
+    let mut missing = tasks
+        .iter()
+        .filter(|(task_id, _)| !seen.contains(*task_id))
+        .map(|(_, task)| task)
+        .collect::<Vec<_>>();
+    missing.sort_by(|a, b| a.id.cmp(&b.id));
+    ordered.extend(missing);
+    ordered
+}
+
+fn ordered_repo_records(repos: &HashMap<String, RepoRecord>) -> Vec<&RepoRecord> {
+    let mut repos = repos.values().collect::<Vec<_>>();
+    repos.sort_by(|a, b| a.id.cmp(&b.id));
+    repos
 }
 
 #[derive(Debug, Clone)]
@@ -1101,16 +1377,8 @@ impl ProjectStore {
     #[hotpath::measure]
     pub fn load() -> Self {
         let file_path = Self::config_path();
-        let StoreFile {
-            repos,
-            projects,
-            project_order,
-            tasks,
-            task_ids_by_root_project,
-            sections,
-            mut ui,
-            ..
-        } = Self::read_from_disk(&file_path);
+        let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
+            Self::read_from_disk(&file_path).into_parts();
 
         let mut store = Self {
             repos,
@@ -1894,15 +2162,23 @@ impl ProjectStore {
     /// Separated from [`save`] so the same snapshot can be handed to
     /// the background writer without leaking `StoreFile` (a private
     /// type) into callers.
-    fn snapshot_for_save(&self) -> StoreFile {
-        StoreFile {
+    fn snapshot_for_save(&self) -> StoreFileV4 {
+        StoreFileV4 {
             version: STORE_VERSION,
-            repos: self.repos.clone(),
-            projects: self.projects_by_id.clone(),
-            project_order: self.project_order.clone(),
-            tasks: self.tasks_by_id.clone(),
-            task_ids_by_root_project: self.task_ids_by_root_project.clone(),
-            sections: self.terminal_sections.clone(),
+            repos: ordered_repo_records(&self.repos)
+                .into_iter()
+                .map(PersistedRepoV4::from)
+                .collect(),
+            projects: ordered_projects(&self.projects_by_id, &self.project_order),
+            tasks: ordered_tasks(&self.tasks_by_id, &self.task_ids_by_root_project)
+                .into_iter()
+                .map(|task| {
+                    PersistedTaskV4::from_task(
+                        task,
+                        self.terminal_sections.get(&task.section_id).cloned(),
+                    )
+                })
+                .collect(),
             ui: self.ui.clone(),
         }
     }
@@ -2353,7 +2629,7 @@ impl ProjectStore {
         self.ui
             .enabled_agents
             .as_ref()
-            .map_or(true, |enabled| enabled.contains(agent_id))
+            .is_none_or(|enabled| enabled.contains(agent_id))
     }
 
     pub fn agent_is_default(&self, agent_id: &str) -> bool {
@@ -2687,15 +2963,35 @@ impl ProjectStore {
         app_config_dir().join("projects.json")
     }
 
-    fn read_from_disk(path: &Path) -> StoreFile {
+    fn read_from_disk(path: &Path) -> StoreFileV4 {
         let Ok(contents) = std::fs::read_to_string(path) else {
-            return StoreFile::default();
+            return StoreFileV4::default();
         };
-        match serde_json::from_str::<StoreFile>(&contents) {
-            Ok(store) if store.version == STORE_VERSION => store,
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) else {
+            Self::backup_incompatible_store(path);
+            return StoreFileV4::default();
+        };
+        match value.get("version").and_then(serde_json::Value::as_u64) {
+            Some(version) if version == u64::from(STORE_VERSION) => serde_json::from_value(value)
+                .unwrap_or_else(|_| {
+                    Self::backup_incompatible_store(path);
+                    StoreFileV4::default()
+                }),
+            Some(version) if version == u64::from(LEGACY_STORE_VERSION) => {
+                serde_json::from_value::<StoreFile>(value)
+                    .map(|store| {
+                        let migrated = StoreFileV4::from_legacy(store);
+                        write_store_sync(path, &migrated);
+                        migrated
+                    })
+                    .unwrap_or_else(|_| {
+                        Self::backup_incompatible_store(path);
+                        StoreFileV4::default()
+                    })
+            }
             _ => {
                 Self::backup_incompatible_store(path);
-                StoreFile::default()
+                StoreFileV4::default()
             }
         }
     }
@@ -4714,7 +5010,7 @@ mod tests {
         PersistedTerminalTab, PreparedProject, Project, ProjectAction, ProjectActionAccess,
         ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
         ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
-        RepoRecord, StoreFile, Task, TaskKind, TaskWorktreeBranchMode, UiState,
+        RepoRecord, StoreFile, StoreFileV4, Task, TaskKind, TaskWorktreeBranchMode, UiState,
     };
 
     struct TestWorktreesRoot {
@@ -5032,11 +5328,11 @@ mod tests {
             Some("feature/existing")
         );
         assert!(
-            !git_stdout(
+            git_stdout(
                 repo.path(),
                 &["show-ref", "--verify", "refs/heads/use-existing"]
             )
-            .is_some_and(|output| !output.is_empty()),
+            .is_none_or(|output| output.is_empty()),
             "existing branch mode should not create a generated task branch"
         );
     }
@@ -5258,7 +5554,7 @@ mod tests {
     #[test]
     fn store_file_deserializes_projects_without_branch_settings() {
         let json = serde_json::json!({
-            "version": super::STORE_VERSION,
+            "version": super::LEGACY_STORE_VERSION,
             "repos": {
                 "repo": {
                     "id": "repo",
@@ -5530,7 +5826,7 @@ mod tests {
     #[test]
     fn store_file_round_trip_preserves_task_state() {
         let store = StoreFile {
-            version: super::STORE_VERSION,
+            version: super::LEGACY_STORE_VERSION,
             repos: HashMap::from([(
                 "repo".to_string(),
                 RepoRecord {
@@ -5777,6 +6073,219 @@ mod tests {
             round_trip.ui.pinned_task_ids,
             HashSet::from(["task-1".to_string(), "task-2".to_string()])
         );
+    }
+
+    #[test]
+    fn v3_store_migrates_to_v4_without_losing_order_or_task_sections() {
+        let legacy_store = StoreFile {
+            version: super::LEGACY_STORE_VERSION,
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                    branch_order: vec!["main".to_string(), "feature".to_string()],
+                    branches_by_name: HashMap::from([
+                        (
+                            "main".to_string(),
+                            super::RepoBranchRecord {
+                                name: "main".to_string(),
+                                last_commit_relative: "1 day ago".to_string(),
+                                is_default: true,
+                                ahead_count: 0,
+                                behind_count: 0,
+                            },
+                        ),
+                        (
+                            "feature".to_string(),
+                            super::RepoBranchRecord {
+                                name: "feature".to_string(),
+                                last_commit_relative: "1 hour ago".to_string(),
+                                is_default: false,
+                                ahead_count: 1,
+                                behind_count: 2,
+                            },
+                        ),
+                    ]),
+                },
+            )]),
+            projects: HashMap::from([
+                ("second".to_string(), sample_project("second", None)),
+                ("first".to_string(), sample_project("first", None)),
+            ]),
+            project_order: vec!["first".to_string(), "second".to_string()],
+            tasks: HashMap::from([
+                (
+                    "task-b".to_string(),
+                    Task {
+                        id: "task-b".to_string(),
+                        name: "Second task".to_string(),
+                        kind: TaskKind::Direct,
+                        root_project_id: "first".to_string(),
+                        target_project_id: "first".to_string(),
+                        branch_name: "feature".to_string(),
+                        section_id: "first::feature::task-b".to_string(),
+                        worktree: None,
+                        worktree_project_id: None,
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    },
+                ),
+                (
+                    "task-a".to_string(),
+                    Task {
+                        id: "task-a".to_string(),
+                        name: "First task".to_string(),
+                        kind: TaskKind::Direct,
+                        root_project_id: "first".to_string(),
+                        target_project_id: "first".to_string(),
+                        branch_name: "main".to_string(),
+                        section_id: "first::main::task-a".to_string(),
+                        worktree: None,
+                        worktree_project_id: None,
+                        tabs: Vec::new(),
+                        active_tab_id: String::new(),
+                        next_tab_id: 0,
+                        cwd: None,
+                    },
+                ),
+            ]),
+            task_ids_by_root_project: HashMap::from([(
+                "first".to_string(),
+                vec!["task-a".to_string(), "task-b".to_string()],
+            )]),
+            sections: HashMap::from([(
+                "first::main::task-a".to_string(),
+                PersistedSectionState {
+                    active_tab_id: "tab-1".to_string(),
+                    next_tab_id: 2,
+                    cwd: Some(PathBuf::from("/tmp/first")),
+                    tabs: vec![PersistedTerminalTab {
+                        id: "tab-1".to_string(),
+                        title: "Terminal".to_string(),
+                        pinned: true,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: Some(TerminalLaunchConfig::default()),
+                        restore_status: TerminalRestoreStatus::Ready,
+                        failure_message: None,
+                        failure_details: None,
+                    }],
+                },
+            )]),
+            ui: UiState {
+                last_active_section_id: Some("first::main::task-a".to_string()),
+                ..UiState::default()
+            },
+        };
+
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let file_path = temp_dir.path().join("projects.json");
+        fs::write(
+            &file_path,
+            serde_json::to_string(&legacy_store).expect("legacy store should serialize"),
+        )
+        .expect("legacy store should write");
+
+        let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, ui) =
+            super::ProjectStore::read_from_disk(&file_path).into_parts();
+
+        assert_eq!(repos["repo"].branch_order, vec!["main", "feature"]);
+        assert_eq!(project_order, vec!["first", "second"]);
+        assert_eq!(
+            task_ids_by_root_project["first"],
+            vec!["task-a".to_string(), "task-b".to_string()]
+        );
+        assert_eq!(projects["first"].name, "Project first");
+        assert_eq!(tasks["task-a"].section_id, "first::main::task-a");
+        assert_eq!(
+            sections["first::main::task-a"].tabs[0].restore_status,
+            TerminalRestoreStatus::Ready
+        );
+        assert_eq!(
+            ui.last_active_section_id.as_deref(),
+            Some("first::main::task-a")
+        );
+    }
+
+    #[test]
+    fn v4_store_round_trip_uses_ordered_arrays_and_embedded_sections() {
+        let mut store = sample_project_store(sample_project("root", None));
+        store.repos.insert(
+            "repo".to_string(),
+            RepoRecord {
+                id: "repo".to_string(),
+                common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                branch_order: vec!["main".to_string()],
+                branches_by_name: HashMap::from([(
+                    "main".to_string(),
+                    super::RepoBranchRecord {
+                        name: "main".to_string(),
+                        last_commit_relative: "1 day ago".to_string(),
+                        is_default: true,
+                        ahead_count: 0,
+                        behind_count: 0,
+                    },
+                )]),
+            },
+        );
+        store.insert_task(Task {
+            id: "task-1".to_string(),
+            name: "Persisted task".to_string(),
+            kind: TaskKind::Direct,
+            root_project_id: "root".to_string(),
+            target_project_id: "root".to_string(),
+            branch_name: "main".to_string(),
+            section_id: "root::main::task-1".to_string(),
+            worktree: None,
+            worktree_project_id: None,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+        store.set_section_state(
+            "root::main::task-1",
+            PersistedSectionState {
+                active_tab_id: "tab-1".to_string(),
+                next_tab_id: 2,
+                cwd: Some(PathBuf::from("/tmp/root")),
+                tabs: vec![PersistedTerminalTab {
+                    id: "tab-1".to_string(),
+                    title: "Terminal".to_string(),
+                    pinned: false,
+                    fixed_title: None,
+                    provider: None,
+                    launch_config: Some(TerminalLaunchConfig::default()),
+                    restore_status: TerminalRestoreStatus::Ready,
+                    failure_message: None,
+                    failure_details: None,
+                }],
+            },
+        );
+
+        let json = serde_json::to_value(store.snapshot_for_save())
+            .expect("v4 store should serialize to JSON");
+
+        assert_eq!(json["version"], super::STORE_VERSION);
+        assert!(json["repos"].is_array());
+        assert!(json["projects"].is_array());
+        assert!(json["tasks"].is_array());
+        assert!(json.get("project_order").is_none());
+        assert!(json.get("task_ids_by_root_project").is_none());
+        assert!(json.get("sections").is_none());
+        assert_eq!(json["tasks"][0]["section"]["active_tab_id"], "tab-1");
+
+        let round_trip: StoreFileV4 =
+            serde_json::from_value(json).expect("v4 store should deserialize");
+        let (_, _, project_order, _, task_ids_by_root_project, sections, _) =
+            round_trip.into_parts();
+
+        assert_eq!(project_order, vec!["root"]);
+        assert_eq!(task_ids_by_root_project["root"], vec!["task-1"]);
+        assert_eq!(sections["root::main::task-1"].active_tab_id, "tab-1");
     }
 
     #[test]
@@ -6348,8 +6857,10 @@ mod tests {
     #[test]
     fn parse_branch_commit_entries_supports_trailing_newlines() {
         let commits = parse_branch_commit_entries(
-            b"abc123\0abc123\0Add panel\0Jeff\01 hour ago\x1e\n\
-              def456\0def456\0Fix empty state\0Sam\02 hours ago\x1e\n",
+            b"abc123\0abc123\0Add panel\0Jeff\0\
+              1 hour ago\x1e\n\
+              def456\0def456\0Fix empty state\0Sam\0\
+              2 hours ago\x1e\n",
         );
 
         assert_eq!(commits.len(), 2);
@@ -6516,21 +7027,23 @@ mod tests {
 
     #[test]
     fn store_file_round_trip_preserves_agent_launch_args() {
-        let mut store = StoreFile::default();
-        store.ui = UiState {
-            enabled_agents: Some(HashSet::from([
-                "codex".to_string(),
-                "claude-code".to_string(),
-            ])),
-            default_agent_id: Some("codex".to_string()),
-            agent_launch_args: HashMap::from([
-                ("codex".to_string(), vec!["--yolo".to_string()]),
-                (
+        let store = StoreFile {
+            ui: UiState {
+                enabled_agents: Some(HashSet::from([
+                    "codex".to_string(),
                     "claude-code".to_string(),
-                    vec!["--dangerously-skip-permissions".to_string()],
-                ),
-            ]),
-            ..UiState::default()
+                ])),
+                default_agent_id: Some("codex".to_string()),
+                agent_launch_args: HashMap::from([
+                    ("codex".to_string(), vec!["--yolo".to_string()]),
+                    (
+                        "claude-code".to_string(),
+                        vec!["--dangerously-skip-permissions".to_string()],
+                    ),
+                ]),
+                ..UiState::default()
+            },
+            ..StoreFile::default()
         };
 
         let json = serde_json::to_string(&store).expect("store should serialize");
@@ -6729,7 +7242,7 @@ mod tests {
 
         store.set_theme_mode(super::ThemeMode::Dark);
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");
@@ -6741,8 +7254,9 @@ mod tests {
             "saved config should materialize the theme preference field"
         );
 
-        let reloaded = super::ProjectStore::read_from_disk(&file_path);
-        assert_eq!(reloaded.ui.theme_mode, super::ThemeMode::Dark);
+        let (_, _, _, _, _, _, reloaded_ui) =
+            super::ProjectStore::read_from_disk(&file_path).into_parts();
+        assert_eq!(reloaded_ui.theme_mode, super::ThemeMode::Dark);
     }
 
     #[test]
@@ -6765,7 +7279,7 @@ mod tests {
         store.set_theme_mode(super::ThemeMode::System);
 
         let saved_json = fs::read_to_string(&file_path).expect("saved config should exist");
-        let saved: StoreFile =
+        let saved: StoreFileV4 =
             serde_json::from_str(&saved_json).expect("saved config should deserialize");
         assert_eq!(saved.ui.theme_mode, super::ThemeMode::System);
         assert!(
@@ -6795,7 +7309,7 @@ mod tests {
         assert!(store.set_git_commit_generation_script(custom_script));
         assert_eq!(store.git_commit_generation_script(), custom_script);
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");
@@ -6810,7 +7324,7 @@ mod tests {
             crate::git_actions::default_commit_generation_script()
         );
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");
@@ -6838,7 +7352,7 @@ mod tests {
         assert!(store.set_git_pr_generation_script(custom_script));
         assert_eq!(store.git_pr_generation_script(), custom_script);
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");
@@ -6853,7 +7367,7 @@ mod tests {
             crate::git_actions::default_pr_generation_script()
         );
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");
@@ -6863,7 +7377,7 @@ mod tests {
     #[test]
     fn store_file_loads_without_agent_launch_args() {
         let json = serde_json::json!({
-            "version": super::STORE_VERSION,
+            "version": super::LEGACY_STORE_VERSION,
             "repos": {},
             "projects": {},
             "project_order": [],
@@ -6895,7 +7409,7 @@ mod tests {
     #[test]
     fn store_file_preserves_unknown_agent_launch_arg_keys() {
         let json = serde_json::json!({
-            "version": super::STORE_VERSION,
+            "version": super::LEGACY_STORE_VERSION,
             "repos": {},
             "projects": {},
             "project_order": [],
@@ -6930,7 +7444,7 @@ mod tests {
     #[test]
     fn store_file_deserializes_ghostty_open_in_settings() {
         let json = serde_json::json!({
-            "version": super::STORE_VERSION,
+            "version": super::LEGACY_STORE_VERSION,
             "repos": {},
             "projects": {},
             "project_order": [],
@@ -6977,7 +7491,7 @@ mod tests {
             ["--yolo".to_string(), "--profile".to_string()]
         );
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");
@@ -6989,7 +7503,7 @@ mod tests {
         assert!(store.remove_agent_launch_args("codex"));
         assert!(store.agent_launch_args("codex").is_empty());
 
-        let saved: StoreFile = serde_json::from_str(
+        let saved: StoreFileV4 = serde_json::from_str(
             &fs::read_to_string(&file_path).expect("saved config should exist"),
         )
         .expect("saved config should deserialize");

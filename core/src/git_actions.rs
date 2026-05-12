@@ -1597,6 +1597,7 @@ pub fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
     )
 }
 
+#[cfg_attr(test, allow(clippy::items_after_test_module))]
 #[cfg(test)]
 mod tests {
     use super::{

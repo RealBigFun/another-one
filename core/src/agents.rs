@@ -219,7 +219,7 @@ pub const DEFAULT_AGENT_ID: &str = "codex";
 pub fn effective_enabled_agents(configured: Option<&HashSet<String>>) -> Vec<&'static AgentDef> {
     AGENTS
         .iter()
-        .filter(|agent| configured.map_or(true, |enabled| enabled.contains(agent.id)))
+        .filter(|agent| configured.is_none_or(|enabled| enabled.contains(agent.id)))
         .collect()
 }
 

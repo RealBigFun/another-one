@@ -1060,7 +1060,7 @@ fn discover_codex_session_from_index(
 
     reader
         .lines()
-        .filter_map(Result::ok)
+        .map_while(Result::ok)
         .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
         .filter_map(|value| value.get("id")?.as_str().map(str::to_string))
         .last()

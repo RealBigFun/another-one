@@ -671,7 +671,7 @@ mod tests {
             .unwrap();
         // First entry should be Lagged with skipped >= 1.
         assert!(
-            matches!(events.first().and_then(|e| e.get("Lagged")), Some(_)),
+            events.first().and_then(|e| e.get("Lagged")).is_some(),
             "expected Lagged first; got {events:?}"
         );
         // The Lagged entry carries the skipped count as a u64.

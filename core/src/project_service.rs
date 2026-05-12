@@ -225,6 +225,10 @@ pub fn spawn_branch_creation(
     rx
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Thread spawn boundary mirrors the request DTO."
+)]
 pub fn spawn_review_task_creation(
     project_id: String,
     project_path: PathBuf,

@@ -1165,7 +1165,7 @@ pub enum WorkerReply {
     /// `core::git_actions::find_pull_request_checks` contract:
     ///   * `Some(list)` — PR exists, here are its check rows.
     ///   * `None` — no PR for the branch, or unknown project id.
-    /// gh CLI / network failures come back as [`WorkerReply::Err`].
+    ///     gh CLI / network failures come back as [`WorkerReply::Err`].
     PullRequestChecksAck { checks: Option<Vec<Check>> },
     /// Reply to [`Control::FindProjectPullRequests`]. `prs: None`
     /// covers the unknown-project case; gh CLI / auth / network
