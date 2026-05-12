@@ -359,6 +359,7 @@ impl RegistryState {
             key: key.clone(),
             cols: effective.0,
             rows: effective.1,
+            requested_at: std::time::Instant::now(),
         });
         Some(effective)
     }
@@ -381,6 +382,14 @@ pub(crate) struct TabResizeRequest {
     pub key: TerminalRuntimeKey,
     pub cols: u16,
     pub rows: u16,
+    /// Wall-clock time this request was pushed. The GPUI drain
+    /// uses it to debounce: rapid bursts of resize events (window
+    /// drag, drawer open/close animations) are coalesced by
+    /// holding back requests whose `requested_at` is younger than
+    /// `RESIZE_DEBOUNCE_MS`. Only the last request per key
+    /// survives the hold, so the PTY sees a single SIGWINCH at
+    /// the end of the animation instead of one per frame.
+    pub requested_at: std::time::Instant,
 }
 
 /// MCP `dispatch_ui_action` ask — desktop-only ephemera the GUI

@@ -1089,14 +1089,20 @@ impl WorkspacePane {
     /// `task.tabs` in sync round-trip, so the synthesised
     /// `PersistedSectionState` below matches whatever
     /// `section_states` already holds.
-    pub(crate) fn reconcile_section_tabs_from_store(
+    /// Sync `section_states` tab lists from authoritative task
+    /// snapshots. Callers pass the already-extracted vector of
+    /// `(task, fallback_cwd_candidate)` so this helper doesn't
+    /// clone the whole `ProjectStore` — the old version cloned
+    /// on every projection absorb (desktop gets one per mutation
+    /// round-trip) and the render thread felt it.
+    pub(crate) fn reconcile_section_tabs_from_tasks(
         &mut self,
-        store: &another_one_core::project_store::ProjectStore,
+        tasks: &[another_one_core::project_store::Task],
         cx: &mut Context<Self>,
     ) {
         use another_one_core::project_store::PersistedSectionState;
         let mut changed = false;
-        for task in store.tasks.values().flatten() {
+        for task in tasks {
             let Some(section_id) = SectionId::from_store_key(&task.section_id) else {
                 continue;
             };
@@ -1129,6 +1135,20 @@ impl WorkspacePane {
         if changed {
             cx.notify();
         }
+    }
+
+    /// Deprecated helper kept for a short migration window. Prefer
+    /// [`reconcile_section_tabs_from_tasks`] — passing tasks
+    /// directly avoids the whole-store clone the callsites used to
+    /// make to satisfy the borrow checker.
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_section_tabs_from_store(
+        &mut self,
+        store: &another_one_core::project_store::ProjectStore,
+        cx: &mut Context<Self>,
+    ) {
+        let tasks: Vec<_> = store.tasks.values().flatten().cloned().collect();
+        self.reconcile_section_tabs_from_tasks(&tasks, cx);
     }
 
     pub(crate) fn ensure_section(
@@ -5988,10 +6008,32 @@ impl AnotherOneApp {
             // batch ever reaches here, so there's no window where a
             // pre-mutation projection can clobber a freshly-added
             // tab.
-            let store_snapshot = self.project_store.clone();
-            self.workspace_pane.update(cx, |workspace, cx| {
-                workspace.reconcile_section_tabs_from_store(&store_snapshot, cx);
-            });
+            //
+            // Extract just the tasks whose section is currently
+            // in `section_states` (i.e. already visible in this
+            // client's UI). Everything else is irrelevant to the
+            // reconcile — skipping early keeps desktop's
+            // loopback-projection round-trips near-zero-cost.
+            let open_sections: std::collections::HashSet<String> = self
+                .workspace_pane
+                .read(cx)
+                .section_states
+                .keys()
+                .map(SectionId::store_key)
+                .collect();
+            let tasks: Vec<_> = self
+                .project_store
+                .tasks
+                .values()
+                .flatten()
+                .filter(|t| open_sections.contains(&t.section_id))
+                .cloned()
+                .collect();
+            if !tasks.is_empty() {
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.reconcile_section_tabs_from_tasks(&tasks, cx);
+                });
+            }
         }
         if !output_dirty_keys.is_empty() {
             for key in output_dirty_keys {
@@ -7759,15 +7801,65 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn drain_pending_tab_resizes(&mut self, cx: &mut Context<Self>) -> bool {
-        let pending: Vec<crate::daemon_host::TabResizeRequest> = {
+        // Debounce window. A resize younger than this waits a few
+        // render ticks before applying — long enough to coalesce
+        // drawer-open / window-drag animations into a single final
+        // SIGWINCH, short enough that a deliberate resize still
+        // feels instant. 50 ms is roughly 3 render ticks at 60 Hz.
+        const RESIZE_DEBOUNCE_MS: u64 = 50;
+
+        let now = std::time::Instant::now();
+        let (ready, deferred): (
+            Vec<crate::daemon_host::TabResizeRequest>,
+            Vec<crate::daemon_host::TabResizeRequest>,
+        ) = {
             let Ok(mut state) = self.registry_state.lock() else {
                 return false;
             };
             if state.pending_resizes.is_empty() {
                 return false;
             }
-            std::mem::take(&mut state.pending_resizes)
+            // Coalesce multiple requests for the same key into the
+            // most recent one. HashMap keyed by TerminalRuntimeKey
+            // keeps last-writer-wins semantics, which matches the
+            // resize-as-render-tick-output invariant (a later
+            // frame's effective size supersedes any earlier frame's).
+            let mut latest: std::collections::HashMap<
+                crate::terminal_runtime::TerminalRuntimeKey,
+                crate::daemon_host::TabResizeRequest,
+            > = std::collections::HashMap::new();
+            for req in state.pending_resizes.drain(..) {
+                latest.insert(req.key.clone(), req);
+            }
+            let mut ready = Vec::with_capacity(latest.len());
+            let mut deferred = Vec::new();
+            for (_key, req) in latest {
+                if now
+                    .saturating_duration_since(req.requested_at)
+                    .as_millis()
+                    >= RESIZE_DEBOUNCE_MS as u128
+                {
+                    ready.push(req);
+                } else {
+                    deferred.push(req);
+                }
+            }
+            // Put still-young requests back so the next render tick
+            // gets another chance to fire them once stable.
+            state.pending_resizes.extend(deferred.iter().cloned());
+            (ready, deferred)
         };
+        // Schedule a near-term re-render so a quiescent render
+        // loop doesn't leave a deferred request stranded waiting
+        // for an unrelated event. One tick at ~60 Hz + a little
+        // slack is plenty.
+        if !deferred.is_empty() {
+            cx.notify();
+        }
+        if ready.is_empty() {
+            return false;
+        }
+        let pending = ready;
         let mut changed = false;
         for request in pending {
             // ── Client-role split (NOT a platform split) ───────────
@@ -16244,10 +16336,27 @@ impl AnotherOneApp {
                 self.project_store.tasks.len()
             );
             self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
-            let store_snapshot = self.project_store.clone();
-            self.workspace_pane.update(cx, |workspace, cx| {
-                workspace.reconcile_section_tabs_from_store(&store_snapshot, cx);
-            });
+            // See the parallel block in `drain_session_events`.
+            let open_sections: std::collections::HashSet<String> = self
+                .workspace_pane
+                .read(cx)
+                .section_states
+                .keys()
+                .map(SectionId::store_key)
+                .collect();
+            let tasks: Vec<_> = self
+                .project_store
+                .tasks
+                .values()
+                .flatten()
+                .filter(|t| open_sections.contains(&t.section_id))
+                .cloned()
+                .collect();
+            if !tasks.is_empty() {
+                self.workspace_pane.update(cx, |workspace, cx| {
+                    workspace.reconcile_section_tabs_from_tasks(&tasks, cx);
+                });
+            }
         }
         if changed {
             cx.notify();
