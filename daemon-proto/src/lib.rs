@@ -502,6 +502,16 @@ pub enum Control {
     /// `core::project_store::UiState::show_sidebar_git_metadata`.
     /// Reply is [`WorkerReply::Empty`].
     SetSidebarGitMetadataVisible { visible: bool },
+    /// Switch the app-wide theme preference. `mode_id` is the
+    /// lowercase variant name from `core::project_store::ThemeMode`
+    /// (`"light"` / `"dark"` / `"system"`). Daemon-proto stays
+    /// free of the enum shape by passing it as a string; the
+    /// daemon decodes via `serde_json::from_value`. Reply is
+    /// [`WorkerReply::Empty`]. Routed through the daemon (not
+    /// a direct client-side `ProjectStore::save`) so every paired
+    /// client sees the new theme via the next projection instead
+    /// of each client persisting a divergent local copy.
+    SetThemeMode { mode_id: String },
     /// Update the per-repo "default commit action" pin (commit vs.
     /// commit-and-push) — drives which button is the primary on the
     /// titlebar's Commit dropdown. Mirrors
@@ -1513,6 +1523,13 @@ pub struct UiSnapshot {
     /// `UiState::agent_launch_args_overrides`.
     #[serde(default)]
     pub agent_launch_args_overrides: Option<serde_json::Value>,
+    /// App-wide theme preference (`"light"` / `"dark"` /
+    /// `"system"`). Carried as a string to keep daemon-proto free
+    /// of the `ThemeMode` enum shape. `None` = older daemon / no
+    /// preference stored (client should fall back to OS).
+    /// Wire-additive.
+    #[serde(default)]
+    pub theme_mode: Option<String>,
     /// `UiState::default_agent_id`. Wire-additive.
     #[serde(default)]
     pub default_agent_id: Option<String>,

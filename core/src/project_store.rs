@@ -1944,6 +1944,17 @@ impl ProjectStore {
             }
         }
         self.ui.default_agent_id = snapshot.default_agent_id;
+        if let Some(mode_id) = snapshot.theme_mode.as_deref() {
+            let parsed = match mode_id {
+                "light" => Some(ThemeMode::Light),
+                "dark" => Some(ThemeMode::Dark),
+                "system" => Some(ThemeMode::System),
+                _ => None,
+            };
+            if let Some(mode) = parsed {
+                self.ui.theme_mode = mode;
+            }
+        }
         self.ui.enabled_agents = snapshot.enabled_agents.map(|v| v.into_iter().collect());
         self.ui.available_agent_ids = snapshot
             .available_agent_ids

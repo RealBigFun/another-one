@@ -3921,8 +3921,27 @@ impl AnotherOneApp {
         mode: crate::project_store::ThemeMode,
         cx: &mut Context<Self>,
     ) {
-        self.project_store.set_theme_mode(mode);
-        self.sync_registry_project_store();
+        // Route through the daemon instead of mutating + saving
+        // locally. Single source of truth for the theme
+        // preference — every paired client picks it up via the
+        // next projection. On desktop (in-process daemon) this is
+        // a loopback call; on mobile it hops iroh.
+        let mode_id = match mode {
+            crate::project_store::ThemeMode::Light => "light",
+            crate::project_store::ThemeMode::Dark => "dark",
+            crate::project_store::ThemeMode::System => "system",
+        }
+        .to_string();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetThemeMode { mode_id },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetThemeMode failed: {err}");
+                }
+            },
+        );
         // Republish a best-guess resolved theme immediately so the
         // alacritty cell renderer picks up the new defaults before the
         // next frame. The render path will refine this with the actual

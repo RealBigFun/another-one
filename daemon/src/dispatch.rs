@@ -522,6 +522,10 @@ async fn dispatch_call(
             registry.set_sidebar_git_metadata_visible(visible);
             Some(WorkerReply::Empty)
         }
+        Control::SetThemeMode { mode_id } => {
+            registry.set_theme_mode(&mode_id);
+            Some(WorkerReply::Empty)
+        }
         Control::SetRepoDefaultCommitAction { repo_id, action } => {
             registry.set_repo_default_commit_action(&repo_id, &action);
             Some(WorkerReply::Empty)

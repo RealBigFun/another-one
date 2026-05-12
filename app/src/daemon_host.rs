@@ -632,6 +632,21 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         });
     }
 
+    fn set_theme_mode(&self, mode_id: &str) {
+        let mode = match mode_id {
+            "light" => another_one_core::project_store::ThemeMode::Light,
+            "dark" => another_one_core::project_store::ThemeMode::Dark,
+            "system" => another_one_core::project_store::ThemeMode::System,
+            other => {
+                tracing::warn!(mode_id = other, "SetThemeMode: unknown mode_id");
+                return;
+            }
+        };
+        self.with_store_mut(|store| {
+            store.set_theme_mode(mode);
+        });
+    }
+
     fn set_repo_default_commit_action(&self, repo_id: &str, action: &str) {
         let parsed = match action {
             "commit" => another_one_core::project_store::RepoDefaultCommitAction::Commit,
@@ -705,6 +720,14 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                 shortcuts: serde_json::to_value(&ui.shortcuts).ok(),
                 agent_launch_args_overrides: serde_json::to_value(&ui.agent_launch_args).ok(),
                 default_agent_id: ui.default_agent_id.clone(),
+                theme_mode: Some(
+                    match ui.theme_mode {
+                        another_one_core::project_store::ThemeMode::Light => "light",
+                        another_one_core::project_store::ThemeMode::Dark => "dark",
+                        another_one_core::project_store::ThemeMode::System => "system",
+                    }
+                    .to_string(),
+                ),
                 enabled_agents: ui
                     .enabled_agents
                     .as_ref()

@@ -255,6 +255,13 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// Default impl is a no-op.
     fn set_sidebar_git_metadata_visible(&self, _visible: bool) {}
 
+    /// Switch the app-wide theme preference. `mode_id` is the
+    /// lowercase variant name from
+    /// `core::project_store::ThemeMode` (`"light"` / `"dark"` /
+    /// `"system"`). Default impl is a no-op so sandbox / test
+    /// fakes don't have to carry theme state.
+    fn set_theme_mode(&self, _mode_id: &str) {}
+
     /// Pin a repo's default commit action (`"commit"` /
     /// `"commit-and-push"`). Default impl is a no-op.
     fn set_repo_default_commit_action(&self, _repo_id: &str, _action: &str) {}
