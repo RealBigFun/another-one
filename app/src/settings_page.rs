@@ -2431,9 +2431,10 @@ impl AnotherOneApp {
         let button_hover = settings_button_hover(mode);
         let active_button_bg = hsla(215. / 360., 0.60, 0.45, 1.);
         let enabled_apps = self.enabled_open_in_apps();
+        let available_open_in_apps = self.available_open_in_apps();
 
         let mut rows = div().flex().flex_col();
-        for (index, app) in self.available_open_in_apps.iter().copied().enumerate() {
+        for (index, app) in available_open_in_apps.iter().copied().enumerate() {
             let is_enabled = self.open_in_app_enabled(app);
 
             let mut row = div()
@@ -2549,7 +2550,7 @@ impl AnotherOneApp {
             );
         }
 
-        let availability_note = if self.available_open_in_apps.is_empty() {
+        let availability_note = if available_open_in_apps.is_empty() {
             "No supported apps were detected on this machine."
         } else {
             "Only apps detected on this machine appear here. Changes save immediately."
@@ -2622,7 +2623,7 @@ impl AnotherOneApp {
                             .child(format!("{} enabled", enabled_apps.len())),
                     ),
             )
-            .when(self.available_open_in_apps.is_empty(), |section| {
+            .when(available_open_in_apps.is_empty(), |section| {
                 section.child(
                     div()
                         .max_w(px(860.))
@@ -2643,7 +2644,7 @@ impl AnotherOneApp {
                         ),
                 )
             })
-            .when(!self.available_open_in_apps.is_empty(), |section| {
+            .when(!available_open_in_apps.is_empty(), |section| {
                 section.child(
                     div()
                         .max_w(px(860.))

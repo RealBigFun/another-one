@@ -759,6 +759,12 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                         .map(|agent| agent.id.to_string())
                         .collect(),
                 ),
+                available_open_in_apps: Some(
+                    detect_available_open_in_apps()
+                        .into_iter()
+                        .map(|app| app.id().to_string())
+                        .collect(),
+                ),
                 gh_auth_status: state.gh_auth_status.lock().unwrap_or_else(|p| p.into_inner()).clone(),
                 open_in_apps: ui
                     .enabled_open_in_apps

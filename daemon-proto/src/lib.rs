@@ -1574,6 +1574,17 @@ pub struct UiSnapshot {
     /// should treat that as "unknown, don't filter".
     #[serde(default)]
     pub available_agent_ids: Option<Vec<String>>,
+    /// `OpenInAppKind` ids the **daemon** can actually launch on
+    /// its host. Populated by the daemon's platform-specific
+    /// `is_open_in_app_available` probe — NOT the client's. The
+    /// daemon is the process that fork/execs the editors, so it's
+    /// the only correct probe target. Mobile clients have none of
+    /// these binaries locally; the paired daemon's list is what
+    /// they render. `None` = older daemon / probe hasn't run yet;
+    /// clients should fall back to local detection so a desktop
+    /// connected to an older daemon still works. Wire-additive.
+    #[serde(default)]
+    pub available_open_in_apps: Option<Vec<String>>,
     /// Result of the daemon's `gh auth status` probe. The desktop
     /// client used to fork/exec `gh` itself, but the architectural
     /// rule is the daemon owns host-process probes — clients (mobile

@@ -2064,8 +2064,6 @@ pub struct AnotherOneApp {
     /// Cleared before each sync.
     pub(crate) mcp_last_sync_errors:
         std::collections::HashSet<another_one_core::agents::AgentProviderKind>,
-    /// Apps detected on this machine that support opening a project directory.
-    pub(crate) available_open_in_apps: Vec<OpenInAppKind>,
     /// Project id whose header "Open In" menu is currently expanded.
     pub(crate) project_page_open_in_menu_project_id: Option<String>,
     /// Whether the bottom project configuration panel is expanded.
@@ -3567,9 +3565,24 @@ impl AnotherOneApp {
         self.show_toast(ToastKind::Warning, message, cx);
     }
 
+    /// Apps the connected daemon reports as launchable on its
+    /// host. Derived on demand from
+    /// `self.project_store.ui.available_open_in_apps`, falling
+    /// back to a local filesystem probe when the daemon hasn't
+    /// yet published the field (older daemons / pre-handshake).
+    pub(crate) fn available_open_in_apps(&self) -> Vec<OpenInAppKind> {
+        match self.project_store.ui.available_open_in_apps.as_ref() {
+            Some(ids) => OpenInAppKind::all()
+                .into_iter()
+                .filter(|app| ids.contains(app.id()))
+                .collect(),
+            None => detect_available_open_in_apps(),
+        }
+    }
+
     pub(crate) fn enabled_open_in_apps(&self) -> Vec<OpenInAppKind> {
         self.project_store
-            .enabled_open_in_apps(&self.available_open_in_apps)
+            .enabled_open_in_apps(&self.available_open_in_apps())
     }
 
     pub(crate) fn enabled_agents(&self) -> Vec<&'static AgentDef> {
@@ -3607,7 +3620,7 @@ impl AnotherOneApp {
 
     pub(crate) fn preferred_open_in_app(&self) -> Option<OpenInAppKind> {
         self.project_store
-            .preferred_open_in_app(&self.available_open_in_apps)
+            .preferred_open_in_app(&self.available_open_in_apps())
     }
 
     pub(crate) fn active_open_in_project_id(&self, cx: &App) -> Option<String> {
@@ -3931,7 +3944,7 @@ impl AnotherOneApp {
 
     pub(crate) fn open_in_app_enabled(&self, app: OpenInAppKind) -> bool {
         self.project_store
-            .open_in_app_enabled(app, &self.available_open_in_apps)
+            .open_in_app_enabled(app, &self.available_open_in_apps())
     }
 
     pub(crate) fn set_theme_mode(
@@ -4320,7 +4333,7 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) {
         self.project_store
-            .set_open_in_app_enabled(app, enabled, &self.available_open_in_apps);
+            .set_open_in_app_enabled(app, enabled, &self.available_open_in_apps());
         self.project_page_open_in_menu_project_id = None;
         cx.notify();
     }
@@ -4379,7 +4392,7 @@ impl AnotherOneApp {
             self.show_error_toast(err, cx);
         } else {
             self.project_store
-                .set_preferred_open_in_app(app, &self.available_open_in_apps);
+                .set_preferred_open_in_app(app, &self.available_open_in_apps());
             cx.notify();
         }
     }
@@ -4743,7 +4756,6 @@ impl AnotherOneApp {
         let initial_right_w = 460.;
         let initial_font_size = 13.0;
         let app_entity = cx.weak_entity();
-        let available_open_in_apps = detect_available_open_in_apps();
         let git_commit_generation_script = store.git_commit_generation_script().to_string();
         let git_pr_generation_script = store.git_pr_generation_script().to_string();
         let workspace_pane = cx.new(|_| {
@@ -4910,7 +4922,6 @@ impl AnotherOneApp {
                 reg
             },
             mcp_last_sync_errors: std::collections::HashSet::new(),
-            available_open_in_apps,
             project_page_open_in_menu_project_id: None,
             project_page_config_panel_expanded: true,
             project_page_config_panel_targeted: false,

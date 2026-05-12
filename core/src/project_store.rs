@@ -816,6 +816,17 @@ pub struct UiState {
     /// consult instead of the client's own filesystem.
     #[serde(skip)]
     pub available_agent_ids: Option<HashSet<String>>,
+    /// `OpenInAppKind` ids the **daemon** can actually launch on
+    /// its host. Pushed in via `absorb_ui_snapshot`; not persisted
+    /// (the daemon recomputes from its live filesystem on every
+    /// projection). `None` = no projection yet from a daemon new
+    /// enough to publish the field; clients should fall back to
+    /// local detection so a desktop connected to an older daemon
+    /// still works. `Some(set)` = authoritative list of editor
+    /// ids the daemon can launch, which is what every UI filter
+    /// should consult instead of the client's own filesystem.
+    #[serde(skip)]
+    pub available_open_in_apps: Option<HashSet<String>>,
     /// Latest result of the daemon's `gh auth status` probe.
     /// Pushed in via `absorb_ui_snapshot`; not persisted (the
     /// daemon recomputes on boot/recheck and stamps every
@@ -859,6 +870,7 @@ impl Default for UiState {
             preferred_open_in_app: None,
             enabled_agents: None,
             available_agent_ids: None,
+            available_open_in_apps: None,
             gh_auth_status: None,
             default_agent_id: None,
             agent_launch_args: HashMap::new(),
@@ -2282,6 +2294,9 @@ impl ProjectStore {
         self.ui.enabled_agents = snapshot.enabled_agents.map(|v| v.into_iter().collect());
         self.ui.available_agent_ids = snapshot
             .available_agent_ids
+            .map(|v| v.into_iter().collect());
+        self.ui.available_open_in_apps = snapshot
+            .available_open_in_apps
             .map(|v| v.into_iter().collect());
         self.ui.gh_auth_status = snapshot.gh_auth_status;
         if let Some(value) = snapshot.open_in_apps {
@@ -6093,6 +6108,7 @@ mod tests {
                 preferred_open_in_app: None,
                 enabled_agents: None,
                 available_agent_ids: None,
+                available_open_in_apps: None,
                 gh_auth_status: None,
                 default_agent_id: None,
                 agent_launch_args: HashMap::new(),
