@@ -1354,17 +1354,11 @@ impl WorkspacePane {
                 .into_any_element();
         }
 
-        let status_title = if pending {
-            "Launching terminal"
-        } else if error.is_some() {
-            "Terminal launch failed"
-        } else {
-            "Lazy restore"
-        };
-        let status_body = if pending {
-            "The tab was created immediately and its PTY is launching in the background."
-        } else if let Some(error) = error {
-            let error_copy = error.clone();
+        // Error path first — early-return the error UI so the
+        // fallthrough below can stay focused on the
+        // NotStarted/Launching happy path.
+        if let Some(error) = error.as_deref() {
+            let error_copy = error.to_string();
             return div()
                 .flex_1()
                 .flex()
@@ -1397,7 +1391,7 @@ impl WorkspacePane {
                                         .text_sm()
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
                                         .text_color(title_col)
-                                        .child(status_title),
+                                        .child("Terminal launch failed"),
                                 )
                                 .child(
                                     div()
@@ -1444,12 +1438,19 @@ impl WorkspacePane {
                                         ),
                                 ),
                         )
-                        .child(terminal_error_details(error, body_col, app_theme)),
+                        .child(terminal_error_details(error.to_string(), body_col, app_theme)),
                 )
                 .into_any_element();
-        } else {
-            "This restored tab has metadata only. Opening it triggers launch or resume on demand."
-        };
+        }
+
+        // Non-error happy path: the tab was just created (or
+        // restored) and its PTY is about to spawn / already
+        // spawning. Show a consistent "Launching" status until
+        // `ensure_active_terminal_runtime` produces a runtime and
+        // `terminal_surface_snapshots` picks up the live grid.
+        let status_title = "Launching terminal";
+        let status_body =
+            "The tab was created immediately and its PTY is launching in the background.";
 
         let cwd_label = state
             .cwd

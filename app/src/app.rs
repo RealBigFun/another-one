@@ -15938,12 +15938,27 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let chrome = theme::chrome_bg(window);
-        let title: String = self
-            .project_store
-            .projects
-            .iter()
-            .find(|p| p.id == project_id)
-            .map(|p| p.name.clone())
+        // Prefer the active task's name over the project UUID.
+        // Falls back through: active task name → project name →
+        // project id (the last one should be unreachable in
+        // practice; kept so an unparseable projection still
+        // renders something instead of panicking).
+        let active_task_name = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()
+            .and_then(|section| section.task_id.as_deref())
+            .and_then(|task_id| self.project_store.task(task_id))
+            .map(|task| task.name.clone());
+        let title: String = active_task_name
+            .or_else(|| {
+                self.project_store
+                    .projects
+                    .iter()
+                    .find(|p| p.id == project_id)
+                    .map(|p| p.name.clone())
+            })
             .unwrap_or_else(|| project_id.to_string());
         // Reuse the desktop sidebar-toggle SVGs so the gutter icons
         // are visually identical across desktop chrome and the
