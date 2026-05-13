@@ -195,6 +195,10 @@ fi
 cargo_cmd=(cargo)
 if command -v rustup >/dev/null 2>&1; then
   cargo_cmd=("$(rustup which cargo)")
+  if [[ -z "${RUSTC:-}" ]]; then
+    export RUSTC
+    RUSTC="$(rustup which rustc)"
+  fi
 fi
 (
   cd "$ROOT_DIR"
