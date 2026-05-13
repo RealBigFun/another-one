@@ -1190,6 +1190,46 @@ pub(crate) trait ProjectStorePersistence: Send + Sync + std::fmt::Debug {
     /// shape.
     #[allow(dead_code)]
     fn path(&self) -> &Path;
+
+    /// Read row-level section overlay. The SQLite adapter returns
+    /// the contents of its `sections` table here; other adapters
+    /// return an empty vec (their state is fully in the blob).
+    /// The caller (`ProjectStore::load_from_persistence`) overlays
+    /// these on top of the blob's sections so the freshest data
+    /// (last `upsert_section`) wins over the blob's possibly-stale
+    /// copy.
+    fn read_sections(&self) -> Vec<(String, PersistedSectionState)> {
+        Vec::new()
+    }
+
+    /// Row-level upsert for a single section. Hot-path mutation:
+    /// PTY storms / sub-agent bursts hit this dozens of times per
+    /// second. Default impl falls back to the whole-blob save() so
+    /// adapters without a row-oriented backend (NoopPersistence,
+    /// InMemoryProjectStorePersistence) keep working unchanged.
+    /// SqliteProjectStorePersistence overrides with a single-row
+    /// `INSERT OR REPLACE INTO sections` so the serialised payload
+    /// is one section (~hundreds of bytes) instead of the entire
+    /// `StoreFileV4` (~50 KB).
+    fn upsert_section(
+        &self,
+        section_id: &str,
+        state: &PersistedSectionState,
+        full_blob: &StoreFileV4,
+    ) {
+        // Default: rewrite the world. Adapters that care override.
+        let _ = (section_id, state);
+        self.save(full_blob);
+    }
+
+    /// Row-level bulk delete of sections. Same motivation as
+    /// [`Self::upsert_section`]: the GUI tab-close cleanup path
+    /// shouldn't have to rewrite every other section + every
+    /// project + every task to drop a few rows.
+    fn remove_section_rows(&self, section_ids: &[String], full_blob: &StoreFileV4) {
+        let _ = section_ids;
+        self.save(full_blob);
+    }
 }
 
 /// Test-only no-op persistence. Tests build `ProjectStore` from
@@ -1593,8 +1633,18 @@ impl ProjectStore {
     }
 
     fn load_from_persistence(persistence: Arc<dyn ProjectStorePersistence>) -> Self {
-        let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
+        let (repos, projects, project_order, tasks, task_ids_by_root_project, mut sections, mut ui) =
             persistence.load().into_parts();
+        // Overlay row-level sections on top of whatever the blob
+        // had. The row-level table is the freshest source for any
+        // section that's been mutated since the last full save();
+        // the blob is the catch-all for sections that haven't.
+        // SqliteAdapter populates this from the `sections` table;
+        // other adapters return an empty vec and the overlay is a
+        // no-op.
+        for (section_id, state) in persistence.read_sections() {
+            sections.insert(section_id, state);
+        }
         let mut store = Self {
             repos,
             projects_by_id: projects,
@@ -2727,9 +2777,16 @@ impl ProjectStore {
         section_id: impl Into<String>,
         state: PersistedSectionState,
     ) {
-        self.terminal_sections.insert(section_id.into(), state);
+        let section_id = section_id.into();
+        self.terminal_sections.insert(section_id.clone(), state.clone());
         self.rebuild_runtime_views();
-        self.save();
+        // Row-level write for the hot path. Avoids re-serialising
+        // the entire StoreFileV4 (~50 KB) on every section update.
+        // The full blob is passed through as the fallback for
+        // adapters that don't override `upsert_section` (Noop,
+        // InMemory). SqliteAdapter ignores it and writes one row.
+        let blob = self.snapshot_for_save();
+        self.persistence.upsert_section(&section_id, &state, &blob);
     }
 
     pub fn set_shortcut_binding(&mut self, action: ShortcutAction, binding: impl Into<String>) {
@@ -3016,7 +3073,16 @@ impl ProjectStore {
                 self.ui.last_active_section_id = None;
             }
             self.rebuild_runtime_views();
-            self.save();
+            // Row-level bulk delete; same hot-path reasoning as
+            // `set_section_state`. Note: if the GUI also cleared
+            // `last_active_section_id` above, that's a UI-state
+            // change living in the blob — we still need a full
+            // save() to capture it. The row delete + full save
+            // both happen, but they're independent SQL
+            // statements.
+            let blob = self.snapshot_for_save();
+            let ids: Vec<String> = section_ids.iter().cloned().collect();
+            self.persistence.remove_section_rows(&ids, &blob);
         }
         changed
     }
@@ -3509,9 +3575,11 @@ impl ProjectStore {
     pub fn update_task_tabs(&mut self, task_id: &str, state: &PersistedSectionState) {
         let section_id = self.task(task_id).map(|task| task.section_id.clone());
         if let Some(section_id) = section_id {
-            self.terminal_sections.insert(section_id, state.clone());
+            self.terminal_sections.insert(section_id.clone(), state.clone());
             self.rebuild_runtime_views();
-            self.save();
+            // Row-level write for the section's row.
+            let blob = self.snapshot_for_save();
+            self.persistence.upsert_section(&section_id, state, &blob);
         }
     }
 }

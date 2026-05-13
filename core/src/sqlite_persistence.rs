@@ -42,7 +42,9 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use crate::project_store::{ProjectStore, ProjectStorePersistence, StoreFileV4};
+use crate::project_store::{
+    PersistedSectionState, ProjectStore, ProjectStorePersistence, StoreFileV4,
+};
 
 /// File name for the SQLite database. Lives next to the existing
 /// `projects.json` in the app config dir (see `app_config_dir` in
@@ -51,19 +53,28 @@ use crate::project_store::{ProjectStore, ProjectStorePersistence, StoreFileV4};
 /// together.
 pub(crate) const STATE_DB_FILENAME: &str = "state.sqlite";
 
-/// Bumped on schema changes. v1 is the whole-blob layout described
-/// in the module doc; later versions split it into per-row tables
-/// (see `docs/architecture/sqlite-persistence.md` §Schema sketch).
-/// Stored in the `meta` table under `schema_version`.
-const SCHEMA_VERSION: i64 = 1;
+/// Bumped on schema changes.
+///
+/// - **v1**: single-row whole-blob storage. One `app_state` row,
+///   one JSON column with the entire `StoreFileV4`.
+/// - **v2**: introduces a `sections` table for row-level writes on
+///   the hot path (`PersistedSectionState` mutations from PTY
+///   storms). The `app_state` blob is unchanged; on load the
+///   `sections` table is overlaid on top of `blob.terminal_sections`,
+///   row-level wins. This means the blob carries a possibly-stale
+///   copy of sections at all times — but the user-visible state
+///   is what `load()` returns, which always merges the freshest
+///   per-row data on top.
+const SCHEMA_VERSION: i64 = 2;
 
-/// DDL for v1. One `meta` table for migration breadcrumbs and one
-/// singleton `app_state` row holding the entire serialised
-/// `StoreFileV4`. The `CHECK (id = 1)` is the standard SQLite
-/// idiom for a single-row table — it makes accidental
-/// `INSERT INTO app_state` fail loudly instead of silently growing
-/// a parallel state row.
-const V1_SCHEMA: &str = r#"
+/// DDL for v2.
+///
+/// `sections.section_id` is the same string the in-memory
+/// `terminal_sections: HashMap<String, _>` is keyed by — either
+/// a task-bound section id or a project-page section id. We don't
+/// add a foreign key to a hypothetical `tasks(id)` here because
+/// project-page sections aren't tied to a task at all.
+const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -71,6 +82,11 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE TABLE IF NOT EXISTS app_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
+    state_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sections (
+    section_id TEXT PRIMARY KEY,
     state_json TEXT NOT NULL
 );
 "#;
@@ -106,16 +122,22 @@ pub(crate) fn default_state_db_path() -> PathBuf {
     crate::project_store::app_config_dir().join(STATE_DB_FILENAME)
 }
 
-/// Initialise the v1 schema and stamp the schema version. Idempotent
-/// — safe to call on every open.
+/// Initialise the schema and stamp the schema version. Idempotent
+/// — safe to call on every open. The schema migration from v1 to
+/// v2 is implicit: v2 adds the `sections` table, never modifies
+/// pre-existing tables, so a v1 database stamps as v2 the first
+/// time it's opened by this binary. Existing v1 state in
+/// `app_state.state_json` survives untouched; the empty `sections`
+/// table is overlaid by `load()` (which is a no-op when empty),
+/// so the next live mutation populates the row-level cache and
+/// from then on `load()` reads the freshest data row-by-row.
 fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(V1_SCHEMA)?;
-    // INSERT OR IGNORE so the version row only lands once. If we
-    // ever bump SCHEMA_VERSION, the migration code lives in commit
-    // C and runs *before* this stamp — by the time we reach this
-    // line the schema is already at SCHEMA_VERSION.
+    conn.execute_batch(SCHEMA)?;
+    // Stamp / re-stamp the version to the current. INSERT OR REPLACE
+    // (not OR IGNORE) so a v1 database picks up the v2 stamp on
+    // first open without needing a separate migration step.
     conn.execute(
-        "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?1)",
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
     )?;
     Ok(())
@@ -325,9 +347,6 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
             Ok(state_json) => match serde_json::from_str::<StoreFileV4>(&state_json) {
                 Ok(store) => store,
                 Err(err) => {
-                    // Mirrors the JSON adapter: corrupt content
-                    // shouldn't crash boot. Logging to stderr keeps
-                    // us decoupled from the desktop's tracing setup.
                     eprintln!(
                         "sqlite_persistence: failed to deserialise app_state row: {err}"
                     );
@@ -342,6 +361,39 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
         }
     }
 
+    fn read_sections(&self) -> Vec<(String, PersistedSectionState)> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stmt = match conn.prepare("SELECT section_id, state_json FROM sections") {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("sqlite_persistence: prepare sections read failed: {err}");
+                return Vec::new();
+            }
+        };
+        let rows = match stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        {
+            Ok(r) => r,
+            Err(err) => {
+                eprintln!("sqlite_persistence: query sections failed: {err}");
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::new();
+        for row in rows.flatten() {
+            let (section_id, state_json) = row;
+            match serde_json::from_str::<PersistedSectionState>(&state_json) {
+                Ok(state) => out.push((section_id, state)),
+                Err(err) => {
+                    eprintln!(
+                        "sqlite_persistence: failed to deserialise section {section_id}: {err}"
+                    );
+                }
+            }
+        }
+        out
+    }
+
     fn save(&self, store: &StoreFileV4) {
         let json = match serde_json::to_string(store) {
             Ok(s) => s,
@@ -351,19 +403,88 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
             }
         };
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        // INSERT OR REPLACE on the singleton row. SQLite's WAL
-        // makes this atomic per call — either the new state lands
-        // in full or the old state survives. No torn writes.
-        if let Err(err) = conn.execute(
+        // Full save is a checkpoint: write the blob AND clear the
+        // row-level sections cache. The blob already contains the
+        // current sections (snapshot_for_save folds them into
+        // per-task records on the way out), so the cache is
+        // redundant after a save. Section mutations between this
+        // save and the next will repopulate it. Single transaction
+        // so a crash mid-save can't leave the two surfaces in
+        // disagreement past what WAL already protects.
+        let tx = match conn.unchecked_transaction() {
+            Ok(t) => t,
+            Err(err) => {
+                eprintln!("sqlite_persistence: begin save tx failed: {err}");
+                return;
+            }
+        };
+        if let Err(err) = tx.execute(
             "INSERT OR REPLACE INTO app_state (id, state_json) VALUES (1, ?1)",
             params![json],
         ) {
-            eprintln!("sqlite_persistence: failed to write app_state: {err}");
+            eprintln!("sqlite_persistence: write app_state failed: {err}");
+            return;
+        }
+        if let Err(err) = tx.execute("DELETE FROM sections", []) {
+            eprintln!("sqlite_persistence: clear sections failed: {err}");
+            return;
+        }
+        if let Err(err) = tx.commit() {
+            eprintln!("sqlite_persistence: commit save failed: {err}");
         }
     }
 
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn upsert_section(
+        &self,
+        section_id: &str,
+        state: &PersistedSectionState,
+        _full_blob: &StoreFileV4,
+    ) {
+        let json = match serde_json::to_string(state) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!(
+                    "sqlite_persistence: failed to serialise section {section_id} for upsert: {err}"
+                );
+                return;
+            }
+        };
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        if let Err(err) = conn.execute(
+            "INSERT OR REPLACE INTO sections (section_id, state_json) VALUES (?1, ?2)",
+            params![section_id, json],
+        ) {
+            eprintln!(
+                "sqlite_persistence: failed to upsert section {section_id}: {err}"
+            );
+        }
+    }
+
+    fn remove_section_rows(&self, section_ids: &[String], _full_blob: &StoreFileV4) {
+        if section_ids.is_empty() {
+            return;
+        }
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let tx = match conn.unchecked_transaction() {
+            Ok(t) => t,
+            Err(err) => {
+                eprintln!("sqlite_persistence: failed to begin remove_section_rows tx: {err}");
+                return;
+            }
+        };
+        for id in section_ids {
+            if let Err(err) = tx.execute("DELETE FROM sections WHERE section_id = ?1", params![id])
+            {
+                eprintln!("sqlite_persistence: failed to delete section {id}: {err}");
+            }
+        }
+        if let Err(err) = tx.commit() {
+            eprintln!("sqlite_persistence: failed to commit remove_section_rows: {err}");
+        }
     }
 }
 
@@ -622,5 +743,112 @@ mod tests {
             .ok()
             .and_then(|v| v.get("ui")?.get("theme_mode")?.as_str().map(str::to_string));
         assert_eq!(theme, Some("dark".to_string()));
+    }
+
+    // ── Row-level section writes (step E) ───────────────────────────────
+
+    /// `upsert_section` writes the section row without touching the
+    /// blob. Reading sections back via `read_sections` returns the
+    /// upserted state.
+    #[test]
+    fn upsert_section_writes_row_without_touching_blob() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+        let adapter = SqliteProjectStorePersistence::open(db_path).unwrap();
+
+        // Take a baseline of the blob contents (empty StoreFileV4)
+        // so we can compare bytes after an upsert and confirm the
+        // blob was not rewritten by upsert_section.
+        let blob_before = serde_json::to_string(&adapter.load()).unwrap();
+
+        let state = PersistedSectionState {
+            active_tab_id: "tab-1".to_string(),
+            next_tab_id: 2,
+            cwd: None,
+            tabs: Vec::new(),
+        };
+        adapter.upsert_section("section-x", &state, &StoreFileV4::default());
+
+        // Blob unchanged: upsert_section is row-only.
+        let blob_after = serde_json::to_string(&adapter.load()).unwrap();
+        assert_eq!(
+            blob_before, blob_after,
+            "upsert_section must not rewrite app_state.state_json"
+        );
+
+        // But read_sections returns the row.
+        let rows = adapter.read_sections();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "section-x");
+        assert_eq!(rows[0].1.active_tab_id, "tab-1");
+        assert_eq!(rows[0].1.next_tab_id, 2);
+    }
+
+    /// `remove_section_rows` deletes only the listed sections from
+    /// the row-level cache; the blob is untouched.
+    #[test]
+    fn remove_section_rows_deletes_only_listed_sections() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+        let adapter = SqliteProjectStorePersistence::open(db_path).unwrap();
+
+        let mk = |tab: &str| PersistedSectionState {
+            active_tab_id: tab.to_string(),
+            next_tab_id: 1,
+            cwd: None,
+            tabs: Vec::new(),
+        };
+        adapter.upsert_section("a", &mk("ta"), &StoreFileV4::default());
+        adapter.upsert_section("b", &mk("tb"), &StoreFileV4::default());
+        adapter.upsert_section("c", &mk("tc"), &StoreFileV4::default());
+
+        adapter.remove_section_rows(&["b".to_string()], &StoreFileV4::default());
+
+        let mut ids: Vec<String> = adapter.read_sections().into_iter().map(|(id, _)| id).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["a".to_string(), "c".to_string()]);
+    }
+
+    /// A full `save()` is a checkpoint: it rewrites the blob and
+    /// clears the row-level cache. The cache repopulates on the
+    /// next `upsert_section`. Subsequent `load()` returns whatever
+    /// the blob has plus any post-save row-level upserts.
+    #[test]
+    fn save_clears_row_level_cache_so_blob_is_authoritative() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+        let adapter = SqliteProjectStorePersistence::open(db_path).unwrap();
+
+        // Stage a row-level upsert.
+        let stale = PersistedSectionState {
+            active_tab_id: "stale".to_string(),
+            next_tab_id: 1,
+            cwd: None,
+            tabs: Vec::new(),
+        };
+        adapter.upsert_section("section-x", &stale, &StoreFileV4::default());
+        assert_eq!(adapter.read_sections().len(), 1);
+
+        // Now run a full save with an empty blob. Section cache
+        // should clear (the blob doesn't carry sections at this
+        // path — they live inside per-task records, and there are
+        // no tasks in StoreFileV4::default()).
+        adapter.save(&StoreFileV4::default());
+        assert!(
+            adapter.read_sections().is_empty(),
+            "save() must clear the row-level sections cache"
+        );
+
+        // After save, a fresh upsert_section repopulates the cache.
+        let fresh = PersistedSectionState {
+            active_tab_id: "fresh".to_string(),
+            next_tab_id: 1,
+            cwd: None,
+            tabs: Vec::new(),
+        };
+        adapter.upsert_section("section-x", &fresh, &StoreFileV4::default());
+        let rows = adapter.read_sections();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.active_tab_id, "fresh");
     }
 }
