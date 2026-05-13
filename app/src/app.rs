@@ -4393,7 +4393,15 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn open_active_open_in_target_in_default_app(&mut self, cx: &mut Context<Self>) {
-        let Some(project_id) = self.active_open_in_project_id(cx) else {
+        let Some(project_id) = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()
+            .filter(|section| section.task_id.is_some())
+            .map(|section| section.project_id.clone())
+        else {
+            self.show_error_toast("Select a task in the sidebar before using Open In.", cx);
             return;
         };
 
@@ -8060,7 +8068,13 @@ impl AnotherOneApp {
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) {
-        let Some(section_id) = self.workspace_pane.read(cx).active_section.clone() else {
+        let Some(section_id) = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .clone()
+            .filter(|section| section.task_id.is_some())
+        else {
             self.show_error_toast("Custom actions run inside an active task.", cx);
             return;
         };
@@ -10753,8 +10767,19 @@ impl AnotherOneApp {
         action: crate::git_actions::ToolbarGitAction,
         cx: &mut Context<Self>,
     ) {
-        let Some((project_id, project_path)) = self.active_project_context(cx) else {
-            self.show_error_toast("No active project is selected.", cx);
+        let Some(project_id) = self
+            .workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()
+            .filter(|section| section.task_id.is_some())
+            .map(|section| section.project_id.clone())
+        else {
+            self.show_error_toast("Select a task in the sidebar before using git actions.", cx);
+            return;
+        };
+        let Some(project_path) = self.project_path(&project_id) else {
+            self.show_error_toast("Could not find the selected task worktree.", cx);
             return;
         };
 

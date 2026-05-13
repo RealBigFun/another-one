@@ -3,6 +3,12 @@
 This is a greenfield app, and has no users.
 This app is built for mac and linux - any changes must keep this in mind.
 
+## Rust formatting
+
+- Do not run broad `cargo fmt` or `rustfmt` on module entry files unless the task is explicitly formatting-related.
+- Prefer `cargo fmt --check` first.
+- If formatting is required, only keep formatting changes in files that are part of the current task.
+
 ## UI Rules
 
 - This applies to icon-only controls and text-based actions alike unless the element is purely decorative or intentionally non-interactive.

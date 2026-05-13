@@ -521,34 +521,17 @@ impl DesktopTerminalRegistry {
         self.with_state(|state| state.commit_project_store_mutation(f))
     }
 
-    /// Refresh the daemon-side resource-usage sample using the
-    /// caller-supplied tracked-process list, then fire a
-    /// state-change tick so every connected session re-snapshots
-    /// (and the new wire `daemon_resource_usage` rides the next
-    /// `WorkerReply::ProjectList`). Today the desktop GUI is the
-    /// caller — it owns the `terminal_manager` + prewarmed PTY
-    /// list and feeds them in on every render-tick `tick_resource_usage`.
-    /// On a future mobile-only daemon the same slot can be driven
-    /// from a daemon-side periodic task instead. See #156.
-    pub fn refresh_resource_usage(
-        &self,
-        tracked_processes: Vec<another_one_core::process::TrackedProcess>,
-    ) {
-        let Some((slot, tx)) = self.with_state(|state| {
-            (state.resource_usage.clone(), state.state_change_tx.clone())
-        }) else {
-            return;
-        };
-        refresh_resource_usage_impl(slot, tx, tracked_processes);
-    }
 }
 
-/// Free-function variant of [`DesktopTerminalRegistry::refresh_resource_usage`]
-/// that takes the shared `RegistryState` directly. The desktop
-/// GUI's render-tick path holds the `Arc<Mutex<RegistryState>>`
-/// already; constructing a throwaway `DesktopTerminalRegistry`
-/// per render frame just to call the trait method would re-clone
-/// the broadcast sender on every call. Same body otherwise.
+/// Refresh the daemon-side resource-usage sample using the
+/// caller-supplied tracked-process list, then fire a state-change
+/// tick so every connected session re-snapshots (and the new wire
+/// `daemon_resource_usage` rides the next `WorkerReply::ProjectList`).
+/// Today the desktop GUI is the caller — it owns the
+/// `terminal_manager` + prewarmed PTY list and feeds them in on every
+/// render-tick `tick_resource_usage`. On a future mobile-only daemon
+/// the same slot can be driven from a daemon-side periodic task
+/// instead. See #156.
 pub(crate) fn refresh_resource_usage(
     registry_state: &Arc<Mutex<RegistryState>>,
     tracked_processes: Vec<another_one_core::process::TrackedProcess>,
