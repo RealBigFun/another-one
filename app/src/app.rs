@@ -63,7 +63,6 @@ use crate::project_store::{
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
     ProjectGitState, ProjectStore, Task, TaskKind, TaskWorktreeBranchMode,
 };
-use another_one_core::process::TrackedProcess;
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
@@ -78,6 +77,7 @@ use another_one_core::clients::{
     AttachTabRequest, AttachTabResponse, ClientEvent, ClientId, CloseTabRequest, Focus, JobId,
     OpenTabRequest, OpenTabResponse, OpenTaskRequest, OpenTaskResponse, SelectRequest,
 };
+use another_one_core::process::TrackedProcess;
 pub use another_one_core::section::SectionId;
 use daemon_proto::TerminalRestoreStatus;
 
@@ -403,7 +403,7 @@ impl SectionState {
         persisted: PersistedSectionState,
         fallback_cwd: Option<std::path::PathBuf>,
     ) -> Self {
-            let persisted = persisted.normalized();
+        let persisted = persisted.normalized();
         let active_tab = persisted.active_tab_index();
         let tabs = persisted
             .tabs
@@ -696,15 +696,13 @@ pub(crate) struct SettingsAgentInputState {
     pub(crate) selection_anchor: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SettingsGitActionScriptInputState {
     pub(crate) draft: String,
     pub(crate) focused: bool,
     pub(crate) cursor: usize,
     pub(crate) selection_anchor: Option<usize>,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsGitActionScriptKind {
@@ -5209,11 +5207,13 @@ impl AnotherOneApp {
         // Volatile mutation: `apply_mutation` skips save() for
         // ApplyPtyTabTitle. The notify still fires so projection
         // consumers see the new title on the next tick.
-        self.apply_mutation(another_one_core::state_authority::Mutation::ApplyPtyTabTitle {
-            section_key: key.section_id.store_key(),
-            tab_id: key.tab_id.clone(),
-            update,
-        });
+        self.apply_mutation(
+            another_one_core::state_authority::Mutation::ApplyPtyTabTitle {
+                section_key: key.section_id.store_key(),
+                tab_id: key.tab_id.clone(),
+                update,
+            },
+        );
     }
 
     fn update_terminal_tab(
@@ -6927,10 +6927,8 @@ impl AnotherOneApp {
         mutation: another_one_core::state_authority::Mutation,
     ) -> another_one_core::state_authority::MutationOutcome {
         let outcome = if let Ok(mut state) = self.registry_state.lock() {
-            let outcome = another_one_core::state_authority::apply(
-                &mut state.project_store,
-                mutation,
-            );
+            let outcome =
+                another_one_core::state_authority::apply(&mut state.project_store, mutation);
             state.notify_state_changed();
             self.project_store = state.project_store.clone();
             outcome
@@ -7927,9 +7925,7 @@ impl AnotherOneApp {
             let mut ready = Vec::with_capacity(latest.len());
             let mut deferred = Vec::new();
             for (_key, req) in latest {
-                if now
-                    .saturating_duration_since(req.requested_at)
-                    .as_millis()
+                if now.saturating_duration_since(req.requested_at).as_millis()
                     >= RESIZE_DEBOUNCE_MS as u128
                 {
                     ready.push(req);
@@ -9519,10 +9515,12 @@ impl AnotherOneApp {
         // order / branches_by_name / common_dir / project kind+
         // checkout / worktree checkout / ahead+behind).
         let mut changed = self
-            .apply_mutation(another_one_core::state_authority::Mutation::ApplyProjectGitState {
-                project_id: project_id.to_string(),
-                state,
-            })
+            .apply_mutation(
+                another_one_core::state_authority::Mutation::ApplyProjectGitState {
+                    project_id: project_id.to_string(),
+                    state,
+                },
+            )
             .is_changed();
 
         if self
@@ -13394,10 +13392,17 @@ fn latest_project_list_projection(
     Vec<daemon_proto::RepoSummary>,
     daemon_proto::UiSnapshot,
 )> {
-    replies.into_iter().filter_map(|reply| match reply {
-        daemon_proto::WorkerReply::ProjectList { projects, repos, ui } => Some((projects, repos, ui)),
-        _ => None,
-    }).last()
+    replies
+        .into_iter()
+        .filter_map(|reply| match reply {
+            daemon_proto::WorkerReply::ProjectList {
+                projects,
+                repos,
+                ui,
+            } => Some((projects, repos, ui)),
+            _ => None,
+        })
+        .last()
 }
 
 fn reconcile_projected_section_state(
@@ -13461,9 +13466,9 @@ mod tests {
         active_toolbar_git_action_entry, apply_terminal_session_backfill,
         apply_terminal_title_update, choose_initial_section, collect_drained_git_action_replies,
         encode_terminal_mouse_event, fixed_title_for_project_action, global_tab_navigation_targets,
-        has_active_toolbar_git_action, new_tab_seed_agent_id, next_global_tab_navigation_target,
-        next_project_navigation_target, next_task_navigation_target,
-        latest_project_list_projection, open_in_target_path_for_project, persisted_active_section_key,
+        has_active_toolbar_git_action, latest_project_list_projection, new_tab_seed_agent_id,
+        next_global_tab_navigation_target, next_project_navigation_target,
+        next_task_navigation_target, open_in_target_path_for_project, persisted_active_section_key,
         reconcile_projected_section_state, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
         should_apply_cross_client_focus_to_workspace, sidebar_task_navigation_targets,

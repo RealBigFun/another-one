@@ -338,18 +338,15 @@ fn legacy_backup_path(json_path: &Path) -> PathBuf {
 impl ProjectStorePersistence for SqliteProjectStorePersistence {
     fn load(&self) -> StoreFileV4 {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        let row: rusqlite::Result<String> = conn.query_row(
-            "SELECT state_json FROM app_state WHERE id = 1",
-            [],
-            |row| row.get(0),
-        );
+        let row: rusqlite::Result<String> =
+            conn.query_row("SELECT state_json FROM app_state WHERE id = 1", [], |row| {
+                row.get(0)
+            });
         match row {
             Ok(state_json) => match serde_json::from_str::<StoreFileV4>(&state_json) {
                 Ok(store) => store,
                 Err(err) => {
-                    eprintln!(
-                        "sqlite_persistence: failed to deserialise app_state row: {err}"
-                    );
+                    eprintln!("sqlite_persistence: failed to deserialise app_state row: {err}");
                     StoreFileV4::default()
                 }
             },
@@ -370,9 +367,9 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
                 return Vec::new();
             }
         };
-        let rows = match stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-        {
+        let rows = match stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) {
             Ok(r) => r,
             Err(err) => {
                 eprintln!("sqlite_persistence: query sections failed: {err}");
@@ -441,9 +438,7 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
             "INSERT OR REPLACE INTO sections (section_id, state_json) VALUES (?1, ?2)",
             params![section_id, json],
         ) {
-            eprintln!(
-                "sqlite_persistence: failed to upsert section {section_id}: {err}"
-            );
+            eprintln!("sqlite_persistence: failed to upsert section {section_id}: {err}");
         }
     }
 
@@ -549,24 +544,19 @@ mod tests {
         // Build a non-empty store via the public test helper, then
         // grab its on-the-wire StoreFileV4 representation through
         // serde round-trip (we don't expose the internals directly).
-        let mut store =
-            ProjectStore::from_projects_for_test(Vec::new(), Vec::new());
+        let mut store = ProjectStore::from_projects_for_test(Vec::new(), Vec::new());
         store.ui.theme_mode = crate::project_store::ThemeMode::Dark;
         store.ui.left_sidebar_open = false;
-        let blob: StoreFileV4 = serde_json::from_str(
-            &serde_json::to_string(&serde_for_test(&store)).unwrap(),
-        )
-        .unwrap();
+        let blob: StoreFileV4 =
+            serde_json::from_str(&serde_json::to_string(&serde_for_test(&store)).unwrap()).unwrap();
 
         adapter.save(&blob);
 
         // Re-open from disk to make sure the value actually committed,
         // not just sat in the connection's page cache.
         drop(adapter);
-        let adapter = SqliteProjectStorePersistence::open(
-            tmp.path().join(STATE_DB_FILENAME),
-        )
-        .unwrap();
+        let adapter =
+            SqliteProjectStorePersistence::open(tmp.path().join(STATE_DB_FILENAME)).unwrap();
         let loaded = adapter.load();
         // Compare via serialised form so we don't have to touch
         // StoreFileV4's field visibility just for one round-trip
@@ -787,7 +777,11 @@ mod tests {
 
         adapter.remove_section_rows(&["b".to_string()], &StoreFileV4::default());
 
-        let mut ids: Vec<String> = adapter.read_sections().into_iter().map(|(id, _)| id).collect();
+        let mut ids: Vec<String> = adapter
+            .read_sections()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         ids.sort();
         assert_eq!(ids, vec!["a".to_string(), "c".to_string()]);
     }
@@ -868,7 +862,10 @@ mod tests {
             "expected Migrated, got {outcome:?}"
         );
 
-        assert!(!staged_json.exists(), "projects.json should have been renamed");
+        assert!(
+            !staged_json.exists(),
+            "projects.json should have been renamed"
+        );
         let bak = std::fs::read_dir(tmp.path())
             .unwrap()
             .filter_map(|e| e.ok())
@@ -878,7 +875,11 @@ mod tests {
                     .map(|s| s.starts_with("projects.json.bak."))
                     .unwrap_or(false)
             });
-        assert!(bak.is_some(), "no projects.json.bak.<ts> in {:?}", tmp.path());
+        assert!(
+            bak.is_some(),
+            "no projects.json.bak.<ts> in {:?}",
+            tmp.path()
+        );
         assert_eq!(
             bak.unwrap().metadata().map(|m| m.len()).unwrap_or(0),
             real_size,
@@ -901,7 +902,10 @@ mod tests {
         );
 
         let sections = adapter.read_sections();
-        eprintln!("smoke: read_sections after migration = {} rows", sections.len());
+        eprintln!(
+            "smoke: read_sections after migration = {} rows",
+            sections.len()
+        );
         assert!(
             sections.is_empty(),
             "fresh migration leaves the row-level sections table empty"

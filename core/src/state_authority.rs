@@ -50,7 +50,9 @@ pub enum Mutation {
     InsertPreparedProject(PreparedProject),
 
     /// `Control::DeleteProject`.
-    RemoveProject { project_id: String },
+    RemoveProject {
+        project_id: String,
+    },
 
     /// `Control::SetBranchSetting{field:"default-branch"}`.
     SetDefaultBranch {
@@ -65,7 +67,9 @@ pub enum Mutation {
     },
 
     /// Post git-refresh sweep. Returns `Vec<InvalidProjectBranchSetting>`.
-    ClearMissingBranchSettings { project_id: String },
+    ClearMissingBranchSettings {
+        project_id: String,
+    },
 
     /// `Control::SetRepoDefaultCommitAction`.
     SetRepoDefaultCommitAction {
@@ -120,7 +124,9 @@ pub enum Mutation {
 
     // ── Task catalog ────────────────────────────────────────────
     /// `client_open_task` + `Control::CreateWorktreeTask` reply path.
-    InsertTask { task: crate::project_store::Task },
+    InsertTask {
+        task: crate::project_store::Task,
+    },
 
     /// `Control::DeleteTask`.
     RemoveTask {
@@ -129,10 +135,16 @@ pub enum Mutation {
     },
 
     /// `Control::SetTaskName`.
-    RenameTask { task_id: String, new_name: String },
+    RenameTask {
+        task_id: String,
+        new_name: String,
+    },
 
     /// `Control::SetTaskPinned`.
-    SetTaskPinned { task_id: String, pinned: bool },
+    SetTaskPinned {
+        task_id: String,
+        pinned: bool,
+    },
 
     /// `Control::SetTaskBranch`.
     UpdateTaskBranch {
@@ -157,25 +169,37 @@ pub enum Mutation {
     },
 
     /// GUI tab-close cleanup. Outcome is `changed: bool`.
-    RemoveTerminalSections { section_ids: HashSet<String> },
+    RemoveTerminalSections {
+        section_ids: HashSet<String>,
+    },
 
     // ── Persistent UI prefs ─────────────────────────────────────
     /// `Control::SetThemeMode`.
-    SetThemeMode { mode: ThemeMode },
+    SetThemeMode {
+        mode: ThemeMode,
+    },
 
     /// `Control::SetExpandedRepos`.
-    SetExpandedRepos { repo_ids: HashSet<String> },
+    SetExpandedRepos {
+        repo_ids: HashSet<String>,
+    },
 
     /// `Control::SetSidebarGitMetadataVisible`.
-    SetSidebarGitMetadataVisible { visible: bool },
+    SetSidebarGitMetadataVisible {
+        visible: bool,
+    },
 
     /// `Control::SetLastActiveSection`.
-    SetLastActiveSection { section_id: Option<String> },
+    SetLastActiveSection {
+        section_id: Option<String>,
+    },
 
     /// GUI sidebar splitter. Currently bypasses `Control::*` —
     /// classified as desktop-only-but-persisted ephemera; see
     /// `daemon-owned-state-authority.md`.
-    SetLeftSidebarOpen { is_open: bool },
+    SetLeftSidebarOpen {
+        is_open: bool,
+    },
 
     // ── Host settings ───────────────────────────────────────────
     SetShortcutBinding {

@@ -32,7 +32,6 @@ const STORE_VERSION: u8 = 4;
 // `core::sqlite_persistence` and
 // `docs/architecture/sqlite-persistence.md`.
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepoDefaultCommitAction {
     Commit,
@@ -1512,9 +1511,10 @@ impl ProjectStore {
             // disk I/O on the live path. Earlier this carried a
             // tmpfile path; the path is decorative now since
             // `NoopPersistence::save` is a no-op.
-            persistence: Arc::new(NoopPersistence::new(std::env::temp_dir().join(
-                format!("another-one-test-store-{}.sqlite", uuid::Uuid::new_v4()),
-            ))),
+            persistence: Arc::new(NoopPersistence::new(std::env::temp_dir().join(format!(
+                "another-one-test-store-{}.sqlite",
+                uuid::Uuid::new_v4()
+            )))),
         };
         for task in &tasks {
             store
@@ -1590,44 +1590,43 @@ impl ProjectStore {
             // launch after).
             let json_path = Self::config_path();
             let db_path = crate::sqlite_persistence::default_state_db_path();
-            if let Err(err) =
-                crate::sqlite_persistence::migrate_from_json(&json_path, &db_path)
-            {
+            if let Err(err) = crate::sqlite_persistence::migrate_from_json(&json_path, &db_path) {
                 eprintln!("project_store: SQLite migration failed: {err}");
             }
-            let persistence: Arc<dyn ProjectStorePersistence> = match crate::
-                sqlite_persistence::SqliteProjectStorePersistence::open(db_path.clone())
-            {
-                Ok(adapter) => Arc::new(adapter),
-                Err(err) => {
-                    // Catastrophic: SQLite couldn't be opened.
-                    // Fall back to a no-op so the app boots into
-                    // an empty store rather than panicking. The
-                    // user's data isn't lost — the JSON backup is
-                    // still on disk if migration ever ran.
-                    eprintln!("project_store: failed to open state.sqlite: {err}");
-                    #[cfg(any(test, feature = "test-harness"))]
-                    {
-                        Arc::new(NoopPersistence::new(db_path))
-                    }
-                    #[cfg(not(any(test, feature = "test-harness")))]
-                    {
-                        #[derive(Debug)]
-                        #[allow(dead_code)] // PathBuf field exists only so path() has something to return
-                        struct NoopFallback(PathBuf);
-                        impl ProjectStorePersistence for NoopFallback {
-                            fn load(&self) -> StoreFileV4 {
-                                StoreFileV4::default()
-                            }
-                            fn save(&self, _store: &StoreFileV4) {}
-                            fn path(&self) -> &Path {
-                                &self.0
-                            }
+            let persistence: Arc<dyn ProjectStorePersistence> =
+                match crate::sqlite_persistence::SqliteProjectStorePersistence::open(
+                    db_path.clone(),
+                ) {
+                    Ok(adapter) => Arc::new(adapter),
+                    Err(err) => {
+                        // Catastrophic: SQLite couldn't be opened.
+                        // Fall back to a no-op so the app boots into
+                        // an empty store rather than panicking. The
+                        // user's data isn't lost — the JSON backup is
+                        // still on disk if migration ever ran.
+                        eprintln!("project_store: failed to open state.sqlite: {err}");
+                        #[cfg(any(test, feature = "test-harness"))]
+                        {
+                            Arc::new(NoopPersistence::new(db_path))
                         }
-                        Arc::new(NoopFallback(db_path))
+                        #[cfg(not(any(test, feature = "test-harness")))]
+                        {
+                            #[derive(Debug)]
+                            #[allow(dead_code)] // PathBuf field exists only so path() has something to return
+                            struct NoopFallback(PathBuf);
+                            impl ProjectStorePersistence for NoopFallback {
+                                fn load(&self) -> StoreFileV4 {
+                                    StoreFileV4::default()
+                                }
+                                fn save(&self, _store: &StoreFileV4) {}
+                                fn path(&self) -> &Path {
+                                    &self.0
+                                }
+                            }
+                            Arc::new(NoopFallback(db_path))
+                        }
                     }
-                }
-            };
+                };
             Self::load_from_persistence(persistence)
         }
     }
@@ -2305,7 +2304,10 @@ impl ProjectStore {
         worktree_id: &str,
         checkout: ProjectCheckoutState,
     ) -> bool {
-        let Some(task_id) = self.task_for_worktree(worktree_id).map(|task| task.id.clone()) else {
+        let Some(task_id) = self
+            .task_for_worktree(worktree_id)
+            .map(|task| task.id.clone())
+        else {
             return false;
         };
         let mut moved_section = None;
@@ -2780,13 +2782,10 @@ impl ProjectStore {
         self.save();
     }
 
-    fn set_section_state(
-        &mut self,
-        section_id: impl Into<String>,
-        state: PersistedSectionState,
-    ) {
+    fn set_section_state(&mut self, section_id: impl Into<String>, state: PersistedSectionState) {
         let section_id = section_id.into();
-        self.terminal_sections.insert(section_id.clone(), state.clone());
+        self.terminal_sections
+            .insert(section_id.clone(), state.clone());
         self.rebuild_runtime_views();
         // Row-level write for the hot path. Avoids re-serialising
         // the entire StoreFileV4 (~50 KB) on every section update.
@@ -3341,11 +3340,7 @@ impl ProjectStore {
     /// `state.changed_files` is intentionally ignored — changed-file
     /// state lives outside `ProjectStore` (on the GPUI app's render-
     /// side mirror).
-    pub fn apply_project_git_state(
-        &mut self,
-        project_id: &str,
-        state: ProjectGitState,
-    ) -> bool {
+    pub fn apply_project_git_state(&mut self, project_id: &str, state: ProjectGitState) -> bool {
         let mut changed = false;
         let ProjectGitState {
             changed_files: _,
@@ -3558,7 +3553,7 @@ impl ProjectStore {
             }
             Some(version) if version == u64::from(LEGACY_STORE_VERSION) => {
                 serde_json::from_value::<StoreFile>(value)
-                    .map(|store| StoreFileV4::from_legacy(store))
+                    .map(StoreFileV4::from_legacy)
                     .unwrap_or_else(|_| {
                         Self::backup_incompatible_store(path);
                         StoreFileV4::default()
@@ -3599,7 +3594,8 @@ impl ProjectStore {
     pub fn update_task_tabs(&mut self, task_id: &str, state: &PersistedSectionState) {
         let section_id = self.task(task_id).map(|task| task.section_id.clone());
         if let Some(section_id) = section_id {
-            self.terminal_sections.insert(section_id.clone(), state.clone());
+            self.terminal_sections
+                .insert(section_id.clone(), state.clone());
             self.rebuild_runtime_views();
             // Row-level write for the section's row.
             let blob = self.snapshot_for_save();
@@ -7876,7 +7872,9 @@ mod tests {
                 ]),
                 ..super::UiState::default()
             },
-            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from(
+                "/tmp/test-projects.json",
+            ))),
         };
 
         store.sanitize();
@@ -7994,7 +7992,9 @@ mod tests {
                 ])),
                 ..super::UiState::default()
             },
-            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from(
+                "/tmp/test-projects.json",
+            ))),
         };
 
         let available = vec![OpenInAppKind::Cursor, OpenInAppKind::VsCode];
@@ -8210,9 +8210,7 @@ mod tests {
 
     #[test]
     fn theme_mode_persists_to_store_file() {
-        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
-            StoreFileV4::default(),
-        ));
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(StoreFileV4::default()));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8234,9 +8232,7 @@ mod tests {
 
     #[test]
     fn theme_mode_persists_when_setting_default_system() {
-        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
-            StoreFileV4::default(),
-        ));
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(StoreFileV4::default()));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8258,9 +8254,7 @@ mod tests {
 
     #[test]
     fn git_commit_generation_script_helpers_persist_and_reset() {
-        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
-            StoreFileV4::default(),
-        ));
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(StoreFileV4::default()));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8296,9 +8290,7 @@ mod tests {
 
     #[test]
     fn git_pr_generation_script_helpers_persist_and_reset() {
-        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
-            StoreFileV4::default(),
-        ));
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(StoreFileV4::default()));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8427,9 +8419,7 @@ mod tests {
 
     #[test]
     fn store_agent_launch_arg_helpers_persist_add_and_remove() {
-        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
-            StoreFileV4::default(),
-        ));
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(StoreFileV4::default()));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8475,7 +8465,9 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from(
+                "/tmp/test-projects.json",
+            ))),
         };
 
         assert_eq!(
@@ -8548,7 +8540,9 @@ mod tests {
                 default_agent_id: Some("codex".to_string()),
                 ..UiState::default()
             },
-            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from(
+                "/tmp/test-projects.json",
+            ))),
         };
 
         assert_eq!(
@@ -8590,7 +8584,9 @@ mod tests {
                 default_agent_id: Some("codex".to_string()),
                 ..UiState::default()
             },
-            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from(
+                "/tmp/test-projects.json",
+            ))),
         };
 
         assert_eq!(store.default_agent_id(), Some("codex"));

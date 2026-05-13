@@ -35,8 +35,8 @@ use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
     McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto,
-    OpenInAppSettingsRowWire, OpenInSettingsViewWire, ProjectKind,
-    ProjectSummary, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
+    OpenInAppSettingsRowWire, OpenInSettingsViewWire, ProjectKind, ProjectSummary,
+    ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
     ToolbarActionOutcome as WireToolbarActionOutcome,
 };
 
@@ -531,7 +531,6 @@ impl DesktopTerminalRegistry {
     fn with_store_mut<R>(&self, f: impl FnOnce(&mut ProjectStore) -> R) -> Option<R> {
         self.with_state(|state| state.commit_project_store_mutation(f))
     }
-
 }
 
 /// Refresh the daemon-side resource-usage sample using the
@@ -781,10 +780,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn set_sidebar_git_metadata_visible(&self, visible: bool) {
         self.with_store_mut(move |store| {
-            state_authority::apply(
-                store,
-                Mutation::SetSidebarGitMetadataVisible { visible },
-            );
+            state_authority::apply(store, Mutation::SetSidebarGitMetadataVisible { visible });
         });
     }
 
@@ -918,7 +914,11 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                         .map(|app| app.id().to_string())
                         .collect(),
                 ),
-                gh_auth_status: state.gh_auth_status.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+                gh_auth_status: state
+                    .gh_auth_status
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone(),
                 daemon_resource_usage: state
                     .resource_usage
                     .lock()
@@ -949,9 +949,9 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         // as the writer-clone in `tab_input`: never hold the
         // registry lock across a syscall whose latency the user can
         // notice.
-        let Some((slot, tx)) = self.with_state(|state| {
-            (state.gh_auth_status.clone(), state.state_change_tx.clone())
-        }) else {
+        let Some((slot, tx)) =
+            self.with_state(|state| (state.gh_auth_status.clone(), state.state_change_tx.clone()))
+        else {
             return;
         };
         spawn_gh_auth_check(slot, tx);
@@ -1357,10 +1357,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let path = path.ok_or_else(|| format!("unknown project: {project_id}"))?;
         open_path_in_app(&path, app)?;
         self.with_store_mut(move |store| {
-            state_authority::apply(
-                store,
-                Mutation::SetPreferredOpenInApp { app, available },
-            );
+            state_authority::apply(store, Mutation::SetPreferredOpenInApp { app, available });
         })
         .ok_or_else(registry_unavailable)
     }
@@ -1406,7 +1403,10 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn reset_git_commit_script(&self) -> Result<bool, String> {
         self.with_store_mut(|store| {
-            unwrap_changed(state_authority::apply(store, Mutation::ResetGitCommitScript))
+            unwrap_changed(state_authority::apply(
+                store,
+                Mutation::ResetGitCommitScript,
+            ))
         })
         .ok_or_else(registry_unavailable)
     }
@@ -1459,10 +1459,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             if binding.is_empty() {
                 state_authority::apply(store, Mutation::ClearShortcutBinding { action });
             } else {
-                state_authority::apply(
-                    store,
-                    Mutation::SetShortcutBinding { action, binding },
-                );
+                state_authority::apply(store, Mutation::SetShortcutBinding { action, binding });
             }
         })
         .ok_or_else(registry_unavailable)
