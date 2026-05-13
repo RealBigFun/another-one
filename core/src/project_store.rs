@@ -1692,7 +1692,7 @@ impl ProjectStore {
         self.projects_by_id.get(project_id)
     }
 
-    pub fn project_mut(&mut self, project_id: &str) -> Option<&mut Project> {
+    fn project_mut(&mut self, project_id: &str) -> Option<&mut Project> {
         self.projects_by_id.get_mut(project_id)
     }
 
@@ -1700,7 +1700,7 @@ impl ProjectStore {
         self.repos.get(repo_id)
     }
 
-    pub fn repo_mut(&mut self, repo_id: &str) -> Option<&mut RepoRecord> {
+    fn repo_mut(&mut self, repo_id: &str) -> Option<&mut RepoRecord> {
         self.repos.get_mut(repo_id)
     }
 
@@ -1713,7 +1713,7 @@ impl ProjectStore {
         self.tasks_by_id.get(task_id)
     }
 
-    pub fn task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
+    fn task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
         self.tasks_by_id.get_mut(task_id)
     }
 
@@ -2072,12 +2072,6 @@ impl ProjectStore {
         Ok(())
     }
 
-    pub fn upsert_global_action(&mut self, mut action: ProjectAction) {
-        action.scope = ProjectActionScope::Global;
-        upsert_action(&mut self.ui.global_actions, action);
-        self.save();
-    }
-
     pub fn delete_project_action(&mut self, project_id: &str, action_id: &str) -> bool {
         let Some(root_project_id) = self.root_project_id_for_project(project_id) else {
             return false;
@@ -2151,7 +2145,8 @@ impl ProjectStore {
         self.save();
     }
 
-    pub fn remove_worktree_project(&mut self, project_id: &str) -> Option<Project> {
+    #[allow(dead_code)]
+    fn remove_worktree_project(&mut self, project_id: &str) -> Option<Project> {
         let project = self.projects_by_id.get(project_id)?;
         if project.kind != ProjectKind::Worktree {
             return None;
@@ -2610,7 +2605,7 @@ impl ProjectStore {
     /// watchdog sidebar-flicker regression). Does **not** `save()`
     /// to disk; the daemon is the source of truth, the local
     /// cache stays ephemeral.
-    pub fn set_remote_snapshot(
+    fn set_remote_snapshot(
         &mut self,
         projects: Vec<Project>,
         tasks: Vec<Task>,
@@ -2789,7 +2784,7 @@ impl ProjectStore {
         self.save();
     }
 
-    pub fn set_last_active_section_id(&mut self, section_id: Option<String>) {
+    fn set_last_active_section_id(&mut self, section_id: Option<String>) {
         if self.ui.last_active_section_id == section_id {
             return;
         }
@@ -2798,7 +2793,7 @@ impl ProjectStore {
         self.save();
     }
 
-    pub fn set_section_state(
+    fn set_section_state(
         &mut self,
         section_id: impl Into<String>,
         state: PersistedSectionState,
@@ -2840,7 +2835,7 @@ impl ProjectStore {
         true
     }
 
-    pub fn remove_agent_launch_args(&mut self, agent_id: &str) -> bool {
+    fn remove_agent_launch_args(&mut self, agent_id: &str) -> bool {
         let removed = self.ui.agent_launch_args.remove(agent_id).is_some();
         if removed {
             self.save();
@@ -3077,12 +3072,7 @@ impl ProjectStore {
         self.save();
     }
 
-    pub fn reset_shortcuts(&mut self) {
-        self.ui.shortcuts.reset_all();
-        self.save();
-    }
-
-    pub fn remove_sections(&mut self, section_ids: &HashSet<String>) -> bool {
+    fn remove_sections(&mut self, section_ids: &HashSet<String>) -> bool {
         let before = self.terminal_sections.len();
         self.terminal_sections
             .retain(|section_id, _| !section_ids.contains(section_id));
@@ -3561,10 +3551,6 @@ impl ProjectStore {
         let _ = std::fs::rename(path, backup_path);
     }
 
-    pub fn set_expanded_projects(&mut self, expanded_repo_ids: &HashSet<String>) {
-        self.set_expanded_repos(expanded_repo_ids);
-    }
-
     pub fn set_last_active_section_key(&mut self, section_id: Option<String>) {
         self.set_last_active_section_id(section_id);
     }
@@ -3581,10 +3567,6 @@ impl ProjectStore {
         self.remove_sections(section_ids)
     }
 
-    pub fn find_task_mut(&mut self, task_id: &str) -> Option<&mut Task> {
-        self.task_mut(task_id)
-    }
-
     pub fn update_task_tabs(&mut self, task_id: &str, state: &PersistedSectionState) {
         let section_id = self.task(task_id).map(|task| task.section_id.clone());
         if let Some(section_id) = section_id {
@@ -3592,66 +3574,6 @@ impl ProjectStore {
             self.rebuild_runtime_views();
             self.save();
         }
-    }
-
-    /// Persist the agent session id discovered after a successful
-    /// PTY launch (e.g. Claude Code wrote `<id>.jsonl` under
-    /// `~/.claude/projects/<sanitised-cwd>/`). On the next launch
-    /// of this tab `resolve_claude_session` finds the existing
-    /// JSONL and the agent resumes its conversation instead of
-    /// minting a fresh one. No-op if the section / tab no longer
-    /// exists (the user closed the tab between launch and discovery)
-    /// or if the persisted session is already this exact ref.
-    pub fn set_tab_session(
-        &mut self,
-        section_key: &str,
-        tab_id: &str,
-        session: crate::agents::TerminalSessionRef,
-    ) {
-        let section = match self.terminal_sections.get_mut(section_key) {
-            Some(s) => s,
-            None => return,
-        };
-        let tab = match section.tabs.iter_mut().find(|t| t.id == tab_id) {
-            Some(t) => t,
-            None => return,
-        };
-        let mut config = tab.launch_config.clone().unwrap_or_default();
-        if config.session.as_ref() == Some(&session) {
-            return;
-        }
-        config.session = Some(session);
-        tab.launch_config = Some(config);
-        self.save();
-    }
-
-    pub fn set_tab_restore_status(
-        &mut self,
-        section_key: &str,
-        tab_id: &str,
-        status: TerminalRestoreStatus,
-        failure_message: Option<String>,
-        failure_details: Option<String>,
-    ) {
-        let section = match self.terminal_sections.get_mut(section_key) {
-            Some(s) => s,
-            None => return,
-        };
-        let tab = match section.tabs.iter_mut().find(|t| t.id == tab_id) {
-            Some(t) => t,
-            None => return,
-        };
-        if tab.restore_status == status
-            && tab.failure_message == failure_message
-            && tab.failure_details == failure_details
-        {
-            return;
-        }
-        tab.restore_status = status;
-        tab.failure_message = failure_message;
-        tab.failure_details = failure_details;
-        self.rebuild_runtime_views();
-        self.save();
     }
 }
 
