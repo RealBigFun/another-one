@@ -30,6 +30,7 @@ pub mod process;
 pub mod project_service;
 pub mod resource_usage;
 pub mod project_store;
+pub mod state_authority;
 pub mod section;
 pub mod shortcuts;
 pub mod task_launcher;
