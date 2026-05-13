@@ -473,7 +473,7 @@ fn read_rss_bytes() -> Option<u64> {
         let status = std::fs::read_to_string("/proc/self/status").ok()?;
         for line in status.lines() {
             if let Some(rest) = line.strip_prefix("VmRSS:") {
-                let kb = rest.trim().split_whitespace().next()?.parse::<u64>().ok()?;
+                let kb = rest.split_whitespace().next()?.parse::<u64>().ok()?;
                 return Some(kb * 1024);
             }
         }

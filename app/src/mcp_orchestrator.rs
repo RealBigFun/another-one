@@ -95,7 +95,7 @@ impl DesktopMcpOrchestrator {
     fn with_state<R>(&self, f: impl FnOnce(&RegistryState) -> R) -> Option<R> {
         let arc = self.inner.upgrade()?;
         let guard = arc.lock().ok()?;
-        Some(f(&*guard))
+        Some(f(&guard))
     }
 }
 

@@ -63,7 +63,7 @@ use crate::project_store::{
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
     ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind, TaskWorktreeBranchMode,
 };
-use crate::resource_usage::TrackedProcess;
+use another_one_core::process::TrackedProcess;
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
@@ -705,6 +705,7 @@ pub(crate) struct SettingsAgentInputState {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub(crate) struct SettingsGitActionScriptInputState {
     pub(crate) draft: String,
     pub(crate) focused: bool,
@@ -712,16 +713,6 @@ pub(crate) struct SettingsGitActionScriptInputState {
     pub(crate) selection_anchor: Option<usize>,
 }
 
-impl Default for SettingsGitActionScriptInputState {
-    fn default() -> Self {
-        Self {
-            draft: String::new(),
-            focused: false,
-            cursor: 0,
-            selection_anchor: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsGitActionScriptKind {
@@ -3605,7 +3596,7 @@ impl AnotherOneApp {
         let available = self.project_store.ui.available_agent_ids.as_ref();
         effective_enabled_agents(self.project_store.ui.enabled_agents.as_ref())
             .into_iter()
-            .filter(|agent| available.map_or(true, |set| set.contains(agent.id)))
+            .filter(|agent| available.is_none_or(|set| set.contains(agent.id)))
             .collect()
     }
 
@@ -4559,7 +4550,7 @@ impl AnotherOneApp {
                     let t = step as f32 / steps as f32;
                     let eased = t * t * (3.0 - 2.0 * t);
                     let progress = from + (to - from) * eased;
-                    let _ = handle.update(async_cx, |this, cx| {
+                    handle.update(async_cx, |this, cx| {
                         let Some(animation) = this.project_expand_animations.get_mut(&project_id)
                         else {
                             return;
@@ -4576,7 +4567,7 @@ impl AnotherOneApp {
                         .await;
                 }
 
-                let _ = handle.update(async_cx, |this, cx| {
+                handle.update(async_cx, |this, cx| {
                     let Some(animation) = this.project_expand_animations.get(&project_id) else {
                         return;
                     };
@@ -11437,7 +11428,7 @@ impl AnotherOneApp {
                             cx.background_executor()
                                 .timer(std::time::Duration::from_millis(250))
                                 .await;
-                            let _ = cx.update(|cx| cx.quit());
+                            cx.update(|cx| cx.quit());
                         })
                         .detach();
                     }
@@ -11919,7 +11910,7 @@ impl AnotherOneApp {
                     let t = i as f32 / steps as f32;
                     let e = t * (2.0 - t);
                     let v = from + (to - from) * e;
-                    let _ = handle.update(async_cx, |this, cx| {
+                    handle.update(async_cx, |this, cx| {
                         this.sidebar_w = v;
                         cx.notify();
                     });
@@ -11928,7 +11919,7 @@ impl AnotherOneApp {
                         .timer(Duration::from_millis(STEP_MS))
                         .await;
                 }
-                let _ = handle.update(async_cx, |this, cx| {
+                handle.update(async_cx, |this, cx| {
                     this.sidebar_w = to;
                     this.animating = false;
                     this.project_store
@@ -11969,7 +11960,7 @@ impl AnotherOneApp {
                     let t = i as f32 / steps as f32;
                     let e = t * (2.0 - t);
                     let v = from + (to - from) * e;
-                    let _ = handle.update(async_cx, |this, cx| {
+                    handle.update(async_cx, |this, cx| {
                         this.right_w = v;
                         cx.notify();
                     });
@@ -11978,7 +11969,7 @@ impl AnotherOneApp {
                         .timer(Duration::from_millis(STEP_MS))
                         .await;
                 }
-                let _ = handle.update(async_cx, |this, cx| {
+                handle.update(async_cx, |this, cx| {
                     this.right_w = to;
                     this.animating = false;
                     this.sync_workspace_layout(cx);

@@ -60,7 +60,7 @@ fn previous_boundary(text: &str, cursor: usize) -> usize {
     text[..cursor.min(text.len())]
         .char_indices()
         .map(|(index, _)| index)
-        .last()
+        .next_back()
         .unwrap_or(0)
 }
 

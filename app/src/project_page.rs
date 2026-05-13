@@ -96,7 +96,7 @@ impl WorkspacePane {
                 app.project_page_config_dropdown,
             )
         };
-        let _ = app_entity.update(cx, |app, _cx| {
+        app_entity.update(cx, |app, _cx| {
             app.request_project_page_pull_requests(
                 project_id,
                 &project.path,
@@ -467,7 +467,7 @@ impl WorkspacePane {
                                 this.project_page_pr_query =
                                     this.project_page_pr_query_draft.clone();
                                 if let Some(app) = this.app.upgrade() {
-                                    let _ = app.update(cx, |app, _app_cx| {
+                                    app.update(cx, |app, _app_cx| {
                                         if let Some(project_id) = this.active_project_page.clone() {
                                             let project_path = app
                                                 .project_store
@@ -508,7 +508,7 @@ impl WorkspacePane {
                                 this.project_page_pr_query_draft.clear();
                                 this.project_page_pr_query.clear();
                                 if let Some(app) = this.app.upgrade() {
-                                    let _ = app.update(cx, |app, _app_cx| {
+                                    app.update(cx, |app, _app_cx| {
                                         if let Some(project_id) = this.active_project_page.clone() {
                                             let project_path = app
                                                 .project_store

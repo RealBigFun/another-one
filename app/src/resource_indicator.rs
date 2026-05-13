@@ -5,11 +5,14 @@ use gpui::{div, prelude::*, px, rems, svg, Context, MouseButton, MouseDownEvent,
 use crate::agent_icons::branded_icon;
 use crate::app::AnotherOneApp;
 use crate::platform::PlatformServices;
-use crate::resource_usage::{
-    format_memory, ResourceUsageProject, ResourceUsageSession, ResourceUsageSnapshot,
-    ResourceUsageTask,
-};
 use crate::theme;
+use another_one_core::resource_usage::format_memory;
+use daemon_proto::{
+    DaemonResourceUsageProjectWire as ResourceUsageProject,
+    DaemonResourceUsageSessionWire as ResourceUsageSession,
+    DaemonResourceUsageTaskWire as ResourceUsageTask,
+    DaemonResourceUsageWire as ResourceUsageSnapshot,
+};
 
 const PANEL_W: f32 = 420.;
 const PANEL_TOP_MARGIN: f32 = 46.;
@@ -267,21 +270,21 @@ impl AnotherOneApp {
                     .child(Self::resource_stat_card(
                         "APP CPU",
                         format!("{:.1}%", self.resource_usage().app.cpu_percent),
-                        surface_bg.into(),
+                        surface_bg,
                         muted_col,
                         stat_col,
                     ))
                     .child(Self::resource_stat_card(
                         "APP MEM",
                         format_memory(self.resource_usage().app.memory_bytes),
-                        surface_bg.into(),
+                        surface_bg,
                         muted_col,
                         stat_col,
                     ))
                     .child(Self::resource_stat_card(
                         "SESSIONS",
                         session_count,
-                        surface_bg.into(),
+                        surface_bg,
                         muted_col,
                         stat_col,
                     )),

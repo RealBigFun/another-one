@@ -39,7 +39,7 @@ pub fn launch_install(payload: &Path, asset: &UpdateAsset) -> Result<(), String>
 
     #[cfg(target_os = "linux")]
     {
-        return linux::install_appimage(payload, asset);
+        linux::install_appimage(payload, asset)
     }
 
     #[cfg(target_os = "macos")]

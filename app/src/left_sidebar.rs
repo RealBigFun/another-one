@@ -516,9 +516,7 @@ impl AnotherOneApp {
             project_id,
             task_id,
         )?;
-        let other_tasks_in_worktree = is_worktree
-            .then(|| self.sidebar_other_tasks_in_worktree(project_id, task_id))
-            .unwrap_or(0);
+        let other_tasks_in_worktree = if is_worktree { self.sidebar_other_tasks_in_worktree(project_id, task_id) } else { 0 };
         let removing_worktree = is_worktree && other_tasks_in_worktree == 0;
         let has_unstaged_changes = removing_worktree
             && self
@@ -963,20 +961,18 @@ impl AnotherOneApp {
         };
         if should_navigate_git_diff && !ev.keystroke.modifiers.modified() {
             match ev.keystroke.key.as_str() {
-                "up" | "arrowup" | "arrow_up" | "ArrowUp" => {
+                "up" | "arrowup" | "arrow_up" | "ArrowUp"
                     if self
                         .navigate_changed_file_diff(crate::app::NavigationDirection::Previous, cx)
-                    {
+                    => {
                         cx.stop_propagation();
                         return;
                     }
-                }
-                "down" | "arrowdown" | "arrow_down" | "ArrowDown" => {
-                    if self.navigate_changed_file_diff(crate::app::NavigationDirection::Next, cx) {
+                "down" | "arrowdown" | "arrow_down" | "ArrowDown"
+                    if self.navigate_changed_file_diff(crate::app::NavigationDirection::Next, cx) => {
                         cx.stop_propagation();
                         return;
                     }
-                }
                 _ => {}
             }
         }
@@ -2768,7 +2764,7 @@ impl AnotherOneApp {
             .spawn(cx, async move |async_cx| {
                 if let Ok(Ok(Some(paths))) = receiver.await {
                     if let Some(path) = paths.first() {
-                        let _ = handle.update(async_cx, |this, cx| {
+                        handle.update(async_cx, |this, cx| {
                             this.begin_add_project(path.clone(), cx);
                         });
                     }

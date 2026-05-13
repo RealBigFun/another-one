@@ -167,9 +167,7 @@ pub async fn serve_session_with_attach(
             repos,
             ui,
         };
-        if let Err(e) = session.push_reply(reply).await {
-            return Err(e);
-        }
+        session.push_reply(reply).await?
     } else {
         info!(
             viewer_id,

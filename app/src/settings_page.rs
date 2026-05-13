@@ -1875,7 +1875,7 @@ impl AnotherOneApp {
         let mut rows = div().flex().flex_col();
         for (index, agent) in AGENTS.iter().enumerate() {
             let args = self.project_store.agent_launch_args(agent.id);
-            let is_installed = daemon_available.map_or(true, |set| set.contains(agent.id));
+            let is_installed = daemon_available.is_none_or(|set| set.contains(agent.id));
             let is_enabled = self.agent_enabled(agent.id) && is_installed;
             let is_default = self.agent_is_default(agent.id) && is_installed;
             let draft = self
@@ -2927,7 +2927,7 @@ impl AnotherOneApp {
             match crate::agents::agent_id_for_provider(*provider) {
                 Some(agent_id) => daemon_available
                     .as_ref()
-                    .map_or(true, |set| set.contains(agent_id)),
+                    .is_none_or(|set| set.contains(agent_id)),
                 None => true,
             }
         })
@@ -3638,7 +3638,7 @@ impl Element for SettingsMultilineLayoutHost {
         self.child.paint(window, cx);
         let measured_lines =
             measure_settings_multiline_input_lines(&self.text, *prepaint_bounds, window);
-        let _ = self.app.update(cx, |app, _cx| match self.kind {
+        self.app.update(cx, |app, _cx| match self.kind {
             crate::app::SettingsGitActionScriptKind::Commit => {
                 app.settings_git_commit_script_layout = measured_lines;
             }

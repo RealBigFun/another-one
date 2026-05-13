@@ -847,7 +847,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                         .filter(|agent| {
                             agent
                                 .provider
-                                .map_or(true, another_one_core::agents::agent_executable_available)
+                                .is_none_or(another_one_core::agents::agent_executable_available)
                         })
                         .map(|agent| agent.id.to_string())
                         .collect(),
@@ -1808,7 +1808,7 @@ fn task_to_summary(
     let task_pinned = store.ui.pinned_task_ids.contains(&task.id);
     let cwd = task.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
     let next_tab_id = task.next_tab_id;
-    let kind_value = serde_json::to_value(&task.kind).ok();
+    let kind_value = serde_json::to_value(task.kind).ok();
     let root_project_id = task.root_project_id.clone();
     let worktree_project_id = task.worktree_project_id.clone();
     let worktree = task
@@ -2248,7 +2248,7 @@ fn run(
                             "mcp: initial bind at {} failed ({err}); retrying",
                             mcp_path_for_task.display()
                         );
-                    } else if attempt % 12 == 0 {
+                    } else if attempt.is_multiple_of(12) {
                         log::warn!(
                             "mcp: still unable to bind at {} after {} attempts ({err})",
                             mcp_path_for_task.display(),
