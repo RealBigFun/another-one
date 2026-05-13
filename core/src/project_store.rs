@@ -3578,7 +3578,7 @@ impl ProjectStore {
 }
 
 #[cfg(target_os = "macos")]
-fn app_config_dir() -> PathBuf {
+pub(crate) fn app_config_dir() -> PathBuf {
     dirs::home_dir()
         .map(|home| {
             home.join("Library")
@@ -3590,7 +3590,7 @@ fn app_config_dir() -> PathBuf {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn app_config_dir() -> PathBuf {
+pub(crate) fn app_config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("another-one")

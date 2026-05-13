@@ -51,6 +51,17 @@ hotpath = "0.15"
 portable-pty = "0.9.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `rusqlite` with the `bundled` feature compiles SQLite from source
+# rather than linking against the system `libsqlite3`. Greenfield app,
+# small binary-size hit (~1 MB), but it means no install-time guess
+# about which SQLite version the user happens to have, and the macOS
+# / Linux desktop builds we ship are byte-identical to what we test
+# against. WAL + `synchronous=NORMAL` are configured at connection
+# open in `core::project_store::sqlite_persistence`.
+#
+# `bundled` ships SQLite >= 3.40, which means JSON1 (`json_set` /
+# `json_extract`) is always available without a feature gate.
+rusqlite = { version = "0.31", features = ["bundled"] }
 # `toml_edit` preserves formatting and comments on write, which the
 # MCP registry's Codex adapter needs so replacing registry-owned
 # `[mcp_servers.*]` rows doesn't trash user-authored comments or
