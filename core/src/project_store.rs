@@ -3165,8 +3165,24 @@ impl ProjectStore {
             let Some(task_id) = parts.next() else {
                 return false;
             };
-            self.projects_by_id.contains_key(project_id)
-                && (task_id.is_empty() || self.tasks_by_id.contains_key(task_id))
+            if task_id.is_empty() {
+                // Project-page (non-task) section: keyed by a root
+                // project's id. Must exist in `projects_by_id`.
+                self.projects_by_id.contains_key(project_id)
+            } else {
+                // Task-bound section: keyed by
+                // `<target_project_id>::<branch>::<task_id>`. The
+                // target_project_id is the *worktree*'s project id
+                // and lives inside `task.worktree`, NOT in
+                // `projects_by_id` (only Root projects land there).
+                // Verify the task exists and that its current
+                // `target_project_id` still matches the section_id;
+                // if the user moved the task to a different branch
+                // the section_id is stale and should be dropped.
+                self.tasks_by_id
+                    .get(task_id)
+                    .is_some_and(|task| task.target_project_id == project_id)
+            }
         });
     }
 
@@ -7869,6 +7885,94 @@ mod tests {
             store.ui.repo_default_commit_actions,
             HashMap::from([("repo".to_string(), RepoDefaultCommitAction::Commit)])
         );
+    }
+
+    /// Regression: sanitize() used to drop task-bound sections
+    /// because their section_id key carries the *worktree's* project
+    /// id (which is task-local, not in `projects_by_id`). Net result
+    /// was every save() silently nulling out task.section, and tabs
+    /// never restoring across launches. The fix is in `sanitize`:
+    /// for keys with a non-empty task_id, look up the task and check
+    /// its `target_project_id` instead of `projects_by_id`.
+    #[test]
+    fn sanitize_keeps_task_bound_sections_keyed_by_worktree_project_id() {
+        let root_id = "root-1".to_string();
+        let worktree_project_id = "wt-1".to_string();
+        let task_id = "task-1".to_string();
+        let branch = "feature/sqlite".to_string();
+        let section_key = format!("{worktree_project_id}::{branch}::{task_id}");
+
+        let task = super::Task {
+            id: task_id.clone(),
+            name: "sqlite".to_string(),
+            kind: TaskKind::Worktree,
+            root_project_id: root_id.clone(),
+            target_project_id: worktree_project_id.clone(),
+            branch_name: branch.clone(),
+            section_id: section_key.clone(),
+            worktree: Some(super::TaskWorktree {
+                id: worktree_project_id.clone(),
+                repo_id: "repo".to_string(),
+                name: "wt-1".to_string(),
+                path: PathBuf::from("/tmp/wt-1"),
+                checkout: ProjectCheckoutState::default(),
+                worktree_name: None,
+            }),
+            worktree_project_id: Some(worktree_project_id.clone()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        };
+
+        let mut store = super::ProjectStore {
+            repos: HashMap::from([(
+                "repo".to_string(),
+                RepoRecord {
+                    id: "repo".to_string(),
+                    common_dir: None,
+                    branch_order: Vec::new(),
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
+            projects_by_id: HashMap::from([(root_id.clone(), sample_project(&root_id, None))]),
+            projects: Vec::new(),
+            project_order: vec![root_id.clone()],
+            tasks_by_id: HashMap::from([(task_id.clone(), task)]),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::from([(root_id, vec![task_id.clone()])]),
+            terminal_sections: HashMap::from([(
+                section_key.clone(),
+                PersistedSectionState {
+                    active_tab_id: "tab-1".to_string(),
+                    next_tab_id: 1,
+                    cwd: None,
+                    tabs: vec![PersistedTerminalTab {
+                        id: "tab-1".to_string(),
+                        title: "Terminal".to_string(),
+                        pinned: false,
+                        fixed_title: None,
+                        provider: None,
+                        launch_config: None,
+                        restore_status: TerminalRestoreStatus::default(),
+                        failure_message: None,
+                        failure_details: None,
+                    }],
+                },
+            )]),
+            ui: super::UiState::default(),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test.sqlite"))),
+        };
+
+        store.sanitize();
+
+        assert!(
+            store.terminal_sections.contains_key(&section_key),
+            "task-bound section should survive sanitize() even though its key references a worktree project_id not in projects_by_id"
+        );
+        let section = store.terminal_sections.get(&section_key).unwrap();
+        assert_eq!(section.tabs.len(), 1);
+        assert_eq!(section.tabs[0].id, "tab-1");
     }
 
     #[test]
