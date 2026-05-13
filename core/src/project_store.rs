@@ -2282,6 +2282,9 @@ impl ProjectStore {
         let old_section_id = task.section_id.clone();
         task.target_project_id = target_project_id.to_string();
         task.branch_name = branch_name.to_string();
+        if let Some(worktree) = task.worktree.as_mut() {
+            worktree.checkout.current_branch = Some(branch_name.to_string());
+        }
         task.section_id =
             crate::section::SectionId::for_task(target_project_id, branch_name, task_id)
                 .store_key();
@@ -2296,6 +2299,59 @@ impl ProjectStore {
         self.rebuild_runtime_views();
         self.save();
         Some((old_section_id, new_section_id))
+    }
+
+    pub fn update_worktree_checkout(
+        &mut self,
+        worktree_id: &str,
+        checkout: ProjectCheckoutState,
+    ) -> bool {
+        let Some(task_id) = self.task_for_worktree(worktree_id).map(|task| task.id.clone()) else {
+            return false;
+        };
+        let mut moved_section = None;
+        let mut changed = false;
+        {
+            let Some(task) = self.task_mut(&task_id) else {
+                return false;
+            };
+            if let Some(branch_name) = checkout.current_branch.as_deref() {
+                if task.target_project_id != worktree_id || task.branch_name != branch_name {
+                    let old_section_id = task.section_id.clone();
+                    task.target_project_id = worktree_id.to_string();
+                    task.branch_name = branch_name.to_string();
+                    task.section_id =
+                        crate::section::SectionId::for_task(worktree_id, branch_name, &task_id)
+                            .store_key();
+                    moved_section = Some((old_section_id, task.section_id.clone()));
+                    changed = true;
+                }
+            }
+
+            let Some(worktree) = task.worktree.as_mut() else {
+                return false;
+            };
+            if worktree.checkout != checkout {
+                worktree.checkout = checkout;
+                changed = true;
+            }
+        }
+
+        if let Some((old_section_id, new_section_id)) = moved_section {
+            if let Some(section) = self.terminal_sections.remove(&old_section_id) {
+                self.terminal_sections
+                    .insert(new_section_id.clone(), section);
+            }
+            if self.ui.last_active_section_id.as_deref() == Some(&old_section_id) {
+                self.ui.last_active_section_id = Some(new_section_id);
+            }
+        }
+        if !changed {
+            return false;
+        }
+
+        self.rebuild_runtime_views();
+        true
     }
 
     pub fn rename_task(&mut self, task_id: &str, name: &str) -> bool {
@@ -5323,7 +5379,8 @@ mod tests {
         PreparedProject, Project, ProjectAction, ProjectActionAccess, ProjectActionIcon,
         ProjectActionKind, ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings,
         ProjectCheckoutState, ProjectKind, ProjectStorePersistence, RepoDefaultCommitAction,
-        RepoRecord, StoreFile, StoreFileV4, Task, TaskKind, TaskWorktreeBranchMode, UiState,
+        RepoRecord, StoreFile, StoreFileV4, Task, TaskKind, TaskWorktree, TaskWorktreeBranchMode,
+        UiState,
     };
 
     struct TestWorktreesRoot {
@@ -5675,6 +5732,149 @@ mod tests {
         );
         assert!(!store.rename_task("task-1", "New task"));
         assert!(!store.rename_task("missing", "Anything"));
+    }
+
+    #[test]
+    fn update_task_branch_refreshes_embedded_worktree_checkout() {
+        let mut root = sample_project("root", None);
+        root.checkout.current_branch = Some("main".to_string());
+        let mut store = sample_project_store(root);
+        let worktree = TaskWorktree {
+            id: "worktree".to_string(),
+            repo_id: "repo".to_string(),
+            name: "pixel-blockbuster-drifts-wt".to_string(),
+            path: PathBuf::from("/tmp/pixel-blockbuster-drifts-wt"),
+            checkout: ProjectCheckoutState {
+                current_branch: Some("main".to_string()),
+                lines_added: 0,
+                lines_removed: 0,
+            },
+            worktree_name: Some("pixel-blockbuster-drifts-wt".to_string()),
+        };
+        store.insert_task(Task {
+            id: "task-1".to_string(),
+            name: "pixel-blockbuster-drifts".to_string(),
+            kind: TaskKind::Worktree,
+            root_project_id: "root".to_string(),
+            target_project_id: "worktree".to_string(),
+            branch_name: "main".to_string(),
+            section_id: "worktree::main::task-1".to_string(),
+            worktree: Some(worktree),
+            worktree_project_id: Some("worktree".to_string()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+
+        store.update_task_branch("task-1", "worktree", "pixel-blockbuster-drifts");
+
+        let task = store.task("task-1").expect("task should still exist");
+        assert_eq!(task.branch_name, "pixel-blockbuster-drifts");
+        assert_eq!(
+            task.worktree
+                .as_ref()
+                .and_then(|worktree| worktree.checkout.current_branch.as_deref()),
+            Some("pixel-blockbuster-drifts")
+        );
+        let target = crate::task_launcher::task_workspace_target(
+            &store.projects,
+            store.project("root").expect("root project should exist"),
+            task,
+        )
+        .expect("task target should resolve");
+        assert_eq!(target.branch_name, "pixel-blockbuster-drifts");
+    }
+
+    #[test]
+    fn update_worktree_checkout_refreshes_runtime_task_view() {
+        let mut root = sample_project("root", None);
+        root.checkout.current_branch = Some("main".to_string());
+        let mut store = sample_project_store(root);
+        store.insert_task(Task {
+            id: "task-1".to_string(),
+            name: "pixel-blockbuster-drifts".to_string(),
+            kind: TaskKind::Worktree,
+            root_project_id: "root".to_string(),
+            target_project_id: "worktree".to_string(),
+            branch_name: "main".to_string(),
+            section_id: "worktree::main::task-1".to_string(),
+            worktree: Some(TaskWorktree {
+                id: "worktree".to_string(),
+                repo_id: "repo".to_string(),
+                name: "pixel-blockbuster-drifts-wt".to_string(),
+                path: PathBuf::from("/tmp/pixel-blockbuster-drifts-wt"),
+                checkout: ProjectCheckoutState {
+                    current_branch: Some("main".to_string()),
+                    lines_added: 0,
+                    lines_removed: 0,
+                },
+                worktree_name: Some("pixel-blockbuster-drifts-wt".to_string()),
+            }),
+            worktree_project_id: Some("worktree".to_string()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+        store.set_section_state(
+            "worktree::main::task-1",
+            PersistedSectionState {
+                active_tab_id: "tab-1".to_string(),
+                next_tab_id: 2,
+                cwd: Some(PathBuf::from("/tmp/pixel-blockbuster-drifts-wt")),
+                tabs: vec![PersistedTerminalTab {
+                    id: "tab-1".to_string(),
+                    title: "Terminal".to_string(),
+                    pinned: false,
+                    fixed_title: None,
+                    provider: None,
+                    launch_config: None,
+                    restore_status: TerminalRestoreStatus::NotStarted,
+                    failure_message: None,
+                    failure_details: None,
+                }],
+            },
+        );
+        store.ui.last_active_section_id = Some("worktree::main::task-1".to_string());
+
+        assert!(store.update_worktree_checkout(
+            "worktree",
+            ProjectCheckoutState {
+                current_branch: Some("pixel-blockbuster-drifts".to_string()),
+                lines_added: 4,
+                lines_removed: 2,
+            },
+        ));
+
+        let task = store
+            .tasks
+            .get("root")
+            .and_then(|tasks| tasks.iter().find(|task| task.id == "task-1"))
+            .expect("projected task should still exist");
+        let checkout = task
+            .worktree
+            .as_ref()
+            .map(|worktree| &worktree.checkout)
+            .expect("projected task should keep embedded worktree");
+        assert_eq!(task.branch_name, "pixel-blockbuster-drifts");
+        assert_eq!(
+            task.section_id,
+            "worktree::pixel-blockbuster-drifts::task-1"
+        );
+        assert_eq!(
+            checkout.current_branch.as_deref(),
+            Some("pixel-blockbuster-drifts")
+        );
+        assert_eq!(checkout.lines_added, 4);
+        assert_eq!(checkout.lines_removed, 2);
+        assert!(store
+            .terminal_sections
+            .contains_key("worktree::pixel-blockbuster-drifts::task-1"));
+        assert_eq!(
+            store.ui.last_active_section_id.as_deref(),
+            Some("worktree::pixel-blockbuster-drifts::task-1")
+        );
     }
 
     #[test]

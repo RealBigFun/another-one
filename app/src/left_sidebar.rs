@@ -3358,7 +3358,8 @@ pub(crate) fn should_remove_missing_worktree_task_from_store(
     worktree_path: &Path,
 ) -> bool {
     error.contains("Could not delete the worktree")
-        && error.contains("No such file or directory (os error 2)")
+        && (error.contains("No such file or directory (os error 2)")
+            || error.contains("is not a working tree"))
         && (!repo_path.exists() || !worktree_path.exists())
 }
 
@@ -3625,6 +3626,22 @@ mod tests {
         ));
 
         std::fs::remove_dir_all(&worktree_path).expect("worktree path should be removed");
+
+        assert!(should_remove_missing_worktree_task_from_store(
+            error,
+            &repo_path,
+            &worktree_path,
+        ));
+    }
+
+    #[test]
+    fn should_remove_missing_worktree_task_from_store_handles_unregistered_worktree() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let repo_path = temp_dir.path().join("repo");
+        let worktree_path = temp_dir.path().join("worktree");
+        std::fs::create_dir_all(&repo_path).expect("repo path should be created");
+        let error =
+            "Could not delete the worktree. fatal: '/tmp/worktree' is not a working tree";
 
         assert!(should_remove_missing_worktree_task_from_store(
             error,

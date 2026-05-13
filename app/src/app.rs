@@ -9478,13 +9478,14 @@ impl AnotherOneApp {
             metadata,
             current_branch,
         } = state;
+        let metadata_checkout = metadata.as_ref().map(|metadata| metadata.checkout.clone());
+        let workspace_repo_id = self
+            .project_store
+            .repo_for_workspace(project_id)
+            .map(|repo| repo.id.clone());
 
         if let Some(metadata) = metadata {
-            let repo_id = self
-                .project_store
-                .project(project_id)
-                .map(|project| project.repo_id.clone());
-            if let Some(repo_id) = repo_id {
+            if let Some(repo_id) = workspace_repo_id.as_deref() {
                 if let Some(repo) = self.project_store.repo_mut(&repo_id) {
                     if repo.branch_order != metadata.branch_order {
                         repo.branch_order = metadata.branch_order.clone();
@@ -9512,6 +9513,20 @@ impl AnotherOneApp {
             }
         }
 
+        let next_worktree_checkout = metadata_checkout.unwrap_or_else(|| {
+            crate::project_store::ProjectCheckoutState {
+                current_branch: current_branch.clone(),
+                lines_added: 0,
+                lines_removed: 0,
+            }
+        });
+        if self
+            .project_store
+            .update_worktree_checkout(project_id, next_worktree_checkout)
+        {
+            changed = true;
+        }
+
         if self
             .project_store
             .project(project_id)
@@ -9526,11 +9541,7 @@ impl AnotherOneApp {
             }
         }
 
-        let repo_id = self
-            .project_store
-            .project(project_id)
-            .map(|project| project.repo_id.clone());
-        if let Some(repo_id) = repo_id {
+        if let Some(repo_id) = workspace_repo_id {
             if let Some(repo) = self.project_store.repo_mut(&repo_id) {
                 if let Some(branch_name) = current_branch.as_deref() {
                     if let Some(branch) = repo.branches_by_name.get_mut(branch_name) {
@@ -12210,7 +12221,10 @@ impl AnotherOneApp {
         let text_col = app_theme.text_muted;
 
         if let Some(section) = self.workspace_pane.read(cx).active_section.clone() {
-            let name: SharedString = section.branch_name.clone().into();
+            let Some(name) = footer_branch_name_for_section(&self.project_store, &section) else {
+                return div();
+            };
+            let name: SharedString = name.into();
             div()
                 .flex()
                 .flex_row()
@@ -12245,13 +12259,7 @@ impl AnotherOneApp {
             .read(cx)
             .active_section
             .as_ref()
-            .and_then(|section| {
-                self.project_store
-                    .projects
-                    .iter()
-                    .find(|p| p.id == section.project_id)
-                    .and_then(|p| p.worktree_name.clone())
-            });
+            .and_then(|section| footer_worktree_name_for_section(&self.project_store, section));
 
         if let Some(name) = worktree_name {
             let name: SharedString = name.into();
@@ -12892,6 +12900,60 @@ fn select_active_section(
 
 fn persisted_active_section_key(active_section: Option<&SectionId>) -> Option<String> {
     active_section.map(SectionId::store_key)
+}
+
+fn footer_branch_name_for_section(
+    project_store: &ProjectStore,
+    section: &SectionId,
+) -> Option<String> {
+    if let Some(task_id) = section.task_id.as_deref() {
+        if let Some(task) = project_store.task(task_id) {
+            return project_store
+                .project(&task.root_project_id)
+                .and_then(|root_project| {
+                    crate::task_launcher::task_workspace_target(
+                        &project_store.projects,
+                        root_project,
+                        task,
+                    )
+                })
+                .map(|target| target.branch_name)
+                .or_else(|| Some(task.branch_name.clone()));
+        }
+    }
+
+    (!section.branch_name.is_empty()).then(|| section.branch_name.clone())
+}
+
+fn footer_worktree_name_for_section(
+    project_store: &ProjectStore,
+    section: &SectionId,
+) -> Option<String> {
+    project_store
+        .project(&section.project_id)
+        .and_then(|project| project.worktree_name.clone())
+        .or_else(|| {
+            project_store
+                .task_for_worktree(&section.project_id)
+                .and_then(|task| task.worktree.as_ref())
+                .and_then(display_name_for_task_worktree)
+        })
+        .or_else(|| {
+            section
+                .task_id
+                .as_deref()
+                .and_then(|task_id| project_store.task(task_id))
+                .and_then(|task| task.worktree.as_ref())
+                .and_then(display_name_for_task_worktree)
+        })
+}
+
+fn display_name_for_task_worktree(worktree: &crate::project_store::TaskWorktree) -> Option<String> {
+    worktree
+        .worktree_name
+        .clone()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| (!worktree.name.trim().is_empty()).then(|| worktree.name.clone()))
 }
 
 /// Absolute path to the `another-one-mcp-shim` binary for the
@@ -15079,6 +15141,47 @@ mod tests {
         assert_eq!(target.project_id, "root-a-wt");
         assert_eq!(target.branch_name, "feature/current");
         assert_eq!(target.project_path, worktree_project.path);
+    }
+
+    #[cfg(feature = "test-harness")]
+    #[test]
+    fn footer_indicators_resolve_embedded_worktree_task_metadata() {
+        let root_project = sample_project_in_repo("root-a", "repo-a", "main", None);
+        let mut task = sample_task(
+            "task-a2",
+            "Task A2",
+            TaskKind::Worktree,
+            "root-a",
+            "root-a-wt",
+            "main",
+            Some("root-a-wt"),
+        );
+        task.worktree = Some(crate::project_store::TaskWorktree {
+            id: "root-a-wt".to_string(),
+            repo_id: "repo-a".to_string(),
+            name: "pixel-blockbuster-drifts-wt".to_string(),
+            path: PathBuf::from("/tmp/pixel-blockbuster-drifts-wt"),
+            checkout: ProjectCheckoutState {
+                current_branch: Some("pixel-blockbuster-drifts".to_string()),
+                lines_added: 0,
+                lines_removed: 0,
+            },
+            worktree_name: Some("pixel-blockbuster-drifts-wt".to_string()),
+        });
+        let store = crate::project_store::ProjectStore::from_projects_for_test(
+            vec![root_project],
+            vec![task],
+        );
+        let stale_section = SectionId::for_task("root-a-wt", "main", "task-a2");
+
+        assert_eq!(
+            super::footer_branch_name_for_section(&store, &stale_section).as_deref(),
+            Some("pixel-blockbuster-drifts")
+        );
+        assert_eq!(
+            super::footer_worktree_name_for_section(&store, &stale_section).as_deref(),
+            Some("pixel-blockbuster-drifts-wt")
+        );
     }
 
     #[test]

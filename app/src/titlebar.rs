@@ -1,8 +1,8 @@
 //! Titlebar strip and sidebar toggle button (platform-aware).
 
 use gpui::{
-    div, hsla, prelude::*, px, rems, svg, AnyElement, App, Context, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, SharedString, Window, WindowControlArea,
+    div, hsla, prelude::*, px, rems, svg, AnyElement, App, Context, ElementId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Window, WindowControlArea,
 };
 
 use crate::app::AnotherOneApp;
@@ -223,6 +223,41 @@ impl AnotherOneApp {
                             .size(px(11.))
                             .text_color(app_theme.text_muted),
                     ),
+            )
+            .into_any_element()
+    }
+
+    fn disabled_titlebar_icon_button(
+        &self,
+        id: impl Into<ElementId>,
+        icon_path: &'static str,
+        width: f32,
+        margin_right: f32,
+    ) -> AnyElement {
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+
+        div()
+            .id(id)
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .w(px(width))
+            .h(px(28.))
+            .mr(px(margin_right))
+            .rounded(px(11.))
+            .bg(app_theme.overlay_rest)
+            .border_1()
+            .border_color(app_theme.border)
+            .opacity(0.45)
+            .tooltip(|_window, cx| {
+                Self::action_tooltip_view("Select a task in the sidebar to use this", cx)
+            })
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size(px(13.))
+                    .text_color(app_theme.text_muted),
             )
             .into_any_element()
     }
@@ -980,6 +1015,18 @@ impl AnotherOneApp {
         let Some(pull_request) = self.active_project_pull_request(cx).cloned() else {
             return div().into_any_element();
         };
+
+        if self.active_titlebar_task_project_id(cx).is_none() {
+            return self.disabled_titlebar_icon_button(
+                SharedString::from(format!(
+                    "titlebar-pull-request-trigger-disabled-{}",
+                    pull_request.number
+                )),
+                "assets/icons/icons__pull-request.svg",
+                TITLEBAR_PULL_REQUEST_BUTTON_W,
+                TITLEBAR_PULL_REQUEST_BUTTON_MARGIN_RIGHT,
+            );
+        }
 
         let (state_color, tooltip) = match pull_request.state {
             crate::git_actions::PullRequestState::Open => (
