@@ -1508,6 +1508,90 @@ pub enum GhAuthStatusWire {
     GhMissing,
 }
 
+/// Daemon-side resource-usage projection: the daemon's own RSS/CPU
+/// plus the per-PTY tree it owns. Replaces the client's local
+/// `/proc/self/status` poll — on desktop the numbers were correct
+/// by coincidence (client+daemon are co-located), but on mobile the
+/// phone was rendering its own RSS, which has nothing to do with
+/// the paired desktop daemon. The daemon publishes; clients render.
+/// See #156. Wire-additive: older daemons omit the field, clients
+/// treat as `None` and surface no metrics.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DaemonResourceUsageWire {
+    #[serde(default)]
+    pub total_cpu_percent: f32,
+    #[serde(default)]
+    pub total_memory_bytes: u64,
+    #[serde(default)]
+    pub ram_share_percent: f32,
+    #[serde(default)]
+    pub session_count: usize,
+    /// The daemon-host process row (CPU/RSS for the binary that
+    /// owns the PTYs + iroh endpoint + project store).
+    #[serde(default)]
+    pub app: DaemonResourceUsageRowWire,
+    /// Per-project aggregation of tracked PTY processes.
+    #[serde(default)]
+    pub projects: Vec<DaemonResourceUsageProjectWire>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DaemonResourceUsageRowWire {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub cpu_percent: f32,
+    #[serde(default)]
+    pub memory_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DaemonResourceUsageProjectWire {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub cpu_percent: f32,
+    #[serde(default)]
+    pub memory_bytes: u64,
+    #[serde(default)]
+    pub tasks: Vec<DaemonResourceUsageTaskWire>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DaemonResourceUsageTaskWire {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub cpu_percent: f32,
+    #[serde(default)]
+    pub memory_bytes: u64,
+    #[serde(default)]
+    pub sessions: Vec<DaemonResourceUsageSessionWire>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DaemonResourceUsageSessionWire {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    /// `&'static str` asset path on the desktop (e.g.
+    /// `"assets/icons/icons__codex-ai.svg"`); transmitted as a
+    /// String so the wire shape stays platform-agnostic.
+    #[serde(default)]
+    pub icon_path: String,
+    #[serde(default)]
+    pub cpu_percent: f32,
+    #[serde(default)]
+    pub memory_bytes: u64,
+}
+
 /// Per-user UI state mirrored from `core::project_store::UiState`.
 /// Wire-additive on `WorkerReply::ProjectList` so both clients render
 /// the same expand/pin/focus state from the daemon's projection
@@ -1593,6 +1677,16 @@ pub struct UiSnapshot {
     /// surface the overlay yet". Wire-additive (#156).
     #[serde(default)]
     pub gh_auth_status: Option<GhAuthStatusWire>,
+    /// Live RSS/CPU sample from the daemon host. Replaces the
+    /// resource-indicator widget's old client-side `/proc/self`
+    /// probe. The daemon owns the PTYs / iroh endpoint / project
+    /// store, so the daemon's RSS is what the user actually cares
+    /// about; mobile clients used to display their phone's RSS,
+    /// which was meaningless. `None` on older daemons or before
+    /// the first sample lands; clients should render an empty
+    /// indicator. Wire-additive (#156).
+    #[serde(default)]
+    pub daemon_resource_usage: Option<DaemonResourceUsageWire>,
     /// Opaque JSON-serialised
     /// `HashMap<OpenInAppKind, OpenInAppKindState>` from
     /// `UiState::open_in_apps`.

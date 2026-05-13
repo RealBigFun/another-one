@@ -7,7 +7,6 @@ use gpui::{point, px, App, TitlebarOptions, Window, WindowDecorations};
 use super::PlatformServices;
 use crate::assets::asset_root;
 use crate::open_in::OpenInAppKind;
-use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
 pub struct MacPlatform;
 
@@ -23,20 +22,6 @@ impl PlatformServices for MacPlatform {
         // trait predates the core abstraction; it'll be removed when the
         // GPUI binary is deleted in the Flutter migration's Phase 6.
         CorePlatform::modifier_label()
-    }
-
-    fn read_process_samples(
-        app_pid: u32,
-        tracked_processes: &[TrackedProcess],
-    ) -> Vec<RawProcessSample> {
-        // See the matching comment in this file's `open_external_url`.
-        CorePlatform::read_process_samples(app_pid, tracked_processes)
-    }
-
-    fn total_system_memory_bytes() -> Option<u64> {
-        // See the matching comment in `desktop/src/platform/macos.rs`'s
-        // `open_external_url` impl. Single source of truth in core.
-        CorePlatform::total_system_memory_bytes()
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {

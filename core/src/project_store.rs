@@ -835,6 +835,13 @@ pub struct UiState {
     /// don't paint the overlay". See #156.
     #[serde(skip)]
     pub gh_auth_status: Option<daemon_proto::GhAuthStatusWire>,
+    /// Latest live RSS/CPU sample from the daemon host. Pushed
+    /// in via `absorb_ui_snapshot`; not persisted (the daemon
+    /// re-samples on its own cadence and stamps every
+    /// projection). `None` = older daemon / no sample yet;
+    /// clients render an empty resource indicator. See #156.
+    #[serde(skip)]
+    pub daemon_resource_usage: Option<daemon_proto::DaemonResourceUsageWire>,
     #[serde(default)]
     pub default_agent_id: Option<String>,
     #[serde(default)]
@@ -872,6 +879,7 @@ impl Default for UiState {
             available_agent_ids: None,
             available_open_in_apps: None,
             gh_auth_status: None,
+            daemon_resource_usage: None,
             default_agent_id: None,
             agent_launch_args: HashMap::new(),
             git_commit_generation_script: None,
@@ -2299,6 +2307,7 @@ impl ProjectStore {
             .available_open_in_apps
             .map(|v| v.into_iter().collect());
         self.ui.gh_auth_status = snapshot.gh_auth_status;
+        self.ui.daemon_resource_usage = snapshot.daemon_resource_usage;
         if let Some(value) = snapshot.open_in_apps {
             if let Ok(parsed) = serde_json::from_value(value) {
                 self.ui.enabled_open_in_apps = Some(parsed);
@@ -6110,6 +6119,7 @@ mod tests {
                 available_agent_ids: None,
                 available_open_in_apps: None,
                 gh_auth_status: None,
+                daemon_resource_usage: None,
                 default_agent_id: None,
                 agent_launch_args: HashMap::new(),
                 git_commit_generation_script: None,

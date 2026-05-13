@@ -153,6 +153,25 @@ pub struct RegistryState {
     /// so the background worker can mutate it without racing the
     /// `ui_snapshot` reader on the daemon's tokio thread. See #156.
     pub(crate) gh_auth_status: Arc<Mutex<Option<daemon_proto::GhAuthStatusWire>>>,
+    /// Daemon-side resource-usage state: the live `ResourceUsageSampler`
+    /// (which holds CPU-delta history across calls) plus the most
+    /// recent wire snapshot it produced and the tracked-process list
+    /// the next sample should walk. Held under a single `Mutex` so
+    /// the sampling helper can update all three atomically. The
+    /// desktop client pushes its `terminal_manager` + prewarmed
+    /// processes into `tracked_processes` before each refresh —
+    /// today the daemon-host runs in-process on desktop, so it sees
+    /// the same PIDs the client does. `ui_snapshot()` clones
+    /// `latest` into the projection. Mobile clients render that
+    /// projection rather than their own `/proc/self`. See #156.
+    pub(crate) resource_usage: Arc<Mutex<DaemonResourceUsageState>>,
+}
+
+#[derive(Default)]
+pub(crate) struct DaemonResourceUsageState {
+    pub sampler: another_one_core::resource_usage::ResourceUsageSampler,
+    pub tracked_processes: Vec<another_one_core::process::TrackedProcess>,
+    pub latest: Option<daemon_proto::DaemonResourceUsageWire>,
 }
 
 impl RegistryState {
@@ -177,6 +196,7 @@ impl RegistryState {
             last_viewer_activity: HashMap::new(),
             state_change_tx,
             gh_auth_status: Arc::new(Mutex::new(None)),
+            resource_usage: Arc::new(Mutex::new(DaemonResourceUsageState::default())),
         }
     }
 
@@ -501,6 +521,79 @@ impl DesktopTerminalRegistry {
             result
         })
     }
+
+    /// Refresh the daemon-side resource-usage sample using the
+    /// caller-supplied tracked-process list, then fire a
+    /// state-change tick so every connected session re-snapshots
+    /// (and the new wire `daemon_resource_usage` rides the next
+    /// `WorkerReply::ProjectList`). Today the desktop GUI is the
+    /// caller — it owns the `terminal_manager` + prewarmed PTY
+    /// list and feeds them in on every render-tick `tick_resource_usage`.
+    /// On a future mobile-only daemon the same slot can be driven
+    /// from a daemon-side periodic task instead. See #156.
+    pub fn refresh_resource_usage(
+        &self,
+        tracked_processes: Vec<another_one_core::process::TrackedProcess>,
+    ) {
+        let Some((slot, tx)) = self.with_state(|state| {
+            (state.resource_usage.clone(), state.state_change_tx.clone())
+        }) else {
+            return;
+        };
+        refresh_resource_usage_impl(slot, tx, tracked_processes);
+    }
+}
+
+/// Free-function variant of [`DesktopTerminalRegistry::refresh_resource_usage`]
+/// that takes the shared `RegistryState` directly. The desktop
+/// GUI's render-tick path holds the `Arc<Mutex<RegistryState>>`
+/// already; constructing a throwaway `DesktopTerminalRegistry`
+/// per render frame just to call the trait method would re-clone
+/// the broadcast sender on every call. Same body otherwise.
+pub(crate) fn refresh_resource_usage(
+    registry_state: &Arc<Mutex<RegistryState>>,
+    tracked_processes: Vec<another_one_core::process::TrackedProcess>,
+) {
+    let Some((slot, tx)) = ({
+        let guard = registry_state.lock().unwrap_or_else(|p| p.into_inner());
+        Some((guard.resource_usage.clone(), guard.state_change_tx.clone()))
+    }) else {
+        return;
+    };
+    refresh_resource_usage_impl(slot, tx, tracked_processes);
+}
+
+fn refresh_resource_usage_impl(
+    slot: Arc<Mutex<DaemonResourceUsageState>>,
+    tx: tokio::sync::broadcast::Sender<()>,
+    tracked_processes: Vec<another_one_core::process::TrackedProcess>,
+) {
+    let app_pid = std::process::id();
+    let changed;
+    {
+        let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+        let DaemonResourceUsageState {
+            sampler,
+            tracked_processes: tracked_slot,
+            latest,
+        } = &mut *guard;
+        *tracked_slot = tracked_processes;
+        // Hold the guard across the sample call: the sampler
+        // mutates its own `previous_cpu_samples` map, and we must
+        // not race a second concurrent caller against that
+        // mutation. Sampling is cheap (one `/proc/<pid>/stat`
+        // read per tracked PID on Linux, a `proc_pidinfo` call
+        // per PID on macOS) so contending here is fine.
+        let snapshot = sampler.sample(app_pid, tracked_slot);
+        changed = latest.as_ref() != Some(&snapshot);
+        *latest = Some(snapshot);
+    }
+    if changed {
+        // Only notify when the wire snapshot actually changed; an
+        // unchanged tick (CPU% rounded to the same %, no PTY
+        // changes) shouldn't wake every paired peer's push pump.
+        let _ = tx.send(());
+    }
 }
 
 impl DaemonRegistry for DesktopTerminalRegistry {
@@ -766,6 +859,12 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                         .collect(),
                 ),
                 gh_auth_status: state.gh_auth_status.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+                daemon_resource_usage: state
+                    .resource_usage
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .latest
+                    .clone(),
                 open_in_apps: ui
                     .enabled_open_in_apps
                     .as_ref()

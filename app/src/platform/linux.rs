@@ -6,7 +6,6 @@ use gpui::{App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
 use crate::open_in::OpenInAppKind;
-use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
 pub struct LinuxPlatform;
 
@@ -19,19 +18,6 @@ impl PlatformServices for LinuxPlatform {
     fn platform_modifier_label() -> &'static str {
         // See the matching comment in `desktop/src/platform/macos.rs`.
         CorePlatform::modifier_label()
-    }
-
-    fn read_process_samples(
-        app_pid: u32,
-        tracked_processes: &[TrackedProcess],
-    ) -> Vec<RawProcessSample> {
-        // See the matching comment in `desktop/src/platform/macos.rs`.
-        CorePlatform::read_process_samples(app_pid, tracked_processes)
-    }
-
-    fn total_system_memory_bytes() -> Option<u64> {
-        // See the matching comment in `desktop/src/platform/macos.rs`.
-        CorePlatform::total_system_memory_bytes()
     }
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool {

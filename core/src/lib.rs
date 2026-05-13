@@ -28,6 +28,7 @@ pub mod open_in;
 pub mod platform;
 pub mod process;
 pub mod project_service;
+pub mod resource_usage;
 pub mod project_store;
 pub mod section;
 pub mod shortcuts;

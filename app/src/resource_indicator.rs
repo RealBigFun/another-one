@@ -1,10 +1,13 @@
+use std::sync::OnceLock;
+
 use gpui::{div, prelude::*, px, rems, svg, Context, MouseButton, MouseDownEvent, Window};
 
 use crate::agent_icons::branded_icon;
 use crate::app::AnotherOneApp;
 use crate::platform::PlatformServices;
 use crate::resource_usage::{
-    format_memory, ResourceUsageProject, ResourceUsageSession, ResourceUsageTask,
+    format_memory, ResourceUsageProject, ResourceUsageSession, ResourceUsageSnapshot,
+    ResourceUsageTask,
 };
 use crate::theme;
 
@@ -16,6 +19,20 @@ const RESOURCE_MEMORY_LABEL_W: f32 = 74.;
 const PANEL_BOTTOM_MARGIN: f32 = crate::layout::FOOTER_H + 10.;
 
 impl AnotherOneApp {
+    /// Live resource-usage snapshot, sourced from the daemon's
+    /// projection (`UiSnapshot.daemon_resource_usage`). Returns an
+    /// empty snapshot when the projection hasn't yet carried one
+    /// (older daemon, or pre-first-sample) so the indicator widget
+    /// renders zeros instead of stale client-side data. See #156.
+    fn resource_usage(&self) -> &ResourceUsageSnapshot {
+        static EMPTY: OnceLock<ResourceUsageSnapshot> = OnceLock::new();
+        self.project_store
+            .ui
+            .daemon_resource_usage
+            .as_ref()
+            .unwrap_or_else(|| EMPTY.get_or_init(ResourceUsageSnapshot::default))
+    }
+
     pub(crate) fn toggle_resource_indicator(
         &mut self,
         _: &MouseDownEvent,
@@ -64,8 +81,8 @@ impl AnotherOneApp {
             app_theme.overlay_rest
         };
         let border = app_theme.border;
-        let cpu_label = format!("{:.1}%", self.resource_usage.app.cpu_percent);
-        let memory_label = format_memory(self.resource_usage.app.memory_bytes);
+        let cpu_label = format!("{:.1}%", self.resource_usage().app.cpu_percent);
+        let memory_label = format_memory(self.resource_usage().app.memory_bytes);
 
         div()
             .id("resource-indicator-button")
@@ -163,10 +180,10 @@ impl AnotherOneApp {
         let muted_col = app_theme.text_muted;
         let stat_col = app_theme.text_primary;
         let empty_col = app_theme.text_muted;
-        let session_count = self.resource_usage.session_count.to_string();
+        let session_count = self.resource_usage().session_count.to_string();
 
         let mut tree = div().flex().flex_col().gap(px(4.));
-        if self.resource_usage.projects.is_empty() {
+        if self.resource_usage().projects.is_empty() {
             tree = tree.child(
                 div()
                     .px(px(14.))
@@ -181,7 +198,7 @@ impl AnotherOneApp {
                     ),
             );
         } else {
-            for project in &self.resource_usage.projects {
+            for project in &self.resource_usage().projects {
                 tree = tree.child(self.resource_project_group(project, cx));
             }
         }
@@ -249,14 +266,14 @@ impl AnotherOneApp {
                     .px(px(20.))
                     .child(Self::resource_stat_card(
                         "APP CPU",
-                        format!("{:.1}%", self.resource_usage.app.cpu_percent),
+                        format!("{:.1}%", self.resource_usage().app.cpu_percent),
                         surface_bg.into(),
                         muted_col,
                         stat_col,
                     ))
                     .child(Self::resource_stat_card(
                         "APP MEM",
-                        format_memory(self.resource_usage.app.memory_bytes),
+                        format_memory(self.resource_usage().app.memory_bytes),
                         surface_bg.into(),
                         muted_col,
                         stat_col,
@@ -498,7 +515,7 @@ impl AnotherOneApp {
                     .gap(px(8.))
                     .min_w(px(0.))
                     .flex_1()
-                    .child(branded_icon(session.icon_path, 16., Some(title_col)))
+                    .child(branded_icon(session.icon_path.clone(), 16., Some(title_col)))
                     .child(
                         div()
                             .text_size(rems(12.5 / 16.))

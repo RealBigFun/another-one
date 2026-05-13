@@ -15,7 +15,6 @@ use gpui::{App, TitlebarOptions, Window, WindowDecorations};
 
 use super::PlatformServices;
 use crate::open_in::OpenInAppKind;
-use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
 pub struct AndroidPlatform;
 
@@ -29,20 +28,6 @@ impl PlatformServices for AndroidPlatform {
         // No "command" key on Android. Most physical-keyboard users on
         // Android expect Ctrl, matching the Linux convention.
         "ctrl"
-    }
-
-    fn read_process_samples(
-        _app_pid: u32,
-        _tracked_processes: &[TrackedProcess],
-    ) -> Vec<RawProcessSample> {
-        // The desktop resource panel polls `/proc/<pid>/stat` etc.; on
-        // Android SELinux blocks most of that for non-root apps. Return
-        // empty until we surface a useful Android equivalent.
-        Vec::new()
-    }
-
-    fn total_system_memory_bytes() -> Option<u64> {
-        None
     }
 
     fn is_open_in_app_available(_app: OpenInAppKind) -> bool {

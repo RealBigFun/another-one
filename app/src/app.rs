@@ -63,7 +63,7 @@ use crate::project_store::{
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
     ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind, TaskWorktreeBranchMode,
 };
-use crate::resource_usage::{ResourceUsageSampler, ResourceUsageSnapshot, TrackedProcess};
+use crate::resource_usage::TrackedProcess;
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
@@ -2165,11 +2165,14 @@ pub struct AnotherOneApp {
         Option<tokio::sync::mpsc::UnboundedReceiver<daemon_transport::SessionEvent>>,
     /// Collapsed resource tree node ids in the resource usage panel.
     pub(crate) resource_collapsed_nodes: HashSet<String>,
-    /// Latest sampled resource usage snapshot.
-    pub(crate) resource_usage: ResourceUsageSnapshot,
-    /// Native process sampler state used to calculate CPU deltas across refreshes.
-    pub(crate) resource_usage_sampler: ResourceUsageSampler,
-    /// Last time resource usage was sampled.
+    /// Last time the desktop pushed its tracked-process list to the
+    /// daemon-host's `refresh_resource_usage` slot. The actual
+    /// sampling + caching now lives daemon-side
+    /// (`another_one_core::resource_usage`); this timestamp just
+    /// rate-limits how often the GUI render tick wakes the daemon
+    /// to re-sample. Open vs. closed indicator state still picks
+    /// the 1s vs. 5s cadence so the wire snapshot is fresh while
+    /// the panel is visible. See #156.
     pub(crate) last_resource_usage_refresh: Instant,
     /// In-app updater worker handle. Owns a dedicated OS thread
     /// that polls the public release manifest on a 10 minute
@@ -4967,8 +4970,6 @@ impl AnotherOneApp {
             session_events_tx,
             session_events_rx,
             resource_collapsed_nodes: HashSet::new(),
-            resource_usage: ResourceUsageSnapshot::default(),
-            resource_usage_sampler: ResourceUsageSampler::default(),
             last_resource_usage_refresh: Instant::now() - RESOURCE_REFRESH_INTERVAL_CLOSED,
             updater: crate::updater::UpdaterHandle::spawn(crate::updater::BuildIdentity::current()),
             updater_state: crate::updater::UpdateState::Idle,
@@ -5088,20 +5089,34 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn refresh_resource_usage(&mut self) -> bool {
-        let tracked_processes = self
+        // Sampling + CPU-delta tracking now live on the daemon
+        // side (`another_one_core::resource_usage`). The desktop
+        // GUI is the only process today that knows the live PTY
+        // PIDs (terminal_manager + prewarmed_terminal_processes
+        // are AnotherOneApp fields), so we hand them in. The
+        // daemon-host samples synchronously, stashes the wire
+        // snapshot in `RegistryState.resource_usage.latest`, and
+        // fires `state_change_tx`; both desktop and any paired
+        // mobile peer pick up the result on the next projection
+        // through `UiSnapshot.daemon_resource_usage`. See #156.
+        let tracked_processes: Vec<TrackedProcess> = self
             .terminal_manager
             .processes
             .values()
             .cloned()
             .chain(self.prewarmed_terminal_processes.values().cloned())
-            .collect::<Vec<_>>();
-        let snapshot = self
-            .resource_usage_sampler
-            .sample(std::process::id(), &tracked_processes);
-        let changed = self.resource_usage != snapshot;
-        self.resource_usage = snapshot;
+            .collect();
         self.last_resource_usage_refresh = Instant::now();
-        changed
+        crate::daemon_host::refresh_resource_usage(&self.registry_state, tracked_processes);
+        // The daemon-host's `notify_state_changed` tick will drive
+        // the desktop's `sync_registry_project_store` path on the
+        // next render frame, which in turn re-runs
+        // `absorb_ui_snapshot` and updates
+        // `project_store.ui.daemon_resource_usage`. We can't
+        // observe "value changed" here cheaply without a second
+        // round-trip, so signal a possibly-changed result and
+        // let the render path notify on absorption.
+        true
     }
 
     fn tick_resource_usage(&mut self) -> bool {

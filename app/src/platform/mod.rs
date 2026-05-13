@@ -31,19 +31,11 @@ use std::process::Command;
 use gpui::{App, TitlebarOptions, Window, WindowDecorations};
 
 use crate::open_in::OpenInAppKind;
-use crate::resource_usage::{RawProcessSample, TrackedProcess};
 
 pub trait PlatformServices {
     fn open_external_url(url: &str) -> Result<(), String>;
 
     fn platform_modifier_label() -> &'static str;
-
-    fn read_process_samples(
-        app_pid: u32,
-        tracked_processes: &[TrackedProcess],
-    ) -> Vec<RawProcessSample>;
-
-    fn total_system_memory_bytes() -> Option<u64>;
 
     fn is_open_in_app_available(app: OpenInAppKind) -> bool;
 
