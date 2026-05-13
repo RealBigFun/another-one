@@ -2257,6 +2257,7 @@ impl ProjectStore {
         }
         self.ui.pinned_task_ids.remove(task_id);
         self.rebuild_runtime_views();
+        self.save();
         Some(removed)
     }
 
@@ -2267,6 +2268,7 @@ impl ProjectStore {
             .push(task.id.clone());
         self.tasks_by_id.insert(task.id.clone(), task);
         self.rebuild_runtime_views();
+        self.save();
     }
 
     pub fn update_task_branch(
@@ -2359,6 +2361,7 @@ impl ProjectStore {
         }
 
         self.rebuild_runtime_views();
+        self.save();
         true
     }
 
@@ -2371,15 +2374,20 @@ impl ProjectStore {
         }
         task.name = name.to_string();
         self.rebuild_runtime_views();
+        self.save();
         true
     }
 
     pub fn set_task_pinned(&mut self, task_id: &str, pinned: bool) -> bool {
-        if pinned {
+        let changed = if pinned {
             self.ui.pinned_task_ids.insert(task_id.to_string())
         } else {
             self.ui.pinned_task_ids.remove(task_id)
+        };
+        if changed {
+            self.save();
         }
+        changed
     }
 
     pub fn insert_prepared_project(&mut self, prepared: PreparedProject) -> bool {

@@ -220,17 +220,27 @@ impl RegistryState {
     }
 
     /// Commit one durable project-store mutation through the daemon
-    /// state authority path: apply the caller's mutation, persist the
-    /// latest snapshot, then publish exactly one state-change tick so
-    /// connected sessions re-project from the committed state.
+    /// state authority path: apply the caller's mutation, then publish
+    /// exactly one state-change tick so connected sessions re-project
+    /// from the committed state.
+    ///
+    /// Persistence is the mutation's own responsibility: each
+    /// `ProjectStore::*` method either calls `self.save()` (whole-blob
+    /// save through the SQLite app_state row), or routes through
+    /// `self.persistence.upsert_section` / `remove_section_rows` for
+    /// row-level writes (the hot section-mutation path), or skips
+    /// persistence entirely (volatile in-memory mutations: PTY title
+    /// CAS, git-refresh sweeps, projection ingestion). This wrapper
+    /// is just the lock-and-notify framing; it doesn't second-guess
+    /// the persistence policy. Saves coalesce when both an internal
+    /// and an external save() race because `save()` is a synchronous
+    /// SQLite UPSERT — cheap to repeat, but we don't repeat unless we
+    /// have to.
     pub(crate) fn commit_project_store_mutation<R>(
         &mut self,
         f: impl FnOnce(&mut ProjectStore) -> R,
     ) -> R {
         let result = f(&mut self.project_store);
-        // `ProjectStore::save` swallows errors internally (logs +
-        // returns ()); there is no Result to map at the registry seam.
-        self.project_store.save();
         self.notify_state_changed();
         result
     }

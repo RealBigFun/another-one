@@ -397,23 +397,12 @@ pub fn apply(store: &mut ProjectStore, mutation: Mutation) -> MutationOutcome {
             task_id,
         } => MutationOutcome::RemovedTask(store.remove_task(&root_project_id, &task_id)),
         Mutation::RenameTask { task_id, new_name } => {
-            // `rename_task` does not call `save()` itself today —
-            // every external caller follows it with `save()`. The
-            // authority normalises that: rename + save in one step.
-            let changed = store.rename_task(&task_id, &new_name);
-            if changed {
-                store.save();
-            }
-            MutationOutcome::Changed(changed)
+            // `rename_task` saves itself on Changed(true).
+            MutationOutcome::Changed(store.rename_task(&task_id, &new_name))
         }
         Mutation::SetTaskPinned { task_id, pinned } => {
-            // Same as RenameTask: `set_task_pinned` doesn't save
-            // on its own. Normalise here.
-            let changed = store.set_task_pinned(&task_id, pinned);
-            if changed {
-                store.save();
-            }
-            MutationOutcome::Changed(changed)
+            // `set_task_pinned` saves itself on Changed(true).
+            MutationOutcome::Changed(store.set_task_pinned(&task_id, pinned))
         }
         Mutation::UpdateTaskBranch {
             task_id,

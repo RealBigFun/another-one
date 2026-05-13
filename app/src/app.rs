@@ -6901,9 +6901,8 @@ impl AnotherOneApp {
     /// Apply one typed mutation against the daemon's authoritative
     /// `RegistryState.project_store`, mirror the result back into
     /// the GPUI app's `self.project_store` (the render-side mirror),
-    /// persist (unless the mutation is volatile), and fire a
-    /// state-change tick. This is the single commit point for any
-    /// mutation initiated *from* the GUI.
+    /// and fire a state-change tick. This is the single commit
+    /// point for any mutation initiated *from* the GUI.
     ///
     /// Replaces the legacy two-step pattern:
     /// ```text
@@ -6914,31 +6913,24 @@ impl AnotherOneApp {
     /// landed in `self.project_store` but never made it into the
     /// daemon's mirror (mobile sees stale state).
     ///
-    /// Persistence: most variants persist via the underlying
-    /// `ProjectStore::*` method's own `save()` call. A few (notably
-    /// `InsertTask`, `RenameTask`, `SetTaskPinned`,
-    /// `update_worktree_checkout`) rely on the helper to save —
-    /// matching the legacy `commit_local_mutation()` behaviour. The
-    /// extra `save()` is cheap when the variant already saved,
-    /// because `ProjectStore::save` is a single-slot mailbox into a
-    /// debounced background writer (see #129).
-    ///
-    /// [`Mutation::is_volatile`] short-circuits the save for the
-    /// PTY-title hot path and git-refresh sweeps, both of which are
-    /// recovered from a fresher source on the next tick.
+    /// Persistence is the mutation's own responsibility: each
+    /// `ProjectStore::*` method either calls `self.save()` (whole-
+    /// blob save), or routes through `self.persistence.upsert_section`
+    /// / `remove_section_rows` for row-level writes (the hot
+    /// section-mutation path), or skips persistence entirely
+    /// (volatile in-memory mutations: PTY title CAS, git-refresh
+    /// sweeps, projection ingestion). `apply_mutation` doesn't
+    /// second-guess that policy — it's just the lock-mirror-notify
+    /// framing.
     pub(crate) fn apply_mutation(
         &mut self,
         mutation: another_one_core::state_authority::Mutation,
     ) -> another_one_core::state_authority::MutationOutcome {
-        let is_volatile = mutation.is_volatile();
         let outcome = if let Ok(mut state) = self.registry_state.lock() {
             let outcome = another_one_core::state_authority::apply(
                 &mut state.project_store,
                 mutation,
             );
-            if !is_volatile {
-                state.project_store.save();
-            }
             state.notify_state_changed();
             self.project_store = state.project_store.clone();
             outcome

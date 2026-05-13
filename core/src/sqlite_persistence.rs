@@ -403,34 +403,17 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
             }
         };
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        // Full save is a checkpoint: write the blob AND clear the
-        // row-level sections cache. The blob already contains the
-        // current sections (snapshot_for_save folds them into
-        // per-task records on the way out), so the cache is
-        // redundant after a save. Section mutations between this
-        // save and the next will repopulate it. Single transaction
-        // so a crash mid-save can't leave the two surfaces in
-        // disagreement past what WAL already protects.
-        let tx = match conn.unchecked_transaction() {
-            Ok(t) => t,
-            Err(err) => {
-                eprintln!("sqlite_persistence: begin save tx failed: {err}");
-                return;
-            }
-        };
-        if let Err(err) = tx.execute(
+        // Whole-blob save. Sections are NOT cleared from the
+        // `sections` row-level table here — they're an independent
+        // durable surface, written/deleted by `upsert_section` /
+        // `remove_section_rows`. `load()` overlays the rows on top
+        // of the blob's task-embedded sections, so the blob carrying
+        // possibly-stale section data is harmless: the overlay wins.
+        if let Err(err) = conn.execute(
             "INSERT OR REPLACE INTO app_state (id, state_json) VALUES (1, ?1)",
             params![json],
         ) {
             eprintln!("sqlite_persistence: write app_state failed: {err}");
-            return;
-        }
-        if let Err(err) = tx.execute("DELETE FROM sections", []) {
-            eprintln!("sqlite_persistence: clear sections failed: {err}");
-            return;
-        }
-        if let Err(err) = tx.commit() {
-            eprintln!("sqlite_persistence: commit save failed: {err}");
         }
     }
 
@@ -809,47 +792,37 @@ mod tests {
         assert_eq!(ids, vec!["a".to_string(), "c".to_string()]);
     }
 
-    /// A full `save()` is a checkpoint: it rewrites the blob and
-    /// clears the row-level cache. The cache repopulates on the
-    /// next `upsert_section`. Subsequent `load()` returns whatever
-    /// the blob has plus any post-save row-level upserts.
+    /// Full `save()` writes the blob but does NOT touch the
+    /// row-level cache: sections table is an independent durable
+    /// surface, only mutated by `upsert_section` /
+    /// `remove_section_rows`. This is the post-step-E correctness
+    /// fix — prior behaviour cleared the cache on save, which made
+    /// the row-level write redundant with the blob save that always
+    /// followed (and undone the perf claim of step E).
     #[test]
-    fn save_clears_row_level_cache_so_blob_is_authoritative() {
+    fn save_does_not_clobber_row_level_cache() {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join(STATE_DB_FILENAME);
         let adapter = SqliteProjectStorePersistence::open(db_path).unwrap();
 
-        // Stage a row-level upsert.
-        let stale = PersistedSectionState {
-            active_tab_id: "stale".to_string(),
+        let cached = PersistedSectionState {
+            active_tab_id: "cached".to_string(),
             next_tab_id: 1,
             cwd: None,
             tabs: Vec::new(),
         };
-        adapter.upsert_section("section-x", &stale, &StoreFileV4::default());
+        adapter.upsert_section("section-x", &cached, &StoreFileV4::default());
         assert_eq!(adapter.read_sections().len(), 1);
 
-        // Now run a full save with an empty blob. Section cache
-        // should clear (the blob doesn't carry sections at this
-        // path — they live inside per-task records, and there are
-        // no tasks in StoreFileV4::default()).
+        // Full save with an empty blob should leave the cache alone.
         adapter.save(&StoreFileV4::default());
-        assert!(
-            adapter.read_sections().is_empty(),
-            "save() must clear the row-level sections cache"
-        );
-
-        // After save, a fresh upsert_section repopulates the cache.
-        let fresh = PersistedSectionState {
-            active_tab_id: "fresh".to_string(),
-            next_tab_id: 1,
-            cwd: None,
-            tabs: Vec::new(),
-        };
-        adapter.upsert_section("section-x", &fresh, &StoreFileV4::default());
         let rows = adapter.read_sections();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1.active_tab_id, "fresh");
+        assert_eq!(
+            rows.len(),
+            1,
+            "save() must not clear the row-level sections cache"
+        );
+        assert_eq!(rows[0].1.active_tab_id, "cached");
     }
 
     /// Smoke test against the live `projects.json` from the user's
