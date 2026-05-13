@@ -2331,8 +2331,19 @@ impl ProjectStore {
             let Some(worktree) = task.worktree.as_mut() else {
                 return false;
             };
-            if worktree.checkout != checkout {
-                worktree.checkout = checkout;
+            // Preserve a known current branch when the incoming checkout
+            // doesn't carry one (e.g. transient detached-HEAD reads or
+            // partial git refreshes). Without this guard the embedded
+            // branch flickers to None, which causes the sidebar to fall
+            // back to the root project's branch ("main").
+            let mut next_checkout = checkout;
+            if next_checkout.current_branch.is_none() {
+                if let Some(existing) = worktree.checkout.current_branch.clone() {
+                    next_checkout.current_branch = Some(existing);
+                }
+            }
+            if worktree.checkout != next_checkout {
+                worktree.checkout = next_checkout;
                 changed = true;
             }
         }
@@ -5875,6 +5886,62 @@ mod tests {
             store.ui.last_active_section_id.as_deref(),
             Some("worktree::pixel-blockbuster-drifts::task-1")
         );
+    }
+
+    #[test]
+    fn update_worktree_checkout_preserves_branch_when_incoming_is_none() {
+        let mut root = sample_project("root", None);
+        root.checkout.current_branch = Some("main".to_string());
+        let mut store = sample_project_store(root);
+        store.insert_task(Task {
+            id: "task-1".to_string(),
+            name: "fresh-xfiles-bea".to_string(),
+            kind: TaskKind::Worktree,
+            root_project_id: "root".to_string(),
+            target_project_id: "worktree".to_string(),
+            branch_name: "fresh-xfiles-bea".to_string(),
+            section_id: "worktree::fresh-xfiles-bea::task-1".to_string(),
+            worktree: Some(TaskWorktree {
+                id: "worktree".to_string(),
+                repo_id: "repo".to_string(),
+                name: "fresh-xfiles-bea-wt".to_string(),
+                path: PathBuf::from("/tmp/fresh-xfiles-bea-wt"),
+                checkout: ProjectCheckoutState {
+                    current_branch: Some("fresh-xfiles-bea".to_string()),
+                    lines_added: 1,
+                    lines_removed: 0,
+                },
+                worktree_name: Some("fresh-xfiles-bea-wt".to_string()),
+            }),
+            worktree_project_id: Some("worktree".to_string()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        });
+
+        // Simulate a transient git refresh that fails to detect the
+        // current branch (e.g. detached HEAD mid-checkout). The embedded
+        // branch must not flicker to None — otherwise the sidebar falls
+        // back to the root project's branch and renders "main".
+        store.update_worktree_checkout(
+            "worktree",
+            ProjectCheckoutState {
+                current_branch: None,
+                lines_added: 0,
+                lines_removed: 0,
+            },
+        );
+
+        let task = store.task("task-1").expect("task should still exist");
+        assert_eq!(
+            task.worktree
+                .as_ref()
+                .and_then(|worktree| worktree.checkout.current_branch.as_deref()),
+            Some("fresh-xfiles-bea"),
+            "embedded worktree branch must survive transient checkout reads with no current branch"
+        );
+        assert_eq!(task.branch_name, "fresh-xfiles-bea");
     }
 
     #[test]

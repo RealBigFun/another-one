@@ -75,14 +75,28 @@ pub fn task_workspace_target(
     };
     let worktree = task.worktree.as_ref();
 
+    // For worktree tasks we never want to fall back to the root project's
+    // current branch — that's a different working tree. Use the persisted
+    // task.branch_name instead so the sidebar doesn't flash back to e.g.
+    // "main" while git state is being refreshed.
+    let branch_name = match worktree {
+        Some(worktree) => worktree
+            .checkout
+            .current_branch
+            .clone()
+            .unwrap_or_else(|| task.branch_name.clone()),
+        None => project
+            .checkout
+            .current_branch
+            .clone()
+            .unwrap_or_else(|| task.branch_name.clone()),
+    };
+
     Some(TaskWorkspaceTarget {
         root_project_id: root_project.id.clone(),
         project_id: worktree.map_or_else(|| project.id.clone(), |worktree| worktree.id.clone()),
         task_id: task.id.clone(),
-        branch_name: worktree
-            .and_then(|worktree| worktree.checkout.current_branch.clone())
-            .or_else(|| project.checkout.current_branch.clone())
-            .unwrap_or_else(|| task.branch_name.clone()),
+        branch_name,
         project_path: task
             .cwd
             .clone()
@@ -252,6 +266,40 @@ mod tests {
         assert_eq!(target.project_id, "worktree");
         assert_eq!(target.branch_name, "feature/wt");
         assert_eq!(target.project_path, PathBuf::from("/tmp/worktree-wt"));
+    }
+
+    #[test]
+    fn task_workspace_target_falls_back_to_task_branch_for_worktree_without_current_branch() {
+        let root = sample_project("root", "repo-1", ProjectKind::Root, "main");
+        let mut task = sample_task(
+            "task-1",
+            TaskKind::Worktree,
+            "root",
+            "worktree",
+            "fresh-xfiles-bea",
+            None,
+            None,
+        );
+        // Embedded worktree without a known current branch (transient git
+        // read). We must not leak the root project's "main" into the task.
+        task.worktree = Some(crate::project_store::TaskWorktree {
+            id: "worktree".to_string(),
+            repo_id: "repo-1".to_string(),
+            name: "fresh-xfiles-bea-wt".to_string(),
+            path: PathBuf::from("/tmp/fresh-xfiles-bea-wt"),
+            checkout: crate::project_store::ProjectCheckoutState {
+                current_branch: None,
+                lines_added: 0,
+                lines_removed: 0,
+            },
+            worktree_name: Some("fresh-xfiles-bea-wt".to_string()),
+        });
+
+        let target = task_workspace_target(std::slice::from_ref(&root), &root, &task)
+            .expect("worktree task target should resolve");
+
+        assert_eq!(target.project_id, "worktree");
+        assert_eq!(target.branch_name, "fresh-xfiles-bea");
     }
 
     #[test]
