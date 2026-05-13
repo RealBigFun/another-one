@@ -55,6 +55,7 @@ use another_one_core::project_store::{
 };
 use another_one_core::section::SectionId;
 use another_one_core::shortcuts::{ShortcutAction, ALL_SHORTCUT_ACTIONS};
+use another_one_core::state_authority::{self, Mutation, MutationOutcome};
 
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::terminal_runtime::TerminalRuntimeKey;
@@ -623,35 +624,51 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn remove_project(&self, project_id: &str) -> anyhow::Result<()> {
         let project_id = project_id.to_string();
         self.with_store_mut(move |store| {
-            store.remove_project(&project_id);
+            state_authority::apply(store, Mutation::RemoveProject { project_id });
         })
         .ok_or_else(|| anyhow::anyhow!(registry_unavailable()))?;
         Ok(())
     }
 
     fn rename_task(&self, task_id: &str, new_name: &str) -> (bool, Option<TaskSummary>) {
-        let task_id = task_id.to_string();
+        let task_id_s = task_id.to_string();
         let new_name = new_name.to_string();
+        // RenameTask needs a post-mutation TaskSummary read on the
+        // *same* state lock, so we drive `commit_project_store_mutation`
+        // directly here rather than through `with_store_mut`. The
+        // authority handles save() internally on `Changed(true)`;
+        // commit_project_store_mutation also calls save() (cheap no-op
+        // when nothing changed) and fires the notify tick.
         let result = self.with_state(|state| {
-            let changed = state.project_store.rename_task(&task_id, &new_name);
-            if changed {
-                state.project_store.save();
-                state.notify_state_changed();
-            }
-            (changed, task_summary_for(state, &task_id))
+            let outcome = state.commit_project_store_mutation(|store| {
+                state_authority::apply(
+                    store,
+                    Mutation::RenameTask {
+                        task_id: task_id_s.clone(),
+                        new_name: new_name.clone(),
+                    },
+                )
+            });
+            let changed = matches!(outcome, MutationOutcome::Changed(true));
+            (changed, task_summary_for(state, &task_id_s))
         });
         result.unwrap_or((false, None))
     }
 
     fn set_task_pinned(&self, task_id: &str, pinned: bool) -> (bool, Option<TaskSummary>) {
-        let task_id = task_id.to_string();
+        let task_id_s = task_id.to_string();
         let result = self.with_state(|state| {
-            let changed = state.project_store.set_task_pinned(&task_id, pinned);
-            if changed {
-                state.project_store.save();
-                state.notify_state_changed();
-            }
-            (changed, task_summary_for(state, &task_id))
+            let outcome = state.commit_project_store_mutation(|store| {
+                state_authority::apply(
+                    store,
+                    Mutation::SetTaskPinned {
+                        task_id: task_id_s.clone(),
+                        pinned,
+                    },
+                )
+            });
+            let changed = matches!(outcome, MutationOutcome::Changed(true));
+            (changed, task_summary_for(state, &task_id_s))
         });
         result.unwrap_or((false, None))
     }
@@ -659,8 +676,19 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn remove_task(&self, project_id: &str, task_id: &str) -> bool {
         let project_id = project_id.to_string();
         let task_id = task_id.to_string();
-        self.with_store_mut(move |store| store.remove_task(&project_id, &task_id).is_some())
-            .unwrap_or(false)
+        self.with_store_mut(move |store| {
+            matches!(
+                state_authority::apply(
+                    store,
+                    Mutation::RemoveTask {
+                        root_project_id: project_id,
+                        task_id,
+                    },
+                ),
+                MutationOutcome::RemovedTask(Some(_))
+            )
+        })
+        .unwrap_or(false)
     }
 
     fn set_branch_setting(
@@ -671,24 +699,35 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     ) -> Result<bool, String> {
         let project_id = project_id.to_string();
         let branch_name = branch_name.map(str::to_string);
-        let changed = match field {
+        let outcome = match field {
             "default-branch" => self
                 .with_store_mut(move |store| {
-                    store
-                        .update_default_branch(&project_id, branch_name.clone())
-                        .map_err(|e| e.to_string())
+                    state_authority::apply(
+                        store,
+                        Mutation::SetDefaultBranch {
+                            project_id,
+                            branch_name,
+                        },
+                    )
                 })
-                .ok_or_else(registry_unavailable)??,
+                .ok_or_else(registry_unavailable)?,
             "default-target-branch" => self
                 .with_store_mut(move |store| {
-                    store
-                        .update_default_target_branch(&project_id, branch_name.clone())
-                        .map_err(|e| e.to_string())
+                    state_authority::apply(
+                        store,
+                        Mutation::SetDefaultTargetBranch {
+                            project_id,
+                            branch_name,
+                        },
+                    )
                 })
-                .ok_or_else(registry_unavailable)??,
+                .ok_or_else(registry_unavailable)?,
             other => return Err(format!("unknown branch_setting field: {other}")),
         };
-        Ok(changed)
+        match outcome {
+            MutationOutcome::BranchSettingApplied(result) => result.map_err(|e| e.to_string()),
+            other => unreachable!("branch-setting mutation produced {other:?}"),
+        }
     }
 
     fn set_section_state(&self, section_id: &str, persisted: serde_json::Value) {
@@ -702,24 +741,40 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             tracing::warn!(section_id, "SetSectionState section_id malformed");
             return;
         };
-        self.with_store_mut(|store| {
+        let section_id_owned = section_id.to_string();
+        self.with_store_mut(move |store| {
             if let Some(task_id) = parsed.task_id.as_deref() {
-                store.update_task_tabs(task_id, &persisted);
+                state_authority::apply(
+                    store,
+                    Mutation::UpdateTaskTabs {
+                        task_id: task_id.to_string(),
+                        state: persisted,
+                    },
+                );
             } else {
-                store.set_terminal_section(section_id.to_string(), persisted);
+                state_authority::apply(
+                    store,
+                    Mutation::SetTerminalSection {
+                        section_id: section_id_owned,
+                        state: persisted,
+                    },
+                );
             }
         });
     }
 
     fn set_last_active_section(&self, section_id: Option<String>) {
-        self.with_store_mut(|store| {
-            store.set_last_active_section_key(section_id);
+        self.with_store_mut(move |store| {
+            state_authority::apply(store, Mutation::SetLastActiveSection { section_id });
         });
     }
 
     fn set_sidebar_git_metadata_visible(&self, visible: bool) {
-        self.with_store_mut(|store| {
-            store.set_sidebar_git_metadata_visible(visible);
+        self.with_store_mut(move |store| {
+            state_authority::apply(
+                store,
+                Mutation::SetSidebarGitMetadataVisible { visible },
+            );
         });
     }
 
@@ -733,8 +788,8 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                 return;
             }
         };
-        self.with_store_mut(|store| {
-            store.set_theme_mode(mode);
+        self.with_store_mut(move |store| {
+            state_authority::apply(store, Mutation::SetThemeMode { mode });
         });
     }
 
@@ -749,9 +804,15 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                 return;
             }
         };
-        let repo_id_owned = repo_id.to_string();
+        let repo_id = repo_id.to_string();
         self.with_store_mut(move |store| {
-            store.set_repo_default_commit_action(repo_id_owned, parsed);
+            state_authority::apply(
+                store,
+                Mutation::SetRepoDefaultCommitAction {
+                    repo_id,
+                    action: parsed,
+                },
+            );
         });
     }
 
@@ -760,14 +821,21 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let target_project_id = target_project_id.to_string();
         let branch_name = branch_name.to_string();
         self.with_store_mut(move |store| {
-            let _ = store.update_task_branch(&task_id, &target_project_id, &branch_name);
+            state_authority::apply(
+                store,
+                Mutation::UpdateTaskBranch {
+                    task_id,
+                    target_project_id,
+                    branch_name,
+                },
+            );
         });
     }
 
     fn set_expanded_repos(&self, expanded_repo_ids: Vec<String>) {
-        let set: std::collections::HashSet<String> = expanded_repo_ids.into_iter().collect();
+        let repo_ids: std::collections::HashSet<String> = expanded_repo_ids.into_iter().collect();
         self.with_store_mut(move |store| {
-            store.set_expanded_repos(&set);
+            state_authority::apply(store, Mutation::SetExpandedRepos { repo_ids });
         });
     }
 
@@ -779,7 +847,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             return;
         };
         self.with_store_mut(move |store| {
-            let _ = store.set_git_commit_generation_llm(settings);
+            state_authority::apply(store, Mutation::SetGitCommitLlm { settings });
         });
     }
 
@@ -791,7 +859,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             return;
         };
         self.with_store_mut(move |store| {
-            let _ = store.set_git_pr_generation_llm(settings);
+            state_authority::apply(store, Mutation::SetGitPrLlm { settings });
         });
     }
 
@@ -1199,20 +1267,38 @@ impl DaemonRegistry for DesktopTerminalRegistry {
 
     fn set_agent_enabled(&self, agent_id: &str, enabled: bool) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_store_mut(|store| store.set_agent_enabled(agent_id, enabled))
-            .ok_or_else(registry_unavailable)
+        let agent_id = agent_id.to_string();
+        self.with_store_mut(move |store| {
+            unwrap_changed(state_authority::apply(
+                store,
+                Mutation::SetAgentEnabled { agent_id, enabled },
+            ))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn set_default_agent(&self, agent_id: &str) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_store_mut(|store| store.set_default_agent(agent_id))
-            .ok_or_else(registry_unavailable)
+        let agent_id = agent_id.to_string();
+        self.with_store_mut(move |store| {
+            unwrap_changed(state_authority::apply(
+                store,
+                Mutation::SetDefaultAgent { agent_id },
+            ))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn set_agent_launch_args(&self, agent_id: &str, args: Vec<String>) -> Result<bool, String> {
         ensure_agent_id(agent_id)?;
-        self.with_store_mut(|store| store.set_agent_launch_args(agent_id, args))
-            .ok_or_else(registry_unavailable)
+        let agent_id = agent_id.to_string();
+        self.with_store_mut(move |store| {
+            unwrap_changed(state_authority::apply(
+                store,
+                Mutation::SetAgentLaunchArgs { agent_id, args },
+            ))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn read_open_in_settings(&self) -> Option<OpenInSettingsViewWire> {
@@ -1236,8 +1322,15 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         let app =
             open_in_app_from_id(app_id).ok_or_else(|| format!("unknown Open-In app: {app_id}"))?;
         let available = detect_available_open_in_apps();
-        self.with_store_mut(|store| {
-            store.set_open_in_app_enabled(app, enabled, &available);
+        self.with_store_mut(move |store| {
+            state_authority::apply(
+                store,
+                Mutation::SetOpenInAppEnabled {
+                    app,
+                    enabled,
+                    available,
+                },
+            );
         })
         .ok_or_else(registry_unavailable)
     }
@@ -1253,8 +1346,11 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .ok_or_else(registry_unavailable)?;
         let path = path.ok_or_else(|| format!("unknown project: {project_id}"))?;
         open_path_in_app(&path, app)?;
-        self.with_store_mut(|store| {
-            store.set_preferred_open_in_app(app, &available);
+        self.with_store_mut(move |store| {
+            state_authority::apply(
+                store,
+                Mutation::SetPreferredOpenInApp { app, available },
+            );
         })
         .ok_or_else(registry_unavailable)
     }
@@ -1288,23 +1384,39 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     }
 
     fn set_git_commit_script(&self, script: &str) -> Result<bool, String> {
-        self.with_store_mut(|store| store.set_git_commit_generation_script(script))
-            .ok_or_else(registry_unavailable)
+        let script = script.to_string();
+        self.with_store_mut(move |store| {
+            unwrap_changed(state_authority::apply(
+                store,
+                Mutation::SetGitCommitScript { script },
+            ))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_commit_script(&self) -> Result<bool, String> {
-        self.with_store_mut(|store| store.reset_git_commit_generation_script())
-            .ok_or_else(registry_unavailable)
+        self.with_store_mut(|store| {
+            unwrap_changed(state_authority::apply(store, Mutation::ResetGitCommitScript))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn set_git_pr_script(&self, script: &str) -> Result<bool, String> {
-        self.with_store_mut(|store| store.set_git_pr_generation_script(script))
-            .ok_or_else(registry_unavailable)
+        let script = script.to_string();
+        self.with_store_mut(move |store| {
+            unwrap_changed(state_authority::apply(
+                store,
+                Mutation::SetGitPrScript { script },
+            ))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn reset_git_pr_script(&self) -> Result<bool, String> {
-        self.with_store_mut(|store| store.reset_git_pr_generation_script())
-            .ok_or_else(registry_unavailable)
+        self.with_store_mut(|store| {
+            unwrap_changed(state_authority::apply(store, Mutation::ResetGitPrScript))
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn read_shortcut_settings(&self) -> ShortcutSettingsView {
@@ -1332,11 +1444,15 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn set_shortcut_binding(&self, action_id: &str, binding: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_store_mut(|store| {
+        let binding = binding.to_string();
+        self.with_store_mut(move |store| {
             if binding.is_empty() {
-                store.clear_shortcut_binding(action);
+                state_authority::apply(store, Mutation::ClearShortcutBinding { action });
             } else {
-                store.set_shortcut_binding(action, binding);
+                state_authority::apply(
+                    store,
+                    Mutation::SetShortcutBinding { action, binding },
+                );
             }
         })
         .ok_or_else(registry_unavailable)
@@ -1345,8 +1461,10 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn reset_shortcut_binding(&self, action_id: &str) -> Result<(), String> {
         let action = shortcut_action_from_id(action_id)
             .ok_or_else(|| format!("unknown shortcut action: {action_id}"))?;
-        self.with_store_mut(|store| store.reset_shortcut_binding(action))
-            .ok_or_else(registry_unavailable)
+        self.with_store_mut(move |store| {
+            state_authority::apply(store, Mutation::ResetShortcutBinding { action });
+        })
+        .ok_or_else(registry_unavailable)
     }
 
     fn read_mcp_settings(&self) -> McpSettingsView {
@@ -1879,6 +1997,19 @@ fn ensure_agent_id(agent_id: &str) -> Result<(), String> {
 
 fn registry_unavailable() -> String {
     "desktop registry state is unavailable".to_string()
+}
+
+/// Unwrap a `MutationOutcome` we expect to be `Changed(bool)` /
+/// `Unit`. Used by the `Result<bool, String>` return-shape sites
+/// (agent setters, git script setters) that need a boolean for the
+/// `WorkerReply` ack. `Unit` collapses to `true` since those
+/// mutations only return `Unit` on success.
+fn unwrap_changed(outcome: MutationOutcome) -> bool {
+    match outcome {
+        MutationOutcome::Changed(c) => c,
+        MutationOutcome::Unit => true,
+        other => unreachable!("unexpected outcome shape for changed-bool site: {other:?}"),
+    }
 }
 
 fn open_in_app_from_id(id: &str) -> Option<OpenInAppKind> {
