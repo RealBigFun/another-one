@@ -653,6 +653,24 @@ impl WorkspacePane {
                 );
         };
 
+        if section_id.task_id.is_none() {
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(app_theme.sunken_bg)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(app_theme.text_muted)
+                        .child("Open a task to view tabs"),
+                );
+        }
+
         let tab_bar_bg = app_theme.chrome_bg;
         let tab_bg_active = app_theme.terminal_bg;
         let tab_bg_inactive = app_theme.card_bg;
