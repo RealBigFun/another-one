@@ -145,6 +145,88 @@ fn resolve_active_git_action_presentation(
 }
 
 impl AnotherOneApp {
+    fn active_titlebar_task_project_id(&self, cx: &App) -> Option<String> {
+        self.workspace_pane
+            .read(cx)
+            .active_section
+            .as_ref()
+            .and_then(|section| section.task_id.as_ref().map(|_| section.project_id.clone()))
+    }
+
+    fn disabled_titlebar_split_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        icon_path: &'static str,
+        width: f32,
+        margin_right: f32,
+    ) -> AnyElement {
+        let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+
+        div()
+            .id(id)
+            .flex()
+            .flex_shrink_0()
+            .flex_row()
+            .items_center()
+            .w(px(width))
+            .h(px(28.))
+            .mr(px(margin_right))
+            .rounded(px(11.))
+            .bg(app_theme.overlay_rest)
+            .border_1()
+            .border_color(app_theme.border)
+            .opacity(0.45)
+            .tooltip(|_window, cx| {
+                Self::action_tooltip_view("Select a task in the sidebar to use this", cx)
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .h_full()
+                    .px(px(9.))
+                    .border_r_1()
+                    .border_color(app_theme.divider)
+                    .child(
+                        svg()
+                            .path(icon_path)
+                            .size(px(14.))
+                            .text_color(app_theme.text_muted),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_size(rems(12. / 16.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(app_theme.text_muted)
+                            .truncate()
+                            .child(label),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .w(px(26.))
+                    .h_full()
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__chevron-down.svg")
+                            .size(px(11.))
+                            .text_color(app_theme.text_muted),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub fn titlebar_toggle_mouse(
         &mut self,
         _: &MouseDownEvent,
@@ -245,7 +327,7 @@ impl AnotherOneApp {
     }
 
     fn selected_custom_action(&self, cx: &App) -> Option<ProjectAction> {
-        let project_id = self.active_open_in_project_id(cx)?;
+        let project_id = self.active_titlebar_task_project_id(cx)?;
         let actions = self.project_store.project_actions(&project_id);
         self.last_used_custom_action_id
             .as_ref()
@@ -319,9 +401,14 @@ impl AnotherOneApp {
     }
 
     pub fn titlebar_custom_actions_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let has_project = self.active_open_in_project_id(cx).is_some();
-        if !has_project {
-            return div().into_any_element();
+        if self.active_titlebar_task_project_id(cx).is_none() {
+            return self.disabled_titlebar_split_button(
+                "titlebar-custom-actions-trigger-disabled",
+                "Actions",
+                "assets/icons/icons__tool-bolt.svg",
+                TITLEBAR_CUSTOM_ACTIONS_BUTTON_W,
+                TITLEBAR_CUSTOM_ACTIONS_BUTTON_MARGIN_RIGHT,
+            );
         }
 
         let selected_action = self.selected_custom_action(cx);
@@ -443,7 +530,7 @@ impl AnotherOneApp {
                 .id("titlebar-custom-actions-overlay")
                 .into_any_element();
         }
-        let Some(project_id) = self.active_open_in_project_id(cx) else {
+        let Some(project_id) = self.active_titlebar_task_project_id(cx) else {
             return div()
                 .id("titlebar-custom-actions-overlay")
                 .into_any_element();
@@ -632,8 +719,14 @@ impl AnotherOneApp {
     }
 
     pub fn titlebar_open_in_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(project_id) = self.active_open_in_project_id(cx) else {
-            return div().into_any_element();
+        let Some(project_id) = self.active_titlebar_task_project_id(cx) else {
+            return self.disabled_titlebar_split_button(
+                "titlebar-open-in-trigger-disabled",
+                "Open In",
+                "assets/icons/open_in__folder_closed.svg",
+                TITLEBAR_OPEN_IN_BUTTON_W,
+                TITLEBAR_OPEN_IN_BUTTON_MARGIN_RIGHT,
+            );
         };
 
         let menu_open =
@@ -736,6 +829,9 @@ impl AnotherOneApp {
         let Some(project_id) = self.project_page_open_in_menu_project_id.clone() else {
             return div().id("titlebar-open-in-overlay").into_any_element();
         };
+        if self.active_titlebar_task_project_id(cx).as_deref() != Some(project_id.as_str()) {
+            return div().id("titlebar-open-in-overlay").into_any_element();
+        }
 
         let enabled_open_in_apps = self.enabled_open_in_apps();
         if enabled_open_in_apps.is_empty() {
@@ -945,9 +1041,14 @@ impl AnotherOneApp {
     }
 
     pub fn titlebar_git_actions_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let has_project = self.active_open_in_project_id(cx).is_some();
-        if !has_project {
-            return div().into_any_element();
+        if self.active_titlebar_task_project_id(cx).is_none() {
+            return self.disabled_titlebar_split_button(
+                "titlebar-git-actions-trigger-disabled",
+                "Git Actions",
+                "assets/icons/icons__git-commit.svg",
+                TITLEBAR_GIT_ACTIONS_BUTTON_W,
+                TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT,
+            );
         }
 
         let primary_action = self.idle_titlebar_primary_git_action(cx);
@@ -1088,7 +1189,7 @@ impl AnotherOneApp {
             return div().id("titlebar-git-actions-overlay").into_any_element();
         }
 
-        if self.active_open_in_project_id(cx).is_none() {
+        if self.active_titlebar_task_project_id(cx).is_none() {
             return div().id("titlebar-git-actions-overlay").into_any_element();
         }
 
