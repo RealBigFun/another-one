@@ -851,4 +851,92 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.active_tab_id, "fresh");
     }
+
+    /// Smoke test against the live `projects.json` from the user's
+    /// config dir, copied into a tempdir so we never mutate live
+    /// state. `#[ignore]` so it doesn't run on CI / normal `cargo
+    /// test`. Run explicitly with:
+    ///
+    ///     cargo test -p another-one-core --lib smoke_migrate_real_projects_json -- --ignored --nocapture
+    ///
+    /// Asserts the migration outcome, the JSON → .bak rename, the
+    /// SQLite file is non-empty, the blob round-trips with the
+    /// expected order-of-magnitude size, the row-level sections
+    /// table is empty on a fresh migration, and migrate is
+    /// idempotent on a second invocation.
+    #[test]
+    #[ignore]
+    fn smoke_migrate_real_projects_json() {
+        let xdg = dirs::home_dir()
+            .expect("home dir")
+            .join(".config/another-one/projects.json");
+        let real_json = if xdg.exists() {
+            xdg
+        } else {
+            let mac = dirs::home_dir()
+                .unwrap()
+                .join("Library/Application Support/another-one/projects.json");
+            assert!(mac.exists(), "no live projects.json found");
+            mac
+        };
+        let real_size = std::fs::metadata(&real_json).map(|m| m.len()).unwrap_or(0);
+        eprintln!("smoke: real projects.json size = {real_size} bytes");
+
+        let tmp = TempDir::new().unwrap();
+        let staged_json = tmp.path().join("projects.json");
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+        std::fs::copy(&real_json, &staged_json).expect("copy projects.json into staging dir");
+
+        let outcome = migrate_from_json(&staged_json, &db_path)
+            .expect("migrate_from_json must not error on a real projects.json");
+        eprintln!("smoke: migration outcome = {outcome:?}");
+        assert!(
+            matches!(outcome, MigrationOutcome::Migrated { .. }),
+            "expected Migrated, got {outcome:?}"
+        );
+
+        assert!(!staged_json.exists(), "projects.json should have been renamed");
+        let bak = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|s| s.starts_with("projects.json.bak."))
+                    .unwrap_or(false)
+            });
+        assert!(bak.is_some(), "no projects.json.bak.<ts> in {:?}", tmp.path());
+        assert_eq!(
+            bak.unwrap().metadata().map(|m| m.len()).unwrap_or(0),
+            real_size,
+            "backup size should match original"
+        );
+
+        let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+        eprintln!("smoke: state.sqlite size = {db_size} bytes (vs JSON {real_size})");
+        assert!(db_size > 0, "state.sqlite should be non-empty");
+
+        let adapter = SqliteProjectStorePersistence::open(db_path.clone()).unwrap();
+        let blob = adapter.load();
+        let blob_json = serde_json::to_string(&blob).expect("serialise loaded blob");
+        eprintln!("smoke: loaded blob size = {} bytes", blob_json.len());
+        assert!(
+            blob_json.len() as u64 > real_size / 4,
+            "loaded blob is suspiciously small ({} bytes vs {} on disk)",
+            blob_json.len(),
+            real_size
+        );
+
+        let sections = adapter.read_sections();
+        eprintln!("smoke: read_sections after migration = {} rows", sections.len());
+        assert!(
+            sections.is_empty(),
+            "fresh migration leaves the row-level sections table empty"
+        );
+
+        let again = migrate_from_json(&staged_json, &db_path).expect("second migrate");
+        assert!(matches!(again, MigrationOutcome::AlreadyMigrated));
+
+        eprintln!("smoke: ✓ migration round-trips a {real_size}-byte projects.json into SQLite");
+    }
 }
