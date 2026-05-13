@@ -1263,7 +1263,7 @@ impl From<&RepoRecord> for PersistedRepoV4 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoreFileV4 {
+pub(crate) struct StoreFileV4 {
     version: u8,
     #[serde(default)]
     repos: Vec<PersistedRepoV4>,
@@ -1297,7 +1297,7 @@ impl Default for StoreFileV4 {
     }
 }
 
-trait ProjectStorePersistence {
+pub(crate) trait ProjectStorePersistence {
     fn load(&self) -> StoreFileV4;
     fn save(&self, store: &StoreFileV4);
     fn path(&self) -> &Path;
