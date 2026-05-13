@@ -4,9 +4,69 @@
 
 #architecture · #state-sync · #persistence
 
-Status: **proposed**. Companion to [daemon-owned-state-authority.md](daemon-owned-state-authority.md).
+Status: **shipped**. Companion to [daemon-owned-state-authority.md](daemon-owned-state-authority.md).
+See [sqlite-persistence-audit.md](sqlite-persistence-audit.md) for the caller migration story.
 
-## Decision
+## What shipped (vs. what this doc originally proposed)
+
+The design below is the planning doc as written. The implementation took a more conservative path on the schema; this section is the authoritative summary of the as-shipped behaviour.
+
+**Schema (as shipped, v2):**
+
+```sql
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE app_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL);
+CREATE TABLE sections (section_id TEXT PRIMARY KEY, state_json TEXT NOT NULL);
+```
+
+Rather than the fully-normalised per-table schema sketched below (separate `repos` / `projects` / `tasks` / `tabs` / `ui_state` / `host_settings` tables), what shipped is:
+
+- One **whole-blob** `app_state` row carrying the full serialised `StoreFileV4` — same JSON the legacy `projects.json` carried.
+- One **row-level overlay** `sections` table for the hot-path section mutations (`set_section_state`, `update_task_tabs`, `remove_terminal_sections`).
+
+Reads merge the two: `ProjectStore::load_from_persistence` calls `persistence.load()` for the blob and `persistence.read_sections()` for the overlay, with overlay winning on collision. A full `save()` writes the blob and clears the overlay (the blob already contains the latest sections via per-task records).
+
+**Why the minimal schema:** the original sketch's win was "every mutation is one targeted row UPDATE". In practice the hot path that motivated the whole effort is *just* section mutations (PTY-storm-driven). Other mutations (theme, agents, host settings, project catalog) fire on user interaction — at most a handful per second. Whole-blob saves cost ~50 KB serialisation, which is fine at human-interaction rates but not at PTY-burst rates. Splitting only sections out captures the perf delta without the schema-design surface area the full normalisation would carry.
+
+**The persistence trait surface (as shipped):**
+
+```rust
+trait ProjectStorePersistence: Send + Sync + Debug {
+    fn load(&self) -> StoreFileV4;
+    fn save(&self, store: &StoreFileV4);
+    fn path(&self) -> &Path;
+
+    // Row-level overlay; default impl returns empty / falls back to save():
+    fn read_sections(&self) -> Vec<(String, PersistedSectionState)> { Vec::new() }
+    fn upsert_section(&self, id: &str, state: &PersistedSectionState, full_blob: &StoreFileV4) {
+        self.save(full_blob);
+    }
+    fn remove_section_rows(&self, ids: &[String], full_blob: &StoreFileV4) {
+        self.save(full_blob);
+    }
+}
+```
+
+The default-implementation pattern means `NoopPersistence` (test) and `InMemoryProjectStorePersistence` (test) keep working unchanged. Only `SqliteProjectStorePersistence` overrides the row-level methods.
+
+**What we deferred (intentionally):**
+
+- Per-row writes for non-section mutations. Theme changes, agent settings, host settings, project catalog mutations still rewrite the whole blob. Cheap at user-interaction rates; revisit if telemetry surfaces a hot mutation we missed.
+- The fully normalised schema (separate tables for projects/tasks/tabs/etc.). The trait + `Mutation` enum are the seam; later commits can add `upsert_project` / `upsert_task` / `delete_tabs` etc. without touching callers.
+- A benchmark proving the perf claim under PTY-storm load. The unit tests prove the *mechanism* (row writes don't touch the blob), but a real CDP-burst benchmark is a follow-up.
+
+**Sequencing as shipped:** 11 commits across two phases.
+
+| Phase | Commits | Lines |
+|---|---|---|
+| PR1 (state authority refactor) | foundation, daemon_host, app, lockdown | 4 commits, ~750 lines |
+| PR2 (SQLite swap) | scaffolding, schema, migration, swap+delete-SaveWorker, row-level, smoke test | 6 commits, ~1100 lines |
+
+The original design doc proposed two PRs; what shipped landed both on a single branch (`sqlite`) as 10 standalone commits + 1 smoke test commit, each independently bisectable.
+
+---
+
+## Decision (original planning text)
 
 Adopt SQLite (via `rusqlite` with the `bundled` feature) as the on-disk format for durable app state owned by the daemon. The current JSON store becomes a one-shot migration source and is retired after one release.
 
