@@ -9,12 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-#[cfg(not(test))]
-use std::sync::{Condvar, Mutex, OnceLock};
-#[cfg(not(test))]
-use std::thread;
-#[cfg(not(test))]
-use std::time::Duration;
+use std::sync::Arc;
 
 use crate::agents::{
     agent_executable_available, effective_enabled_agents, AgentProviderKind, TerminalLaunchConfig,
@@ -30,125 +25,13 @@ use daemon_proto::TerminalRestoreStatus;
 const LEGACY_STORE_VERSION: u8 = 3;
 const STORE_VERSION: u8 = 4;
 
-// ---------------------------------------------------------------
-// Background save writer (fix for #129; referenced from #125).
-// ---------------------------------------------------------------
-//
-// `ProjectStore::save()` used to `serde_json::to_string_pretty` the
-// full `StoreFile` inline on the caller's thread — which in the GUI
-// is the GPUI render thread. Under sustained sub-agent PTY output
-// (notably browser-tools / chrome-devtools MCP workloads) the
-// section-state persist path fires dozens of times per second, and
-// the render thread stalled for >2 s rebuilding JSON it had
-// rebuilt 80 ms earlier. The lockup watchdog in `app::leakscope`
-// caught four captures all rooted here.
-//
-// The writer owns a single-slot mailbox: each `save()` overwrites
-// the pending slot with its latest snapshot and signals the
-// condvar. The worker wakes, waits out a short debounce window so
-// a storm of saves collapses into one write, takes whatever
-// snapshot is most recent, and writes it synchronously on its own
-// thread. Lost intermediate snapshots are fine — the on-disk store
-// is a cache of the latest state, not an event log.
-//
-// Drop of the final `ProjectStore` flushes the mailbox once more
-// so the last save before process exit doesn't race the worker's
-// debounce sleep. Tests use the sync path via `#[cfg(test)]` so
-// assertions on file contents remain deterministic.
-//
-// The worker machinery is `#[cfg(not(test))]`-gated because tests
-// go through `write_store_sync` directly from `save()` — compiling
-// the worker unused in test builds produced five "never used"
-// warnings after #130 landed. Keeping the gate local to the worker
-// (rather than scattering `#[allow(dead_code)]`) means the test
-// binary doesn't carry a static OnceLock or a leaked Box it never
-// touches.
+// The 50 ms debounced background save worker that lived here
+// until the SQLite move (#129's fix) is gone. SQLite WAL gives
+// us atomic per-commit durability without the mailbox + worker
+// thread + Drop-time flush dance the JSON path needed. See
+// `core::sqlite_persistence` and
+// `docs/architecture/sqlite-persistence.md`.
 
-#[cfg(not(test))]
-struct SaveWorker {
-    pending: Mutex<Option<(PathBuf, StoreFileV4)>>,
-    cvar: Condvar,
-}
-
-#[cfg(not(test))]
-static SAVE_WORKER: OnceLock<&'static SaveWorker> = OnceLock::new();
-
-/// Collapse a storm of saves this wide into one disk write. 50 ms
-/// is short enough to be invisible to the user (the next load still
-/// sees the latest state if they close the app immediately) and
-/// long enough to absorb the 100+ Hz `persist_section_state` flurry
-/// a CDP sub-agent produces. See Drop impl for the end-of-life
-/// flush that covers the "exit inside the debounce window" race.
-#[cfg(not(test))]
-const SAVE_DEBOUNCE: Duration = Duration::from_millis(50);
-
-#[cfg(not(test))]
-fn save_worker() -> &'static SaveWorker {
-    SAVE_WORKER.get_or_init(|| {
-        // Leak the worker so it has a 'static lifetime without a
-        // heap indirection on every access. Cost is one allocation
-        // for the lifetime of the process.
-        let worker: &'static SaveWorker = Box::leak(Box::new(SaveWorker {
-            pending: Mutex::new(None),
-            cvar: Condvar::new(),
-        }));
-        thread::Builder::new()
-            .name("project-store-save".into())
-            .spawn(move || save_worker_loop(worker))
-            .expect("spawn project-store save thread");
-        worker
-    })
-}
-
-#[cfg(not(test))]
-fn save_worker_loop(worker: &'static SaveWorker) {
-    loop {
-        // Wait for at least one pending snapshot.
-        {
-            let mut guard = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
-            while guard.is_none() {
-                guard = worker.cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
-            }
-        }
-        // Let the burst settle. Any saves during this sleep land in
-        // the same mailbox slot and we'll pick up the latest below.
-        thread::sleep(SAVE_DEBOUNCE);
-        let snapshot = worker
-            .pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some((path, store)) = snapshot {
-            write_store_sync(&path, &store);
-        }
-    }
-}
-
-/// Drain the mailbox on the caller's thread. Used by
-/// [`ProjectStore::drop`] so the last save before app shutdown
-/// isn't lost to the debounce sleep.
-#[cfg(not(test))]
-fn flush_pending_save() {
-    if let Some(worker) = SAVE_WORKER.get().copied() {
-        let snapshot = worker
-            .pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some((path, store)) = snapshot {
-            write_store_sync(&path, &store);
-        }
-    }
-}
-
-fn write_store_sync<T: Serialize>(path: &Path, store: &T) {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(store) {
-        let _ = std::fs::write(path, json);
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepoDefaultCommitAction {
@@ -1297,55 +1180,41 @@ impl Default for StoreFileV4 {
     }
 }
 
-pub(crate) trait ProjectStorePersistence {
+pub(crate) trait ProjectStorePersistence: Send + Sync + std::fmt::Debug {
     fn load(&self) -> StoreFileV4;
     fn save(&self, store: &StoreFileV4);
+    /// Path-of-record for the persistence backend. Currently unused
+    /// by live code (the JSON adapter is gone; the SQLite adapter
+    /// owns its own path); retained on the trait so adapters that
+    /// need to expose it (tests, diagnostics) have one canonical
+    /// shape.
+    #[allow(dead_code)]
     fn path(&self) -> &Path;
 }
 
-#[derive(Debug, Clone)]
-struct JsonProjectStorePersistence {
+/// Test-only no-op persistence. Tests build `ProjectStore` from
+/// in-memory fixtures via `from_projects_for_test`; they don't
+/// exercise disk I/O on the live path. Production builds use
+/// [`crate::sqlite_persistence::SqliteProjectStorePersistence`].
+#[cfg(any(test, feature = "test-harness"))]
+#[derive(Debug)]
+struct NoopPersistence {
     path: PathBuf,
 }
 
-impl JsonProjectStorePersistence {
+#[cfg(any(test, feature = "test-harness"))]
+impl NoopPersistence {
     fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }
 
-impl ProjectStorePersistence for JsonProjectStorePersistence {
+#[cfg(any(test, feature = "test-harness"))]
+impl ProjectStorePersistence for NoopPersistence {
     fn load(&self) -> StoreFileV4 {
-        ProjectStore::read_from_disk(&self.path)
+        StoreFileV4::default()
     }
-
-    fn save(&self, store: &StoreFileV4) {
-        // Tests assert on file contents immediately after save(),
-        // so we keep the write synchronous under `#[cfg(test)]`.
-        // Production builds hand off to a background writer thread
-        // so save() doesn't stall the GPUI render thread (see #129):
-        // a CDP-heavy sub-agent produces enough PTY output to fire
-        // `persist_section_state` → `update_task_tabs` → `save()`
-        // dozens of times per second, and each synchronous
-        // `serde_json::to_string_pretty` over the full StoreFile was
-        // blocking render for >2s (captured by the #125 watchdog).
-        #[cfg(test)]
-        {
-            write_store_sync(&self.path, store);
-        }
-        #[cfg(not(test))]
-        {
-            let worker = save_worker();
-            let mut pending = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
-            // Single-slot mailbox: if a save was already queued, the
-            // newer snapshot wins — callers only care that the latest
-            // state is on disk, not that every intermediate revision
-            // is. That's the coalescing that makes a CDP burst cheap.
-            *pending = Some((self.path.clone(), store.clone()));
-            worker.cvar.notify_one();
-        }
-    }
-
+    fn save(&self, _store: &StoreFileV4) {}
     fn path(&self) -> &Path {
         &self.path
     }
@@ -1546,19 +1415,17 @@ pub struct ProjectStore {
     pub task_ids_by_root_project: HashMap<String, Vec<String>>,
     pub terminal_sections: HashMap<String, PersistedSectionState>,
     pub ui: UiState,
-    file_path: PathBuf,
-}
-
-impl Drop for ProjectStore {
-    fn drop(&mut self) {
-        // Synchronously drain any pending save so the final state
-        // before process/teardown is on disk. Cheap no-op when the
-        // background writer has already consumed the mailbox, and
-        // compiled out under `#[cfg(test)]` because tests use the
-        // direct sync-write path in `save()`.
-        #[cfg(not(test))]
-        flush_pending_save();
-    }
+    /// Persistence adapter. Production builds use
+    /// `SqliteProjectStorePersistence` (see
+    /// `core::sqlite_persistence`); test builds use `NoopPersistence`
+    /// or `InMemoryProjectStorePersistence`. `Arc<dyn>` because
+    /// `ProjectStore` derives `Clone` (the GPUI app keeps a render-
+    /// side mirror; the daemon's authoritative copy lives in
+    /// `RegistryState`) and we want every clone to hand its
+    /// `save()` to the same adapter — in particular the same
+    /// SQLite connection, so we don't pay
+    /// `rusqlite::Connection::open` on every save tick.
+    persistence: Arc<dyn ProjectStorePersistence>,
 }
 
 impl ProjectStore {
@@ -1601,14 +1468,13 @@ impl ProjectStore {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            // Unique tmpfile-name so concurrent tests don't trample
-            // each other on save(); not actually opened during tests
-            // unless `with_store_mut` is exercised (then a write
-            // succeeds harmlessly into the temp dir).
-            file_path: std::env::temp_dir().join(format!(
-                "another-one-test-store-{}.json",
-                uuid::Uuid::new_v4()
-            )),
+            // No-op persistence for fixtures: tests don't exercise
+            // disk I/O on the live path. Earlier this carried a
+            // tmpfile path; the path is decorative now since
+            // `NoopPersistence::save` is a no-op.
+            persistence: Arc::new(NoopPersistence::new(std::env::temp_dir().join(
+                format!("another-one-test-store-{}.sqlite", uuid::Uuid::new_v4()),
+            ))),
         };
         for task in &tasks {
             store
@@ -1624,7 +1490,6 @@ impl ProjectStore {
 
     #[hotpath::measure]
     pub fn load() -> Self {
-        let file_path = Self::config_path();
         // Pure-client binaries skip disk read — their store is fed
         // entirely by `absorb_projection` once the session pairs.
         // Reading from disk on a pure client risks loading a stale
@@ -1632,6 +1497,32 @@ impl ProjectStore {
         // schema-mismatch backups (the v0.1.18 bug class).
         #[cfg(not(feature = "daemon-host"))]
         {
+            // Pure-client persistence: nothing on disk, just an
+            // in-memory placeholder. The store is rebuilt from
+            // `absorb_projection` once the session pairs. The path
+            // is decorative — nothing reads it.
+            #[cfg(any(test, feature = "test-harness"))]
+            let persistence: Arc<dyn ProjectStorePersistence> =
+                Arc::new(NoopPersistence::new(PathBuf::from("/dev/null")));
+            // Non-test pure-client builds also need a Send+Sync
+            // no-op. Reuse the test gate's NoopPersistence by
+            // making it available unconditionally on pure-client
+            // builds.
+            #[cfg(not(any(test, feature = "test-harness")))]
+            let persistence: Arc<dyn ProjectStorePersistence> = {
+                #[derive(Debug)]
+                struct NoopPureClient;
+                impl ProjectStorePersistence for NoopPureClient {
+                    fn load(&self) -> StoreFileV4 {
+                        StoreFileV4::default()
+                    }
+                    fn save(&self, _store: &StoreFileV4) {}
+                    fn path(&self) -> &Path {
+                        Path::new("/dev/null")
+                    }
+                }
+                Arc::new(NoopPureClient)
+            };
             let mut store = Self {
                 repos: HashMap::new(),
                 projects_by_id: HashMap::new(),
@@ -1642,19 +1533,66 @@ impl ProjectStore {
                 task_ids_by_root_project: HashMap::new(),
                 terminal_sections: HashMap::new(),
                 ui: UiState::default(),
-                file_path,
+                persistence,
             };
             store.rebuild_runtime_views();
             store
         }
         #[cfg(feature = "daemon-host")]
         {
-            let persistence = JsonProjectStorePersistence::new(file_path);
-            Self::load_from_persistence(&persistence)
+            // First-launch migration: read legacy projects.json (if
+            // present) into state.sqlite, rename the JSON to
+            // `.bak.<ts>`. Idempotent — subsequent launches see the
+            // SQLite row and skip. Errors are logged but never
+            // panic; we proceed with whatever SQLite has (empty on
+            // first launch with no JSON, the imported state on
+            // first launch with a JSON, the existing state on every
+            // launch after).
+            let json_path = Self::config_path();
+            let db_path = crate::sqlite_persistence::default_state_db_path();
+            if let Err(err) =
+                crate::sqlite_persistence::migrate_from_json(&json_path, &db_path)
+            {
+                eprintln!("project_store: SQLite migration failed: {err}");
+            }
+            let persistence: Arc<dyn ProjectStorePersistence> = match crate::
+                sqlite_persistence::SqliteProjectStorePersistence::open(db_path.clone())
+            {
+                Ok(adapter) => Arc::new(adapter),
+                Err(err) => {
+                    // Catastrophic: SQLite couldn't be opened.
+                    // Fall back to a no-op so the app boots into
+                    // an empty store rather than panicking. The
+                    // user's data isn't lost — the JSON backup is
+                    // still on disk if migration ever ran.
+                    eprintln!("project_store: failed to open state.sqlite: {err}");
+                    #[cfg(any(test, feature = "test-harness"))]
+                    {
+                        Arc::new(NoopPersistence::new(db_path))
+                    }
+                    #[cfg(not(any(test, feature = "test-harness")))]
+                    {
+                        #[derive(Debug)]
+                        #[allow(dead_code)] // PathBuf field exists only so path() has something to return
+                        struct NoopFallback(PathBuf);
+                        impl ProjectStorePersistence for NoopFallback {
+                            fn load(&self) -> StoreFileV4 {
+                                StoreFileV4::default()
+                            }
+                            fn save(&self, _store: &StoreFileV4) {}
+                            fn path(&self) -> &Path {
+                                &self.0
+                            }
+                        }
+                        Arc::new(NoopFallback(db_path))
+                    }
+                }
+            };
+            Self::load_from_persistence(persistence)
         }
     }
 
-    fn load_from_persistence(persistence: &impl ProjectStorePersistence) -> Self {
+    fn load_from_persistence(persistence: Arc<dyn ProjectStorePersistence>) -> Self {
         let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
             persistence.load().into_parts();
         let mut store = Self {
@@ -1667,7 +1605,7 @@ impl ProjectStore {
             task_ids_by_root_project,
             terminal_sections: sections,
             ui: UiState::default(),
-            file_path: persistence.path().to_path_buf(),
+            persistence,
         };
         store.sanitize();
         store.rebuild_runtime_views();
@@ -2470,23 +2408,14 @@ impl ProjectStore {
 
     #[hotpath::measure]
     pub fn save(&self) {
-        // Pure-client binaries (mobile, future embedded web) build
-        // without `daemon-host` and short-circuit save() to a
-        // no-op. The daemon owns persistence; the client mirrors
-        // state from the projection. This is the role split the
-        // v0.1.18 store-corruption bug surfaced — a pure-client
-        // binary that round-tripped through save() could clobber
-        // the daemon's authoritative file with a partial copy.
-        #[cfg(not(feature = "daemon-host"))]
-        {
-            let _ = self;
-            return;
-        }
-        #[cfg(feature = "daemon-host")]
-        {
-            let persistence = JsonProjectStorePersistence::new(self.file_path.clone());
-            persistence.save(&self.snapshot_for_save());
-        }
+        // Pure-client builds carry a no-op persistence (see `load`),
+        // so this is uniformly a virtual-call delegate. The daemon
+        // owns durable state; the client mirrors it from the
+        // projection. Even if a pure-client save() were a real
+        // write, the no-op adapter wouldn't touch disk — which is
+        // the v0.1.18 bug-class invariant: pure-client binaries
+        // must never clobber the daemon's authoritative store.
+        self.persistence.save(&self.snapshot_for_save());
     }
 
     /// Assemble the on-disk representation from the in-memory store.
@@ -3530,11 +3459,7 @@ impl ProjectStore {
                                 *tasks = serde_json::Value::Array(arr);
                             }
                         }
-                        serde_json::from_value::<StoreFileV4>(value).inspect(|migrated| {
-                            // Persist the normalised shape so the next
-                            // load takes the strict path.
-                            write_store_sync(path, migrated);
-                        })
+                        serde_json::from_value::<StoreFileV4>(value)
                     })
                     .unwrap_or_else(|_| {
                         Self::backup_incompatible_store(path);
@@ -3543,11 +3468,7 @@ impl ProjectStore {
             }
             Some(version) if version == u64::from(LEGACY_STORE_VERSION) => {
                 serde_json::from_value::<StoreFile>(value)
-                    .map(|store| {
-                        let migrated = StoreFileV4::from_legacy(store);
-                        write_store_sync(path, &migrated);
-                        migrated
-                    })
+                    .map(|store| StoreFileV4::from_legacy(store))
                     .unwrap_or_else(|_| {
                         Self::backup_incompatible_store(path);
                         StoreFileV4::default()
@@ -5484,6 +5405,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
+    use std::sync::Arc;
+
+    use super::NoopPersistence;
 
     use crate::agents::{
         AgentProviderKind, TerminalLaunchConfig, TerminalSessionKind, TerminalSessionRef,
@@ -5550,9 +5474,10 @@ mod tests {
             tasks: Vec::new(),
             ui: UiState::default(),
         };
-        let persistence = InMemoryProjectStorePersistence::new(file);
+        let persistence: Arc<dyn super::ProjectStorePersistence> =
+            Arc::new(InMemoryProjectStorePersistence::new(file));
 
-        let store = super::ProjectStore::load_from_persistence(&persistence);
+        let store = super::ProjectStore::load_from_persistence(persistence);
 
         assert_eq!(
             store.project("root").map(|project| &project.name),
@@ -5807,7 +5732,7 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: super::UiState::default(),
-            file_path,
+            persistence: Arc::new(NoopPersistence::new(file_path)),
         };
         store.refresh_runtime_views();
         store
@@ -7203,7 +7128,7 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: super::UiState::default(),
-            file_path: PathBuf::from("/tmp/projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/projects.json"))),
         };
         store.refresh_runtime_views();
 
@@ -7252,7 +7177,7 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: super::UiState::default(),
-            file_path: PathBuf::from("/tmp/projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/projects.json"))),
         };
         store.refresh_runtime_views();
 
@@ -7405,7 +7330,7 @@ mod tests {
                 last_active_section_id: Some("wt::feature/worktree::task-worktree".to_string()),
                 ..UiState::default()
             },
-            file_path: PathBuf::from("/tmp/projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/projects.json"))),
         };
         store.refresh_runtime_views();
 
@@ -7605,7 +7530,7 @@ mod tests {
                 last_active_section_id: Some("wt::feature/worktree::task-worktree".to_string()),
                 ..UiState::default()
             },
-            file_path: PathBuf::from("/tmp/projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/projects.json"))),
         };
         store.refresh_runtime_views();
 
@@ -7698,7 +7623,7 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: super::UiState::default(),
-            file_path: PathBuf::from("/tmp/projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/projects.json"))),
         };
         store.refresh_runtime_views();
 
@@ -7859,7 +7784,7 @@ mod tests {
                 ]),
                 ..super::UiState::default()
             },
-            file_path: PathBuf::from("/tmp/test-projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
         };
 
         store.sanitize();
@@ -7889,7 +7814,7 @@ mod tests {
                 ])),
                 ..super::UiState::default()
             },
-            file_path: PathBuf::from("/tmp/test-projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
         };
 
         let available = vec![OpenInAppKind::Cursor, OpenInAppKind::VsCode];
@@ -8105,8 +8030,9 @@ mod tests {
 
     #[test]
     fn theme_mode_persists_to_store_file() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
-        let file_path = temp_dir.path().join("projects.json");
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
+            StoreFileV4::default(),
+        ));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8117,32 +8043,20 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            file_path: file_path.clone(),
+            persistence: persistence.clone() as Arc<dyn super::ProjectStorePersistence>,
         };
 
         store.set_theme_mode(super::ThemeMode::Dark);
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert_eq!(saved.ui.theme_mode, super::ThemeMode::Dark);
-        assert!(
-            fs::read_to_string(&file_path)
-                .expect("saved config should exist")
-                .contains("\"theme_mode\""),
-            "saved config should materialize the theme preference field"
-        );
-
-        let (_, _, _, _, _, _, reloaded_ui) =
-            super::ProjectStore::read_from_disk(&file_path).into_parts();
-        assert_eq!(reloaded_ui.theme_mode, super::ThemeMode::Dark);
     }
 
     #[test]
     fn theme_mode_persists_when_setting_default_system() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
-        let file_path = temp_dir.path().join("projects.json");
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
+            StoreFileV4::default(),
+        ));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8153,25 +8067,20 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            file_path: file_path.clone(),
+            persistence: persistence.clone() as Arc<dyn super::ProjectStorePersistence>,
         };
 
         store.set_theme_mode(super::ThemeMode::System);
 
-        let saved_json = fs::read_to_string(&file_path).expect("saved config should exist");
-        let saved: StoreFileV4 =
-            serde_json::from_str(&saved_json).expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert_eq!(saved.ui.theme_mode, super::ThemeMode::System);
-        assert!(
-            saved_json.contains("\"theme_mode\""),
-            "setting the already-selected default should still persist the field"
-        );
     }
 
     #[test]
     fn git_commit_generation_script_helpers_persist_and_reset() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
-        let file_path = temp_dir.path().join("projects.json");
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
+            StoreFileV4::default(),
+        ));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8182,17 +8091,14 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            file_path: file_path.clone(),
+            persistence: persistence.clone() as Arc<dyn super::ProjectStorePersistence>,
         };
 
         let custom_script = "Use conventional commits.";
         assert!(store.set_git_commit_generation_script(custom_script));
         assert_eq!(store.git_commit_generation_script(), custom_script);
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert_eq!(
             saved.ui.git_commit_generation_script.as_deref(),
             Some(custom_script)
@@ -8204,17 +8110,15 @@ mod tests {
             crate::git_actions::default_commit_generation_script()
         );
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert!(saved.ui.git_commit_generation_script.is_none());
     }
 
     #[test]
     fn git_pr_generation_script_helpers_persist_and_reset() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
-        let file_path = temp_dir.path().join("projects.json");
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
+            StoreFileV4::default(),
+        ));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8225,17 +8129,14 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            file_path: file_path.clone(),
+            persistence: persistence.clone() as Arc<dyn super::ProjectStorePersistence>,
         };
 
         let custom_script = "Return a concise PR title followed by a reviewer-focused body.";
         assert!(store.set_git_pr_generation_script(custom_script));
         assert_eq!(store.git_pr_generation_script(), custom_script);
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert_eq!(
             saved.ui.git_pr_generation_script.as_deref(),
             Some(custom_script)
@@ -8247,10 +8148,7 @@ mod tests {
             crate::git_actions::default_pr_generation_script()
         );
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert!(saved.ui.git_pr_generation_script.is_none());
     }
 
@@ -8349,8 +8247,9 @@ mod tests {
 
     #[test]
     fn store_agent_launch_arg_helpers_persist_add_and_remove() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
-        let file_path = temp_dir.path().join("projects.json");
+        let persistence = Arc::new(InMemoryProjectStorePersistence::new(
+            StoreFileV4::default(),
+        ));
         let mut store = super::ProjectStore {
             repos: HashMap::new(),
             projects_by_id: HashMap::new(),
@@ -8361,7 +8260,7 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            file_path: file_path.clone(),
+            persistence: persistence.clone() as Arc<dyn super::ProjectStorePersistence>,
         };
 
         assert!(store
@@ -8371,10 +8270,7 @@ mod tests {
             ["--yolo".to_string(), "--profile".to_string()]
         );
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert_eq!(
             saved.ui.agent_launch_args.get("codex"),
             Some(&vec!["--yolo".to_string(), "--profile".to_string()])
@@ -8383,10 +8279,7 @@ mod tests {
         assert!(store.remove_agent_launch_args("codex"));
         assert!(store.agent_launch_args("codex").is_empty());
 
-        let saved: StoreFileV4 = serde_json::from_str(
-            &fs::read_to_string(&file_path).expect("saved config should exist"),
-        )
-        .expect("saved config should deserialize");
+        let saved: StoreFileV4 = persistence.saved_snapshot();
         assert!(!saved.ui.agent_launch_args.contains_key("codex"));
     }
 
@@ -8402,7 +8295,7 @@ mod tests {
             task_ids_by_root_project: HashMap::new(),
             terminal_sections: HashMap::new(),
             ui: UiState::default(),
-            file_path: PathBuf::from("/tmp/test-projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
         };
 
         assert_eq!(
@@ -8475,7 +8368,7 @@ mod tests {
                 default_agent_id: Some("codex".to_string()),
                 ..UiState::default()
             },
-            file_path: PathBuf::from("/tmp/test-projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
         };
 
         assert_eq!(
@@ -8517,7 +8410,7 @@ mod tests {
                 default_agent_id: Some("codex".to_string()),
                 ..UiState::default()
             },
-            file_path: PathBuf::from("/tmp/test-projects.json"),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from("/tmp/test-projects.json"))),
         };
 
         assert_eq!(store.default_agent_id(), Some("codex"));

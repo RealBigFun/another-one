@@ -5,21 +5,23 @@
 //! single-file SQLite database (`state.sqlite`) opened in WAL mode
 //! with `synchronous=NORMAL`.
 //!
-//! Sequencing (this is commit B — schema + adapter):
+//! The historical sequencing of this work was:
 //!
-//! 1. ~~A — scaffolding.~~ Empty module + `rusqlite` dep landed.
-//! 2. **B — schema + adapter (this commit).** Adds
-//!    `SqliteProjectStorePersistence` implementing
-//!    `ProjectStorePersistence`. Single-row whole-blob storage:
-//!    one JSON column for the entire `StoreFileV4`. The per-row
-//!    schema in the design doc is the eventual destination, but
-//!    landing it in one PR with the adapter swap risks subtle
-//!    schema-design churn under feature pressure. This commit only
-//!    swaps *where the JSON lives*; structural changes are follow-ups.
-//! 3. **C — migration.** First-launch import from `projects.json` v4.
-//! 4. **D — swap + delete `SaveWorker`.** SqliteAdapter goes live;
-//!    the 50 ms debounce thread (#129) goes away because WAL gives
-//!    durability per commit.
+//! - **A** — scaffolding (rusqlite dep, connection-open helper).
+//! - **B** — `SqliteProjectStorePersistence` implementing
+//!   `ProjectStorePersistence`, single-row whole-blob storage.
+//! - **C** — `migrate_from_json` for first-launch import from
+//!   the legacy `projects.json`.
+//! - **D** — wired live: `ProjectStore::load()` runs the migration
+//!   then opens the SQLite adapter; `ProjectStore::save()` is a thin
+//!   delegate. The 50 ms debounced background writer (#129) is gone
+//!   because WAL gives durability per commit.
+//!
+//! Whole-blob storage is still in effect: the entire `StoreFileV4`
+//! is one JSON column on the singleton `app_state` row. The per-row
+//! schema in the design doc (sections / tabs / projects as separate
+//! tables) is the eventual destination but lands incrementally
+//! against real workloads, not as a big-bang re-shape.
 //!
 //! Why bundled SQLite (`rusqlite/bundled`): greenfield desktop app
 //! shipped on mac and linux. We don't want the runtime persistence
@@ -32,7 +34,8 @@
 //! state-authority lock. Async + a connection pool would be friction
 //! for zero gain.
 
-#![allow(dead_code)] // commit B: the adapter exists but isn't wired live yet (commit D)
+#![allow(dead_code)] // some helpers (default_state_db_path, schema_version) are
+                     // surface-level and used only by tests / future code.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -154,6 +157,20 @@ fn read_schema_version(conn: &Connection) -> rusqlite::Result<i64> {
 pub(crate) struct SqliteProjectStorePersistence {
     path: PathBuf,
     conn: Mutex<Connection>,
+}
+
+impl std::fmt::Debug for SqliteProjectStorePersistence {
+    /// Manual `Debug` because `rusqlite::Connection` doesn't impl
+    /// `Debug` and the persistence trait now requires it (so we can
+    /// derive `Debug` on `ProjectStore` without dropping it from the
+    /// outer type's debug output). The connection's internal state
+    /// isn't useful in logs anyway — the path is the identifier
+    /// that matters.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteProjectStorePersistence")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SqliteProjectStorePersistence {
