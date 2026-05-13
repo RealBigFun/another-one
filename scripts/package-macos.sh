@@ -192,9 +192,13 @@ build_args=(build -p "$PACKAGE_NAME" -p "$SHIM_NAME" --release)
 if [[ -n "$TARGET_TRIPLE" ]]; then
   build_args+=(--target "$TARGET_TRIPLE")
 fi
+cargo_cmd=(cargo)
+if command -v rustup >/dev/null 2>&1; then
+  cargo_cmd=("$(rustup which cargo)")
+fi
 (
   cd "$ROOT_DIR"
-  cargo "${build_args[@]}"
+  "${cargo_cmd[@]}" "${build_args[@]}"
 )
 
 if [[ ! -x "$BINARY_PATH" ]]; then
