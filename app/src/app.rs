@@ -7242,7 +7242,13 @@ impl AnotherOneApp {
             .as_ref()
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(crate::new_task_modal::generate_task_name);
+            .unwrap_or_else(|| {
+                if branch_name.trim().is_empty() {
+                    crate::new_task_modal::generate_task_name()
+                } else {
+                    branch_name.clone()
+                }
+            });
         let project_path = req.cwd.clone().unwrap_or_else(|| project.path.clone());
 
         // `client_open_task` is the synchronous task-create verb
@@ -9839,11 +9845,15 @@ impl AnotherOneApp {
                 // GUI submit funnels through the same client-trait
                 // verb that MCP uses; `warm_launch_hint` carries the
                 // GUI's prewarm fast-path, MCP leaves it None.
-                let resolved_name = resolved_task_name(&task_name, &generated_task_name);
+                let requested_name = task_name
+                    .trim()
+                    .is_empty()
+                    .then_some(None)
+                    .unwrap_or_else(|| Some(task_name.trim().to_string()));
                 let req = OpenTaskRequest {
                     client_id: ClientId::gui_desktop(),
                     project_id: project_id.clone(),
-                    task_name: Some(resolved_name.clone()),
+                    task_name: requested_name,
                     branch_name: if source_branch.is_empty() {
                         None
                     } else {
@@ -9856,8 +9866,15 @@ impl AnotherOneApp {
                     warm_launch_hint: warm_launch_id,
                 };
                 match self.client_open_task(req, cx) {
-                    Ok(_) => {
+                    Ok(response) => {
                         self.new_task_modal = None;
+                        let resolved_name = self
+                            .project_store
+                            .task(&response.task_id)
+                            .map(|task| task.name.clone())
+                            .unwrap_or_else(|| {
+                                resolved_task_name(&task_name, &generated_task_name)
+                            });
                         let branch_label = self
                             .project_store
                             .project(&project_id)
