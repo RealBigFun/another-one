@@ -5141,6 +5141,11 @@ impl AnotherOneApp {
 
     fn persist_section_state(&mut self, section_id: &SectionId, persisted: PersistedSectionState) {
         let store_key = section_id.store_key();
+        apply_persisted_section_state_to_project_store(
+            &mut self.project_store,
+            section_id,
+            persisted.clone(),
+        );
         let Ok(value) = serde_json::to_value(&persisted) else {
             log::warn!("persist_section_state: failed to serialise PersistedSectionState");
             return;
@@ -6894,6 +6899,28 @@ impl AnotherOneApp {
         }
     }
 
+    fn sync_workspace_section_to_project_store(
+        &mut self,
+        section_id: &SectionId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let persisted = self
+            .workspace_pane
+            .read(cx)
+            .section_states
+            .get(section_id)
+            .map(SectionState::to_persisted);
+        let Some(persisted) = persisted else {
+            return false;
+        };
+        apply_persisted_section_state_to_project_store(
+            &mut self.project_store,
+            section_id,
+            persisted,
+        );
+        true
+    }
+
     /// Persist + sync after a direct GUI mutation. Replaces the
     /// scattered `self.project_store.save();
     /// self.sync_registry_project_store();` pattern with a single
@@ -7315,6 +7342,7 @@ impl AnotherOneApp {
         let tab_id = added_tab_id.ok_or_else(|| {
             anyhow::anyhow!("could not add tab to section {}", section_id.store_key())
         })?;
+        self.sync_workspace_section_to_project_store(&section_id, cx);
 
         if req.focus_after_open {
             self.client_focus.insert(
@@ -7534,6 +7562,7 @@ impl AnotherOneApp {
         if removed.is_none() {
             anyhow::bail!("close_tab: workspace declined to remove tab {}", req.tab_id);
         }
+        self.sync_workspace_section_to_project_store(&section_id, cx);
         self.emit_client_event(ClientEvent::TabClosed {
             originator: req.client_id,
             tab_id: req.tab_id.clone(),
@@ -9978,6 +10007,8 @@ impl AnotherOneApp {
                 cx,
             );
         });
+        self.sync_workspace_section_to_project_store(&section_id, cx);
+        self.sync_registry_project_store();
         self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
         if let (Some(key), Some(launch_config)) = (self.active_terminal_key(cx), launch_config) {
             self.attach_or_start_prewarmed_terminal(
@@ -13285,6 +13316,18 @@ fn reconcile_projected_section_state(
     PersistedSectionState::reconcile_projection(Some(&existing.to_persisted()), projected)
 }
 
+fn apply_persisted_section_state_to_project_store(
+    project_store: &mut ProjectStore,
+    section_id: &SectionId,
+    persisted: PersistedSectionState,
+) {
+    if let Some(task_id) = section_id.task_id.as_deref() {
+        project_store.update_task_tabs(task_id, &persisted);
+    } else {
+        project_store.set_terminal_section(section_id.store_key(), persisted);
+    }
+}
+
 fn should_apply_cross_client_focus_to_workspace(actor: &ClientId, target: &ClientId) -> bool {
     target == &ClientId::gui_desktop() && actor == &ClientId::gui_desktop()
 }
@@ -13905,6 +13948,101 @@ mod tests {
         let reconciled = reconcile_projected_section_state(&existing, projected);
 
         assert_eq!(reconciled.active_tab_id, "0");
+    }
+
+    #[cfg(feature = "test-harness")]
+    #[test]
+    fn persisted_task_section_state_updates_task_tab_projection() {
+        let project = sample_project("root", "main");
+        let task = sample_task(
+            "task-1",
+            "Task",
+            TaskKind::Direct,
+            "root",
+            "root",
+            "main",
+            None,
+        );
+        let section_id = SectionId::for_task("root", "main", "task-1");
+        let mut store =
+            crate::project_store::ProjectStore::from_projects_for_test(vec![project], vec![task]);
+
+        super::apply_persisted_section_state_to_project_store(
+            &mut store,
+            &section_id,
+            PersistedSectionState {
+                active_tab_id: "b".to_string(),
+                next_tab_id: 3,
+                cwd: Some(PathBuf::from("/tmp/root")),
+                tabs: vec![
+                    shell_tab(0, "Terminal"),
+                    agent_tab("b", "Codex", AgentProviderKind::Codex),
+                ],
+            },
+        );
+
+        let task = store
+            .tasks
+            .get("root")
+            .and_then(|tasks| tasks.iter().find(|task| task.id == "task-1"))
+            .expect("task should still exist in projected task list");
+        assert_eq!(
+            task.tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0", "b"]
+        );
+        assert_eq!(task.active_tab_id, "b");
+    }
+
+    #[cfg(feature = "test-harness")]
+    #[test]
+    fn persisted_task_section_state_removes_closed_tabs_from_projection() {
+        let project = sample_project("root", "main");
+        let mut task = sample_task(
+            "task-1",
+            "Task",
+            TaskKind::Direct,
+            "root",
+            "root",
+            "main",
+            None,
+        );
+        task.tabs = vec![
+            shell_tab(0, "Terminal"),
+            agent_tab("b", "Codex", AgentProviderKind::Codex),
+        ];
+        task.active_tab_id = "b".to_string();
+        task.next_tab_id = 3;
+        let section_id = SectionId::for_task("root", "main", "task-1");
+        let mut store =
+            crate::project_store::ProjectStore::from_projects_for_test(vec![project], vec![task]);
+
+        super::apply_persisted_section_state_to_project_store(
+            &mut store,
+            &section_id,
+            PersistedSectionState {
+                active_tab_id: "0".to_string(),
+                next_tab_id: 3,
+                cwd: Some(PathBuf::from("/tmp/root")),
+                tabs: vec![shell_tab(0, "Terminal")],
+            },
+        );
+
+        let task = store
+            .tasks
+            .get("root")
+            .and_then(|tasks| tasks.iter().find(|task| task.id == "task-1"))
+            .expect("task should still exist in projected task list");
+        assert_eq!(
+            task.tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0"]
+        );
+        assert_eq!(task.active_tab_id, "0");
     }
 
     #[test]

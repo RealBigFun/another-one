@@ -2017,7 +2017,7 @@ fn mcp_sync_errors(report: HashMap<AgentProviderKind, anyhow::Result<()>>) -> Ve
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-harness"))]
 mod tests {
     use super::*;
     use another_one_core::project_store::{Project, Task, TaskKind, TaskWorktree};
