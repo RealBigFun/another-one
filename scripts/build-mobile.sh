@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Build the mobile (Android) APK from a clean workspace state.
+# Build the native Android APK from a clean workspace state.
+#
+# This is the current non-Flutter Android path: cargo-ndk builds the
+# Rust `another-one` library and Gradle packages it into a NativeActivity APK.
+# The historical script name is kept so existing workflows keep working.
 #
 # Pure-client build: passes --no-default-features so the daemon-host
 # feature is excluded. ProjectStore::save / load are no-ops, the

@@ -218,6 +218,22 @@ impl RegistryState {
         let _ = self.state_change_tx.send(());
     }
 
+    /// Commit one durable project-store mutation through the daemon
+    /// state authority path: apply the caller's mutation, persist the
+    /// latest snapshot, then publish exactly one state-change tick so
+    /// connected sessions re-project from the committed state.
+    pub(crate) fn commit_project_store_mutation<R>(
+        &mut self,
+        f: impl FnOnce(&mut ProjectStore) -> R,
+    ) -> R {
+        let result = f(&mut self.project_store);
+        // `ProjectStore::save` swallows errors internally (logs +
+        // returns ()); there is no Result to map at the registry seam.
+        self.project_store.save();
+        self.notify_state_changed();
+        result
+    }
+
     /// Announce that `viewer_id` is now watching `key` at
     /// `(cols, rows)` and recompute the per-tab min-across-viewers
     /// effective size. If the viewer was previously watching a
@@ -495,31 +511,14 @@ impl DesktopTerminalRegistry {
         Some(f(&mut guard))
     }
 
-    /// Mutator helper for daemon-side store writes: locks state,
-    /// runs `f` with `&mut ProjectStore`, then persists to disk and
-    /// fires the state-change broadcast so connected sessions push
-    /// a fresh `WorkerReply::ProjectList` to peers. Use from every
-    /// `Control::*` handler that mutates the store.
-    ///
-    /// Save errors are logged but not surfaced — keeping them out of
-    /// the trait return type means call-site authors can write
-    /// "match the existing GUI mutator" without worrying about
-    /// per-handler error mapping. A failed save is exotic enough
-    /// (disk full / permissions) that the daemon's `tracing` log is
-    /// the right surface anyway.
+    /// Mutator helper for daemon-side store writes: locks state and
+    /// delegates to `RegistryState::commit_project_store_mutation`,
+    /// the single commit point for persistence + projection broadcast
+    /// effects. Use from every `Control::*` handler that mutates the
+    /// store.
     #[allow(dead_code)] // call-site migrations land in commits 6–9
     fn with_store_mut<R>(&self, f: impl FnOnce(&mut ProjectStore) -> R) -> Option<R> {
-        self.with_state(|state| {
-            let result = f(&mut state.project_store);
-            // `ProjectStore::save` swallows errors internally
-            // (logs + returns ()); no Result to map here.
-            state.project_store.save();
-            // Fire the broadcast tick so every connected session's
-            // push pump sends a fresh ProjectList. Single primitive
-            // on `RegistryState` — see #136.
-            state.notify_state_changed();
-            result
-        })
+        self.with_state(|state| state.commit_project_store_mutation(f))
     }
 
     /// Refresh the daemon-side resource-usage sample using the
@@ -1715,12 +1714,13 @@ fn key_from_wire(section_id: &str, tab_id: &str) -> Option<TerminalRuntimeKey> {
 /// `task_ids_by_root_project`.
 fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
     let store = &state.project_store;
-    store
+    let views = store.project_runtime_views();
+    views
         .projects
         .iter()
         .filter(|project| project.kind == CoreProjectKind::Root)
         .map(|project| {
-            let tasks = store
+            let tasks = views
                 .tasks
                 .get(&project.id)
                 .cloned()
@@ -1750,8 +1750,8 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
 /// `set_task_pinned`) to return the post-mutation projection inline
 /// per the trait contract.
 fn task_summary_for(state: &RegistryState, task_id: &str) -> Option<TaskSummary> {
-    let task = state
-        .project_store
+    let views = state.project_store.project_runtime_views();
+    let task = views
         .tasks
         .values()
         .flatten()
@@ -1768,34 +1768,7 @@ fn task_summary_for(state: &RegistryState, task_id: &str) -> Option<TaskSummary>
 /// state change and that silently wiped the locally-resolved
 /// branch catalog.
 fn repo_summaries(state: &RegistryState) -> Vec<daemon_proto::RepoSummary> {
-    let store = &state.project_store;
-    store
-        .repos
-        .values()
-        .map(|repo| {
-            let branches = repo
-                .branch_order
-                .iter()
-                .filter_map(|name| repo.branches_by_name.get(name))
-                .map(|branch| daemon_proto::RepoBranchSummary {
-                    name: branch.name.clone(),
-                    last_commit_relative: branch.last_commit_relative.clone(),
-                    is_default: branch.is_default,
-                    ahead_count: branch.ahead_count,
-                    behind_count: branch.behind_count,
-                })
-                .collect();
-            daemon_proto::RepoSummary {
-                id: repo.id.clone(),
-                common_dir: repo
-                    .common_dir
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned()),
-                branch_order: repo.branch_order.clone(),
-                branches,
-            }
-        })
-        .collect()
+    state.project_store.repo_summaries()
 }
 
 fn task_to_summary(

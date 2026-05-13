@@ -1,5 +1,7 @@
 # 2026-04-23 · Relay path validated end-to-end on cellular
 
+> Historical/obsolete-context note: this postmortem references the abandoned Flutter/Dart mobile experiment. Keep the Iroh relay lessons, but do not treat the mobile-core/mobile-lib paths as current architecture.
+
 > After the LAN-direct path was working on the Pixel 7 Pro, we needed to
 > prove the dev relay could carry the connection off-LAN. Turned wifi off
 > on the phone, pushed a build whose default endpoint URL had **only** a

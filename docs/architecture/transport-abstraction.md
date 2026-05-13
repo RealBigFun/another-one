@@ -1,74 +1,59 @@
-# TerminalTransport abstraction
+# Transport abstraction
 
-> Every client talks to the daemon through the same interface: bytes in,
-> bytes out, plus a thin control channel. Swapping transport (WebSocket
-> → Iroh → in-process → …) is a one-impl change; UI code doesn't move.
+> Every client talks to the daemon through one session shape: typed control calls, pushed worker replies, and tagged PTY byte streams. Swapping transport (in-process, Iroh, future local sockets) should not change UI state code.
 
 #pattern
 
-## The interface
+## Current interface
 
-See `mobile/lib/src/transport.dart`:
+The source of truth is the Rust `daemon_transport::Session` trait and the shared wire types in `daemon-proto`:
 
-```dart
-abstract class TerminalTransport {
-  Stream<Uint8List> get incoming;       // PTY bytes from daemon
-  Stream<TransportStatus> get status;
-  TransportStatus get currentStatus;
+```rust
+pub trait Session: Send + Sync {
+    fn call(&self, control: daemon_proto::Control) -> SessionFuture<daemon_proto::WorkerReply>;
+    fn events(&self) -> Pin<Box<dyn Stream<Item = SessionEvent> + Send + '_>>;
+}
 
-  void connect();
-  void sendBytes(List<int> bytes);      // input bytes to daemon's PTY
-  void sendResize({required int cols, required int rows});
-  Future<void> close();
+pub enum SessionEvent {
+    PtyBytes { section_id: String, tab_id: String, bytes: Vec<u8> },
+    Push(daemon_proto::WorkerReply),
+    Lagged { skipped: u64 },
+    Closed { reason: Option<String> },
 }
 ```
 
-Exactly five verbs. Anything you'd conceivably want on a session
-(clipboard, paste bracket, focus hints) fits one of them, or becomes a
-specific JSON control message under `sendResize`-equivalent encoding.
+UI code submits durable actions as `Control` calls and consumes projections through `WorkerReply::ProjectList` pushes. PTY bytes stay byte streams keyed by `(section_id, tab_id)` so the terminal-wrapping principle remains intact.
 
-## Current implementations (Dart)
+## Current implementations
 
-- **`WebSocketTransport`** (`transport_websocket.dart`) — binary frames
-  carry PTY bytes; text frames carry JSON control (`resize`).
-- **`IrohTransport`** (`transport_iroh.dart`) — wraps the FRB-generated
-  `IrohSession`; QUIC bidi stream. Resize control currently dropped;
-  pending framing work on [[../apps/daemon-sandbox]]'s Iroh path.
+- **In-memory session** (`daemon-transport/src/in_memory.rs`) — used by the embedded desktop daemon and integration tests. Same request/reply/event semantics as remote transports, no network.
+- **Iroh session** (`daemon-client/src/session.rs`, `daemon/src/transport_iroh.rs`) — QUIC transport for paired clients. Carries the same `ControlEnvelope`, `WorkerReplyEnvelope`, and tagged PTY data frames defined in `daemon-proto`.
+- **UDS / MCP bridge** (`daemon-transport/src/uds.rs`, `daemon/src/transport_mcp.rs`) — local machine automation path that routes into the same daemon registry and dispatch layer.
 
-## How the UI stays clean
+## How UI stays clean
 
-`main.dart::_buildTransport(url)` is the *only* place in the widget tree
-that cares about URL schemes. The rest of the app holds a
-`TerminalTransport?` and talks to it. A future `IrohTransport`
-replacing `WebSocketTransport`, or an in-process variant for
-[[../architecture/peer-to-peer-nodes|desktop-as-client-of-itself]], is a
-local change there.
+The app owns a single session handle. Desktop receives an in-process session from `app/src/daemon_host.rs`; remote pairing replaces that handle with an Iroh-backed session. Call sites still use:
+
+- `session.call(Control::...)` for request/reply work;
+- `SessionEvent::Push(WorkerReply::ProjectList { .. })` for daemon projections;
+- `SessionEvent::PtyBytes { .. }` for terminal output.
+
+Client-side projection ingestion is shared in `AnotherOneApp::apply_latest_project_list_projection`: newest `ProjectList` wins, `ProjectStore::absorb_projection` applies the read model, expanded repo state is mirrored locally, and open section tabs reconcile through the section-state seam.
 
 ## Why the interface is this shape
 
-- **Byte streams both directions.** Keeps the
-  [[terminal-wrapping-principle]] intact — no structured messages about
-  agent output, ever.
-- **Control is an out-of-band sub-API** (`sendResize`). Control framing
-  differs by transport (WS: text frames; Iroh: type-byte length-prefixed
-  frames) but the Dart caller doesn't see that.
-- **Status is a first-class stream.** UI binds to it directly;
-  `connecting / connected / disconnected / error(detail)` is uniform
-  across transports.
-- **One-shot lifecycle.** `close()` is terminal; reconnecting is a new
-  transport instance. Keeps the state machine small.
+- **Typed control calls.** New app behavior is a `daemon_proto::Control` variant plus a daemon dispatch arm, not transport-specific UI code.
+- **Pushed projections.** State changes broadcast `WorkerReply::ProjectList` so clients converge without polling.
+- **Tagged PTY streams.** Every PTY chunk carries `(section_id, tab_id)`, preventing attach/focus races from routing output into the wrong tab.
+- **Transport status stays out-of-band.** Dial/pairing status belongs to the concrete client (`daemon-client::status`) while app state remains transport-independent.
 
 ## When to extend
 
-Resist adding a sixth verb. Most "new things" are either:
-- a new control message → encode it under the existing `sendResize`
-  pipeline (which really should be called `sendControl` in a
-  refactor);
-- a new status variant → extend `TransportStatus`.
+Prefer adding a `Control` variant or `WorkerReply` variant over adding transport-specific methods. Add a `SessionEvent` variant only when the event is transport-independent and every session implementation can define equivalent semantics.
 
-## On the Rust side
+## See also
 
-The `core` extraction in Phase 1 should introduce the same shape on the
-Rust side — a `TerminalClient` trait that the GPUI UI, a CLI tool, and
-any other in-process consumer implement. Keeps the peer-to-peer model
-in [[peer-to-peer-nodes]] internally consistent.
+- [[terminal-wrapping-principle]]
+- [[peer-to-peer-nodes]]
+- [[daemon-transport-rust]]
+- [[gui-mcp-unification]]

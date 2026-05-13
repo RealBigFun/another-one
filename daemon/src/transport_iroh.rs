@@ -41,8 +41,8 @@ use daemon_proto::{ALPN, PROTOCOL_VERSION};
 /// user-facing copy here would leak product UX text to an on-path
 /// observer. Clients match on this byte string and expand it into
 /// localisable copy ("Pairing expired — please re-scan the QR")
-/// in the UI. Keep in lockstep with the substring match in
-/// `mobile/lib/src/transport_iroh.dart::_statusForError`.
+/// in the UI. Keep in lockstep with client-side close-reason
+/// substring matching.
 pub const CLOSE_REASON_UNPAIRED: &[u8] = b"anotherone/unpaired";
 
 /// QUIC close reason for a peer whose `Control::Hello.protocol_version`

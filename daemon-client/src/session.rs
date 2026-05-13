@@ -1,18 +1,14 @@
 //! Live iroh client session: bind a local endpoint, connect to a
 //! daemon by pairing URL, send the `Hello` handshake, and pump frames
 //! until close. Streams PTY bytes and `WorkerReply`s back to the
-//! caller via `tokio::sync::mpsc` channels (the legacy
-//! `mobile-core::IrohSession` plumbed these into FRB `StreamSink`s;
-//! we leave them as plain channels and let the UI layer adapt).
+//! caller via `tokio::sync::mpsc` channels; UI layers adapt those
+//! channels to their own event loops.
 //!
-//! Ported from `mobile-core/src/api/iroh_client.rs` lines ~310-720.
-//! All `#[frb(...)]` attributes and `StreamSink` plumbing have been
-//! removed; UI code drains incoming bytes / worker replies via the
-//! polling [`Session::next_incoming_bytes`] /
-//! [`Session::next_worker_reply`] methods. Persistent secret keys
-//! (legacy `load_or_create_device_secret_key`) are deliberately
-//! omitted — every dial uses an ephemeral [`SecretKey::generate`].
-//! Persistence is a follow-up.
+//! UI code drains incoming bytes / worker replies via the polling
+//! [`Session::next_incoming_bytes`] / [`Session::next_worker_reply`]
+//! methods. Persistent secret keys are deliberately omitted — every
+//! dial uses an ephemeral [`SecretKey::generate`]. Persistence is a
+//! follow-up.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,8 +35,7 @@ use daemon_proto::{
 /// executor (or none at all — the GPUI desktop app drives this from
 /// its background executor); shuffling onto a dedicated multi-thread
 /// tokio runtime keeps iroh's UDP sockets and internal actors driven
-/// regardless of what the host is doing. Same shape as the legacy
-/// `mobile-core::tokio_rt`.
+/// regardless of what the host is doing.
 fn tokio_rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     RT.get_or_init(|| {

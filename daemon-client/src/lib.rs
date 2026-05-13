@@ -3,10 +3,8 @@
 //! Pairs with `daemon-sandbox`'s server-side transport: scans a
 //! pairing URL, dials the daemon's iroh endpoint over the
 //! `anotherone/pty/0` ALPN, and runs the bidirectional control/data
-//! frame protocol from the client side. Lifted from the legacy
-//! `mobile-core/src/api/iroh_client.rs` with FRB attributes stripped
-//! so it can be linked into the GPUI app (desktop + android cdylib)
-//! without dragging Flutter along.
+//! frame protocol from the client side. Shared by the GPUI app and
+//! Android library build without any UI-framework-specific bindings.
 //!
 //! Public surface is intentionally narrow — UI code dials by URL and
 //! pumps the resulting [`Session`] for status events and replies; all

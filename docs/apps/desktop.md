@@ -1,24 +1,22 @@
-# `desktop/` — AnotherOne GPUI app
+# `app/` — AnotherOne GPUI app
 
-The canonical desktop client. Rust + GPUI; currently the whole app's logic
-lives here and will be split in [[../architecture/peer-to-peer-nodes|Phase 1]]
-into a headless `core` crate and this thin GPUI shell.
+The canonical desktop client. Rust + GPUI, backed by shared `core`,
+`daemon`, `daemon-client`, and `daemon-transport` crates.
 
 ## Entry points
 
-- `desktop/src/main.rs` — GPUI bootstrap, font setup, window creation.
-- `desktop/src/app.rs` — `AnotherOneApp` entity holds all state (`ProjectStore`,
-  terminal sessions, git state, UI state). ~8.5k LOC today, scheduled for the
-  core-extraction split.
-- `desktop/src/project_store.rs` — persistence (single JSON at
-  `~/.config/another-one/projects.json`).
-- `desktop/src/terminal_runtime.rs` / `terminal_launch.rs` — PTY lifecycle
+- `app/src/main.rs` — GPUI bootstrap, font setup, window creation.
+- `app/src/app.rs` — `AnotherOneApp` entity owns the GPUI state and
+  applies daemon projections.
+- `core/src/project_store.rs` — app-state persistence and projection helpers.
+- `app/src/terminal_runtime.rs` / `core/src/terminal_launch.rs` — PTY lifecycle
   and alacritty-backed rendering.
+- `app/src/daemon_host.rs` — embedded daemon/session bridge for desktop.
 
 ## Running
 
 ```sh
-cargo run -p desktop
+cargo run -p another-one
 ```
 
 or the helper script `scripts/dev-watch.sh` for hot-rebuild on source
@@ -31,17 +29,16 @@ Build-time config worth knowing:
 ## Key dependencies
 
 - `gpui` 0.2 — Zed's UI framework.
-- `alacritty_terminal` 0.26 — VT emulator; same crate used by
-  [[mobile-core]] (so desktop and mobile agree on parsing).
+- `alacritty_terminal` 0.26 — VT emulator used by desktop terminal rendering.
 - `portable-pty` 0.9 — cross-platform PTY spawning. Also used by
   [[daemon-sandbox]].
 
 ## Direction
 
-Per [[../architecture/peer-to-peer-nodes]], this app becomes a *client* of
-its own embedded daemon once `core` is extracted. Its terminal UI will
-consume sessions through the same abstraction any other client (mobile,
-CLI) does — just via in-process calls instead of Iroh-over-LAN.
+Per [[../architecture/peer-to-peer-nodes]], this app is a *client* of
+its own embedded daemon. Its terminal UI consumes sessions through the
+same abstraction any other client does — via in-process calls locally or
+Iroh for paired clients.
 
 ## Known gaps
 

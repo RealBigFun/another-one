@@ -170,6 +170,50 @@ async fn boot_session_receives_initial_project_list_push() {
 }
 
 #[tokio::test]
+async fn persistent_ui_setting_mutations_project_updated_ui_snapshot() {
+    let (projects, tasks) = seed_one_project_one_task();
+    let mut harness = Harness::new_seeded(projects, tasks).await;
+    let _initial = harness.expect_push(Duration::from_millis(250)).await;
+
+    harness
+        .client
+        .call(Control::SetThemeMode {
+            mode_id: "dark".into(),
+        })
+        .await
+        .expect("SetThemeMode call");
+    let push = harness
+        .expect_push(Duration::from_millis(250))
+        .await
+        .expect("theme mutation push");
+    match push {
+        WorkerReply::ProjectList { ui, .. } => {
+            assert_eq!(ui.theme_mode.as_deref(), Some("dark"));
+        }
+        other => panic!("expected ProjectList push, got {other:?}"),
+    }
+
+    harness
+        .client
+        .call(Control::SetExpandedRepos {
+            expanded_repo_ids: vec!["p1".into()],
+        })
+        .await
+        .expect("SetExpandedRepos call");
+    let push = harness
+        .expect_push(Duration::from_millis(250))
+        .await
+        .expect("expanded repos mutation push");
+    match push {
+        WorkerReply::ProjectList { ui, .. } => {
+            assert_eq!(ui.expanded_repo_ids, vec!["p1".to_string()]);
+        }
+        other => panic!("expected ProjectList push, got {other:?}"),
+    }
+    harness.shutdown();
+}
+
+#[tokio::test]
 async fn mutation_broadcast_reaches_session_events() {
     let (projects, tasks) = seed_one_project_one_task();
     let mut harness = Harness::new_seeded(projects, tasks).await;

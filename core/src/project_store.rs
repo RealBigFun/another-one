@@ -769,6 +769,103 @@ pub struct PersistedSectionState {
     pub tabs: Vec<PersistedTerminalTab>,
 }
 
+impl PersistedSectionState {
+    pub fn active_tab_index(&self) -> usize {
+        self.tabs
+            .iter()
+            .position(|tab| tab.id == self.active_tab_id)
+            .unwrap_or_else(|| self.tabs.len().saturating_sub(1))
+    }
+
+    pub fn normalized(mut self) -> Self {
+        self.tabs.sort_by_key(|tab| !tab.pinned);
+        self.next_tab_id = self.next_tab_id.max(self.tabs.len());
+        if !self.tabs.iter().any(|tab| tab.id == self.active_tab_id) {
+            self.active_tab_id = self
+                .tabs
+                .get(self.active_tab_index())
+                .map(|tab| tab.id.clone())
+                .unwrap_or_default();
+        }
+        self
+    }
+
+    pub fn select_tab(&mut self, tab_id: &str) -> bool {
+        if !self.tabs.iter().any(|tab| tab.id == tab_id) || self.active_tab_id == tab_id {
+            return false;
+        }
+        self.active_tab_id = tab_id.to_string();
+        true
+    }
+
+    pub fn close_tab(&mut self, tab_id: &str) -> bool {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return false;
+        };
+        let was_active = self.active_tab_id == tab_id;
+        self.tabs.remove(index);
+        if was_active {
+            self.active_tab_id = self
+                .tabs
+                .get(index.min(self.tabs.len().saturating_sub(1)))
+                .map(|tab| tab.id.clone())
+                .unwrap_or_default();
+        }
+        true
+    }
+
+    pub fn append_tab(&mut self, tab: PersistedTerminalTab) {
+        self.active_tab_id = tab.id.clone();
+        self.tabs.push(tab);
+        self.next_tab_id = self.next_tab_id.max(self.tabs.len());
+    }
+
+    pub fn update_tab_title(&mut self, tab_id: &str, title: impl Into<String>) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+            return false;
+        };
+        let title = title.into();
+        if tab.title == title {
+            return false;
+        }
+        tab.title = title;
+        true
+    }
+
+    pub fn reconcile_projection(
+        existing: Option<&PersistedSectionState>,
+        mut projected: PersistedSectionState,
+    ) -> PersistedSectionState {
+        // Passive ProjectList snapshots may be stale relative to a local
+        // click/shortcut that already switched tabs. Preserve the local
+        // active tab whenever it still exists in the projected tab list. The
+        // narrow exception is tab creation: if the projection's active tab is
+        // newly introduced by this snapshot, honor it so newly-created
+        // tabs/tasks can become visible immediately.
+        if let Some(existing) = existing {
+            let local_active_tab_id = existing.active_tab_id.as_str();
+            let projected_has_local_active = !local_active_tab_id.is_empty()
+                && projected
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == local_active_tab_id);
+            let projected_active_is_new = !projected.active_tab_id.is_empty()
+                && projected
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == projected.active_tab_id)
+                && !existing
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == projected.active_tab_id);
+            if projected_has_local_active && !projected_active_is_new {
+                projected.active_tab_id = local_active_tab_id.to_string();
+            }
+        }
+        projected.normalized()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArchivedProjectActions {
     pub project_path: PathBuf,
@@ -1186,6 +1283,108 @@ impl Default for StoreFileV4 {
     }
 }
 
+trait ProjectStorePersistence {
+    fn load(&self) -> StoreFileV4;
+    fn save(&self, store: &StoreFileV4);
+    fn path(&self) -> &Path;
+}
+
+#[derive(Debug, Clone)]
+struct JsonProjectStorePersistence {
+    path: PathBuf,
+}
+
+impl JsonProjectStorePersistence {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl ProjectStorePersistence for JsonProjectStorePersistence {
+    fn load(&self) -> StoreFileV4 {
+        ProjectStore::read_from_disk(&self.path)
+    }
+
+    fn save(&self, store: &StoreFileV4) {
+        // Tests assert on file contents immediately after save(),
+        // so we keep the write synchronous under `#[cfg(test)]`.
+        // Production builds hand off to a background writer thread
+        // so save() doesn't stall the GPUI render thread (see #129):
+        // a CDP-heavy sub-agent produces enough PTY output to fire
+        // `persist_section_state` → `update_task_tabs` → `save()`
+        // dozens of times per second, and each synchronous
+        // `serde_json::to_string_pretty` over the full StoreFile was
+        // blocking render for >2s (captured by the #125 watchdog).
+        #[cfg(test)]
+        {
+            write_store_sync(&self.path, store);
+        }
+        #[cfg(not(test))]
+        {
+            let worker = save_worker();
+            let mut pending = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
+            // Single-slot mailbox: if a save was already queued, the
+            // newer snapshot wins — callers only care that the latest
+            // state is on disk, not that every intermediate revision
+            // is. That's the coalescing that makes a CDP burst cheap.
+            *pending = Some((self.path.clone(), store.clone()));
+            worker.cvar.notify_one();
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(any(test, feature = "test-harness"))]
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct InMemoryProjectStorePersistence {
+    path: PathBuf,
+    store: std::sync::Arc<std::sync::Mutex<StoreFileV4>>,
+    save_count: std::sync::Arc<std::sync::Mutex<usize>>,
+}
+
+#[cfg(any(test, feature = "test-harness"))]
+#[allow(dead_code)]
+impl InMemoryProjectStorePersistence {
+    fn new(store: StoreFileV4) -> Self {
+        Self {
+            path: std::env::temp_dir().join(format!(
+                "another-one-memory-store-{}.json",
+                uuid::Uuid::new_v4()
+            )),
+            store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+            save_count: std::sync::Arc::new(std::sync::Mutex::new(0)),
+        }
+    }
+
+    fn saved_snapshot(&self) -> StoreFileV4 {
+        self.store.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn save_count(&self) -> usize {
+        *self.save_count.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[cfg(any(test, feature = "test-harness"))]
+impl ProjectStorePersistence for InMemoryProjectStorePersistence {
+    fn load(&self) -> StoreFileV4 {
+        self.saved_snapshot()
+    }
+
+    fn save(&self, store: &StoreFileV4) {
+        *self.store.lock().unwrap_or_else(|e| e.into_inner()) = store.clone();
+        *self.save_count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl StoreFileV4 {
     fn from_legacy(store: StoreFile) -> Self {
         let StoreFile {
@@ -1317,6 +1516,12 @@ fn ordered_repo_records(repos: &HashMap<String, RepoRecord>) -> Vec<&RepoRecord>
 }
 
 #[derive(Debug, Clone)]
+pub struct ProjectRuntimeViews {
+    pub projects: Vec<Project>,
+    pub tasks: HashMap<String, Vec<Task>>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ProjectStore {
     pub repos: HashMap<String, RepoRecord>,
     projects_by_id: HashMap<String, Project>,
@@ -1430,38 +1635,43 @@ impl ProjectStore {
         }
         #[cfg(feature = "daemon-host")]
         {
-            let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
-                Self::read_from_disk(&file_path).into_parts();
-            let mut store = Self {
-                repos,
-                projects_by_id: projects,
-                projects: Vec::new(),
-                project_order,
-                tasks_by_id: tasks,
-                tasks: HashMap::new(),
-                task_ids_by_root_project,
-                terminal_sections: sections,
-                ui: UiState::default(),
-                file_path,
-            };
-            store.sanitize();
-            store.rebuild_runtime_views();
-            ui.expanded_repo_ids
-                .retain(|repo_id| store.repos.contains_key(repo_id));
-            ui.repo_default_commit_actions
-                .retain(|repo_id, _| store.repos.contains_key(repo_id));
-            ui.pinned_task_ids
-                .retain(|task_id| store.tasks_by_id.contains_key(task_id));
-            if ui
-                .last_active_section_id
-                .as_ref()
-                .is_some_and(|section_id| !store.terminal_sections.contains_key(section_id))
-            {
-                ui.last_active_section_id = None;
-            }
-            store.ui = ui;
-            store
+            let persistence = JsonProjectStorePersistence::new(file_path);
+            Self::load_from_persistence(&persistence)
         }
+    }
+
+    fn load_from_persistence(persistence: &impl ProjectStorePersistence) -> Self {
+        let (repos, projects, project_order, tasks, task_ids_by_root_project, sections, mut ui) =
+            persistence.load().into_parts();
+        let mut store = Self {
+            repos,
+            projects_by_id: projects,
+            projects: Vec::new(),
+            project_order,
+            tasks_by_id: tasks,
+            tasks: HashMap::new(),
+            task_ids_by_root_project,
+            terminal_sections: sections,
+            ui: UiState::default(),
+            file_path: persistence.path().to_path_buf(),
+        };
+        store.sanitize();
+        store.rebuild_runtime_views();
+        ui.expanded_repo_ids
+            .retain(|repo_id| store.repos.contains_key(repo_id));
+        ui.repo_default_commit_actions
+            .retain(|repo_id, _| store.repos.contains_key(repo_id));
+        ui.pinned_task_ids
+            .retain(|task_id| store.tasks_by_id.contains_key(task_id));
+        if ui
+            .last_active_section_id
+            .as_ref()
+            .is_some_and(|section_id| !store.terminal_sections.contains_key(section_id))
+        {
+            ui.last_active_section_id = None;
+        }
+        store.ui = ui;
+        store
     }
 
     pub fn project(&self, project_id: &str) -> Option<&Project> {
@@ -2198,31 +2408,8 @@ impl ProjectStore {
         }
         #[cfg(feature = "daemon-host")]
         {
-            let store = self.snapshot_for_save();
-            // Tests assert on file contents immediately after save(),
-            // so we keep the write synchronous under `#[cfg(test)]`.
-            // Production builds hand off to a background writer thread
-            // so save() doesn't stall the GPUI render thread (see #129):
-            // a CDP-heavy sub-agent produces enough PTY output to fire
-            // `persist_section_state` → `update_task_tabs` → `save()`
-            // dozens of times per second, and each synchronous
-            // `serde_json::to_string_pretty` over the full StoreFile was
-            // blocking render for >2s (captured by the #125 watchdog).
-            #[cfg(test)]
-            {
-                write_store_sync(&self.file_path, &store);
-            }
-            #[cfg(not(test))]
-            {
-                let worker = save_worker();
-                let mut pending = worker.pending.lock().unwrap_or_else(|e| e.into_inner());
-                // Single-slot mailbox: if a save was already queued, the
-                // newer snapshot wins — callers only care that the latest
-                // state is on disk, not that every intermediate revision
-                // is. That's the coalescing that makes a CDP burst cheap.
-                *pending = Some((self.file_path.clone(), store));
-                worker.cvar.notify_one();
-            }
+            let persistence = JsonProjectStorePersistence::new(self.file_path.clone());
+            persistence.save(&self.snapshot_for_save());
         }
     }
 
@@ -2909,8 +3096,8 @@ impl ProjectStore {
         });
     }
 
-    pub fn rebuild_runtime_views(&mut self) {
-        self.projects = self
+    pub fn project_runtime_views(&self) -> ProjectRuntimeViews {
+        let projects = self
             .project_order
             .iter()
             .filter_map(|project_id| {
@@ -2933,57 +3120,83 @@ impl ProjectStore {
             })
             .collect();
 
-        self.tasks = self
+        let tasks = self
             .task_ids_by_root_project
             .iter()
             .map(|(root_project_id, task_ids)| {
                 let tasks = task_ids
                     .iter()
-                    .filter_map(|task_id| {
-                        let mut task = self.tasks_by_id.get(task_id)?.clone();
-                        task.worktree_project_id =
-                            task.worktree.as_ref().map(|worktree| worktree.id.clone());
-                        if let Some(section) = self.terminal_sections.get(&task.section_id) {
-                            task.tabs = section.tabs.clone();
-                            task.active_tab_id = section.active_tab_id.clone();
-                            task.next_tab_id = section.next_tab_id;
-                            task.cwd = section.cwd.clone().or_else(|| {
-                                task.worktree.as_ref().map(|worktree| worktree.path.clone())
-                            });
-                        } else {
-                            // No local `terminal_sections` entry for
-                            // this task — either the store is fresh
-                            // and nothing's been persisted yet, or
-                            // the caller is a viewer client that
-                            // doesn't own the section-state map
-                            // (e.g. mobile, which ingests
-                            // authoritative `task.tabs` straight
-                            // from the projection instead of
-                            // replaying local persists).
-                            //
-                            // Previously this branch wiped
-                            // `task.tabs` to `Vec::new()`, which
-                            // made `absorb_projection` →
-                            // `set_remote_snapshot` → rebuild
-                            // silently discard the projection's
-                            // authoritative tab list on anyone
-                            // who didn't also own the backing
-                            // section store. Keep whatever the
-                            // caller already populated on `task`;
-                            // only fall back to worktree path for
-                            // the cwd hint, which is the one
-                            // field we can sensibly default.
-                            task.cwd = task
-                                .cwd
-                                .clone()
-                                .or_else(|| task.worktree.as_ref().map(|w| w.path.clone()));
-                        }
-                        Some(task)
-                    })
+                    .filter_map(|task_id| self.projected_task(task_id))
                     .collect::<Vec<_>>();
                 (root_project_id.clone(), tasks)
             })
             .collect();
+
+        ProjectRuntimeViews { projects, tasks }
+    }
+
+    fn projected_task(&self, task_id: &str) -> Option<Task> {
+        let mut task = self.tasks_by_id.get(task_id)?.clone();
+        task.worktree_project_id = task.worktree.as_ref().map(|worktree| worktree.id.clone());
+        if let Some(section) = self.terminal_sections.get(&task.section_id) {
+            task.tabs = section.tabs.clone();
+            task.active_tab_id = section.active_tab_id.clone();
+            task.next_tab_id = section.next_tab_id;
+            task.cwd = section
+                .cwd
+                .clone()
+                .or_else(|| task.worktree.as_ref().map(|worktree| worktree.path.clone()));
+        } else {
+            // No local `terminal_sections` entry for this task — either the
+            // store is fresh and nothing's been persisted yet, or the caller
+            // is a viewer client that doesn't own the section-state map
+            // (e.g. mobile, which ingests authoritative `task.tabs` straight
+            // from the projection instead of replaying local persists).
+            //
+            // Keep whatever the caller already populated on `task`; only fall
+            // back to worktree path for the cwd hint, which is the one field
+            // we can sensibly default.
+            task.cwd = task
+                .cwd
+                .clone()
+                .or_else(|| task.worktree.as_ref().map(|w| w.path.clone()));
+        }
+        Some(task)
+    }
+
+    pub fn repo_summaries(&self) -> Vec<daemon_proto::RepoSummary> {
+        self.repos
+            .values()
+            .map(|repo| {
+                let branches = repo
+                    .branch_order
+                    .iter()
+                    .filter_map(|name| repo.branches_by_name.get(name))
+                    .map(|branch| daemon_proto::RepoBranchSummary {
+                        name: branch.name.clone(),
+                        last_commit_relative: branch.last_commit_relative.clone(),
+                        is_default: branch.is_default,
+                        ahead_count: branch.ahead_count,
+                        behind_count: branch.behind_count,
+                    })
+                    .collect();
+                daemon_proto::RepoSummary {
+                    id: repo.id.clone(),
+                    common_dir: repo
+                        .common_dir
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                    branch_order: repo.branch_order.clone(),
+                    branches,
+                }
+            })
+            .collect()
+    }
+
+    pub fn rebuild_runtime_views(&mut self) {
+        let views = self.project_runtime_views();
+        self.projects = views.projects;
+        self.tasks = views.tasks;
     }
 
     fn migrate_worktree_projects_into_tasks(&mut self) {
@@ -3045,37 +3258,37 @@ impl ProjectStore {
             return StoreFileV4::default();
         };
         match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(version) if version == u64::from(STORE_VERSION) => serde_json::from_value(
-                value.clone(),
-            )
-            .or_else(|_| {
-                // Tolerant fallback: an earlier dev cut wrote a V4
-                // file whose `tasks` field was still a
-                // `HashMap<task_id, Task>` (legacy V3 shape). The
-                // strict V4 deserializer rejects that and the
-                // file gets backed up + the user's projects
-                // disappear. Detect that exact mismatch and fix
-                // it up in-place: turn the map into a Vec of its
-                // values, then re-deserialize.
-                let mut value = value.clone();
-                if let Some(tasks) = value.get_mut("tasks") {
-                    if tasks.is_object() {
-                        let entries = tasks.as_object_mut().unwrap();
-                        let arr: Vec<serde_json::Value> =
-                            entries.values().cloned().collect();
-                        *tasks = serde_json::Value::Array(arr);
-                    }
-                }
-                serde_json::from_value::<StoreFileV4>(value).inspect(|migrated| {
-                    // Persist the normalised shape so the next
-                    // load takes the strict path.
-                    write_store_sync(path, migrated);
-                })
-            })
-            .unwrap_or_else(|_| {
-                Self::backup_incompatible_store(path);
-                StoreFileV4::default()
-            }),
+            Some(version) if version == u64::from(STORE_VERSION) => {
+                serde_json::from_value(value.clone())
+                    .or_else(|_| {
+                        // Tolerant fallback: an earlier dev cut wrote a V4
+                        // file whose `tasks` field was still a
+                        // `HashMap<task_id, Task>` (legacy V3 shape). The
+                        // strict V4 deserializer rejects that and the
+                        // file gets backed up + the user's projects
+                        // disappear. Detect that exact mismatch and fix
+                        // it up in-place: turn the map into a Vec of its
+                        // values, then re-deserialize.
+                        let mut value = value.clone();
+                        if let Some(tasks) = value.get_mut("tasks") {
+                            if tasks.is_object() {
+                                let entries = tasks.as_object_mut().unwrap();
+                                let arr: Vec<serde_json::Value> =
+                                    entries.values().cloned().collect();
+                                *tasks = serde_json::Value::Array(arr);
+                            }
+                        }
+                        serde_json::from_value::<StoreFileV4>(value).inspect(|migrated| {
+                            // Persist the normalised shape so the next
+                            // load takes the strict path.
+                            write_store_sync(path, migrated);
+                        })
+                    })
+                    .unwrap_or_else(|_| {
+                        Self::backup_incompatible_store(path);
+                        StoreFileV4::default()
+                    })
+            }
             Some(version) if version == u64::from(LEGACY_STORE_VERSION) => {
                 serde_json::from_value::<StoreFile>(value)
                     .map(|store| {
@@ -5105,10 +5318,11 @@ mod tests {
         read_changed_file_diff, read_project_git_state, remove_task_worktree, review_worktree_slug,
         slugify_branch_name, unique_branch_name_for_repo, worktree_parent_dir_with_root,
         ArchivedProjectActions, BranchCompareNameStatusEntry, BranchCompareNumStatEntry,
-        CreateBranchMode, DiffRowKind, GitDiffSelection, GitDiffSource, PersistedSectionState,
-        PersistedTerminalTab, PreparedProject, Project, ProjectAction, ProjectActionAccess,
-        ProjectActionIcon, ProjectActionKind, ProjectActionScope, ProjectBranchSettingField,
-        ProjectBranchSettings, ProjectCheckoutState, ProjectKind, RepoDefaultCommitAction,
+        CreateBranchMode, DiffRowKind, GitDiffSelection, GitDiffSource,
+        InMemoryProjectStorePersistence, PersistedSectionState, PersistedTerminalTab,
+        PreparedProject, Project, ProjectAction, ProjectActionAccess, ProjectActionIcon,
+        ProjectActionKind, ProjectActionScope, ProjectBranchSettingField, ProjectBranchSettings,
+        ProjectCheckoutState, ProjectKind, ProjectStorePersistence, RepoDefaultCommitAction,
         RepoRecord, StoreFile, StoreFileV4, Task, TaskKind, TaskWorktreeBranchMode, UiState,
     };
 
@@ -5134,6 +5348,186 @@ mod tests {
                 *root.borrow_mut() = None;
             });
         }
+    }
+
+    #[test]
+    fn project_store_loads_from_in_memory_persistence_adapter() {
+        let project = sample_project("root", None);
+        let file = StoreFileV4 {
+            version: super::STORE_VERSION,
+            repos: vec![super::PersistedRepoV4::from(&RepoRecord {
+                id: project.repo_id.clone(),
+                common_dir: None,
+                branch_order: Vec::new(),
+                branches_by_name: HashMap::new(),
+            })],
+            projects: vec![project.clone()],
+            tasks: Vec::new(),
+            ui: UiState::default(),
+        };
+        let persistence = InMemoryProjectStorePersistence::new(file);
+
+        let store = super::ProjectStore::load_from_persistence(&persistence);
+
+        assert_eq!(
+            store.project("root").map(|project| &project.name),
+            Some(&project.name)
+        );
+    }
+
+    #[test]
+    fn in_memory_persistence_adapter_captures_saved_snapshot() {
+        let project = sample_project("root", None);
+        let mut store = super::ProjectStore::from_projects_for_test(vec![project], Vec::new());
+        let persistence = InMemoryProjectStorePersistence::new(StoreFileV4::default());
+
+        store.ui.theme_mode = super::ThemeMode::Dark;
+        persistence.save(&store.snapshot_for_save());
+
+        assert_eq!(persistence.save_count(), 1);
+        assert_eq!(
+            persistence.saved_snapshot().ui.theme_mode,
+            super::ThemeMode::Dark
+        );
+    }
+
+    fn persisted_tab(id: &str, title: &str) -> PersistedTerminalTab {
+        PersistedTerminalTab {
+            id: id.to_string(),
+            title: title.to_string(),
+            pinned: false,
+            fixed_title: None,
+            provider: None,
+            launch_config: None,
+            restore_status: TerminalRestoreStatus::default(),
+            failure_message: None,
+            failure_details: None,
+        }
+    }
+
+    #[test]
+    fn persisted_section_state_open_close_select_and_title_update() {
+        let mut state = PersistedSectionState {
+            active_tab_id: "a".to_string(),
+            next_tab_id: 1,
+            cwd: None,
+            tabs: vec![persisted_tab("a", "A")],
+        };
+
+        state.append_tab(persisted_tab("b", "B"));
+        assert_eq!(state.active_tab_id, "b");
+
+        assert!(state.select_tab("a"));
+        assert_eq!(state.active_tab_id, "a");
+
+        assert!(state.update_tab_title("a", "Renamed"));
+        assert_eq!(state.tabs[0].title, "Renamed");
+
+        assert!(state.close_tab("a"));
+        assert_eq!(state.active_tab_id, "b");
+    }
+
+    #[test]
+    fn persisted_section_state_reconcile_projection_preserves_local_active_tab_unless_new() {
+        let existing = PersistedSectionState {
+            active_tab_id: "b".to_string(),
+            next_tab_id: 2,
+            cwd: None,
+            tabs: vec![persisted_tab("a", "A"), persisted_tab("b", "B")],
+        };
+        let stale_projection = PersistedSectionState {
+            active_tab_id: "a".to_string(),
+            next_tab_id: 2,
+            cwd: None,
+            tabs: vec![persisted_tab("a", "A"), persisted_tab("b", "B")],
+        };
+        let reconciled =
+            PersistedSectionState::reconcile_projection(Some(&existing), stale_projection);
+        assert_eq!(reconciled.active_tab_id, "b");
+
+        let new_tab_projection = PersistedSectionState {
+            active_tab_id: "c".to_string(),
+            next_tab_id: 3,
+            cwd: None,
+            tabs: vec![
+                persisted_tab("a", "A"),
+                persisted_tab("b", "B"),
+                persisted_tab("c", "C"),
+            ],
+        };
+        let reconciled =
+            PersistedSectionState::reconcile_projection(Some(&existing), new_tab_projection);
+        assert_eq!(reconciled.active_tab_id, "c");
+    }
+
+    #[test]
+    fn runtime_views_project_tasks_tabs_and_repo_summaries_from_canonical_state() {
+        let project = sample_project("root", None);
+        let section_id = "root::main::task-1".to_string();
+        let task = Task {
+            id: "task-1".to_string(),
+            name: "Implement projection".to_string(),
+            kind: TaskKind::Direct,
+            root_project_id: project.id.clone(),
+            target_project_id: project.id.clone(),
+            branch_name: "main".to_string(),
+            section_id: section_id.clone(),
+            worktree: None,
+            worktree_project_id: None,
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        };
+        let mut store = super::ProjectStore::from_projects_for_test(vec![project], vec![task]);
+        store.repos.insert(
+            "repo".to_string(),
+            RepoRecord {
+                id: "repo".to_string(),
+                common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                branch_order: vec!["main".to_string()],
+                branches_by_name: [(
+                    "main".to_string(),
+                    super::RepoBranchRecord {
+                        name: "main".to_string(),
+                        last_commit_relative: "2h".to_string(),
+                        is_default: true,
+                        ahead_count: 1,
+                        behind_count: 0,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+        );
+        store.terminal_sections.insert(
+            section_id,
+            PersistedSectionState {
+                active_tab_id: "1".to_string(),
+                next_tab_id: 2,
+                cwd: Some(PathBuf::from("/tmp/root")),
+                tabs: vec![PersistedTerminalTab {
+                    id: "1".to_string(),
+                    title: "Shell".to_string(),
+                    pinned: true,
+                    fixed_title: None,
+                    provider: None,
+                    launch_config: None,
+                    restore_status: TerminalRestoreStatus::default(),
+                    failure_message: None,
+                    failure_details: None,
+                }],
+            },
+        );
+
+        let views = store.project_runtime_views();
+        let task_view = &views.tasks["root"][0];
+        let repo_summary = &store.repo_summaries()[0];
+
+        assert_eq!(views.projects[0].id, "root");
+        assert_eq!(task_view.tabs[0].title, "Shell");
+        assert_eq!(task_view.active_tab_id, "1");
+        assert_eq!(repo_summary.branches[0].last_commit_relative, "2h");
     }
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {

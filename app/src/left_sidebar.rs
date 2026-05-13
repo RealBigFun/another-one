@@ -325,8 +325,7 @@ impl AnotherOneApp {
             .retain(|project_id| !project_id_set.contains(project_id));
         self.expanded_projects
             .retain(|repo_id| !removed_repo_ids.contains(repo_id));
-        self.project_store
-            .set_expanded_projects(&self.expanded_projects);
+        self.dispatch_set_expanded_repos(self.expanded_projects.iter().cloned().collect());
 
         if self
             .project_menu_project

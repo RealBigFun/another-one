@@ -403,21 +403,13 @@ impl SectionState {
         persisted: PersistedSectionState,
         fallback_cwd: Option<std::path::PathBuf>,
     ) -> Self {
+            let persisted = persisted.normalized();
+        let active_tab = persisted.active_tab_index();
         let tabs = persisted
             .tabs
             .into_iter()
             .map(TerminalTab::from_persisted)
             .collect::<Vec<_>>();
-        let mut tabs = tabs;
-        tabs.sort_by_key(|tab| !tab.pinned);
-
-        let active_tab = if tabs.is_empty() {
-            0
-        } else {
-            tabs.iter()
-                .position(|tab| tab.id == persisted.active_tab_id)
-                .unwrap_or_else(|| tabs.len().saturating_sub(1))
-        };
 
         Self {
             tabs,
@@ -4326,8 +4318,17 @@ impl AnotherOneApp {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        self.project_store
-            .set_open_in_app_enabled(app, enabled, &self.available_open_in_apps());
+        let app_id = app.id().to_string();
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetOpenInAppEnabled { app_id, enabled },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetOpenInAppEnabled failed: {err}");
+                }
+            },
+        );
         self.project_page_open_in_menu_project_id = None;
         cx.notify();
     }
@@ -4508,8 +4509,7 @@ impl AnotherOneApp {
         } else {
             persisted_expanded_projects.remove(project_id);
         }
-        self.project_store
-            .set_expanded_projects(&persisted_expanded_projects);
+        self.dispatch_set_expanded_repos(persisted_expanded_projects.iter().cloned().collect());
 
         if (from - to).abs() < 0.001 {
             if target_expanded {
@@ -5905,21 +5905,7 @@ impl AnotherOneApp {
     fn drain_session_events(&mut self, cx: &mut Context<Self>) -> bool {
         let mut updated = false;
         let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
-        // Coalesce `ProjectList` pushes — the daemon's push pump
-        // debounces at 50ms but can still land several snapshots in
-        // the same drain tick (session-connect bootstrap + a
-        // cascade of mutator notifications). Absorbing every one in
-        // order clobbers local ephemeral state (`section_states`)
-        // from a stale pre-mutation snapshot before the authoritative
-        // post-mutation snapshot lands milliseconds later. Since the
-        // projection is idempotent and last-writer-wins, keep only
-        // the newest snapshot in this batch and absorb once after
-        // the drain loop exits.
-        let mut latest_project_list: Option<(
-            Vec<daemon_proto::ProjectSummary>,
-            Vec<daemon_proto::RepoSummary>,
-            daemon_proto::UiSnapshot,
-        )> = None;
+        let mut pending_project_lists = Vec::new();
         loop {
             let event = match self.session_events_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
@@ -5999,11 +5985,11 @@ impl AnotherOneApp {
                             repos,
                             ui,
                         } => {
-                            // See the `latest_project_list`
-                            // comment at the top of the drain —
-                            // newest wins; earlier ones in this
-                            // batch are strictly superseded.
-                            latest_project_list = Some((projects, repos, ui));
+                            pending_project_lists.push(daemon_proto::WorkerReply::ProjectList {
+                                projects,
+                                repos,
+                                ui,
+                            });
                             updated = true;
                         }
                         daemon_proto::WorkerReply::AttachDropped {
@@ -6051,50 +6037,8 @@ impl AnotherOneApp {
                 }
             }
         }
-        if let Some((projects, repos, ui)) = latest_project_list {
-            log::info!(
-                "drain_session_events: absorbed projection ({} projects, {} repos, ui pinned={} expanded={})",
-                projects.len(),
-                repos.len(),
-                ui.pinned_task_ids.len(),
-                ui.expanded_repo_ids.len(),
-            );
-            self.project_store.absorb_projection(projects, repos, ui);
-            self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
-            // Mirror the absorbed projection onto the workspace's
-            // ephemeral `section_states` so tab adds/removes from
-            // *any* connected client surface in this one's tab bar.
-            // Safe on every platform now that the drain coalesces
-            // stale snapshots — only the newest ProjectList in a
-            // batch ever reaches here, so there's no window where a
-            // pre-mutation projection can clobber a freshly-added
-            // tab.
-            //
-            // Extract just the tasks whose section is currently
-            // in `section_states` (i.e. already visible in this
-            // client's UI). Everything else is irrelevant to the
-            // reconcile — skipping early keeps desktop's
-            // loopback-projection round-trips near-zero-cost.
-            let open_sections: std::collections::HashSet<String> = self
-                .workspace_pane
-                .read(cx)
-                .section_states
-                .keys()
-                .map(SectionId::store_key)
-                .collect();
-            let tasks: Vec<_> = self
-                .project_store
-                .tasks
-                .values()
-                .flatten()
-                .filter(|t| open_sections.contains(&t.section_id))
-                .cloned()
-                .collect();
-            if !tasks.is_empty() {
-                self.workspace_pane.update(cx, |workspace, cx| {
-                    workspace.reconcile_section_tabs_from_tasks(&tasks, cx);
-                });
-            }
+        if self.apply_latest_project_list_projection(pending_project_lists, cx) {
+            updated = true;
         }
         if !output_dirty_keys.is_empty() {
             for key in output_dirty_keys {
@@ -6722,6 +6666,20 @@ impl AnotherOneApp {
             |result| {
                 if let Err(err) = result {
                     log::warn!("SetGitPrLlm failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Fire `Control::SetExpandedRepos` over the active session.
+    pub(crate) fn dispatch_set_expanded_repos(&self, expanded_repo_ids: Vec<String>) {
+        let session = self.session_handle();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::SetExpandedRepos { expanded_repo_ids },
+            |result| {
+                if let Err(err) = result {
+                    log::warn!("SetExpandedRepos failed: {err}");
                 }
             },
         );
@@ -10003,13 +9961,11 @@ impl AnotherOneApp {
 
         if let Some(project) = self.project_store.project(&target_project_id) {
             self.expanded_projects.insert(project.repo_id.clone());
-            self.project_store
-                .set_expanded_projects(&self.expanded_projects);
+            self.dispatch_set_expanded_repos(self.expanded_projects.iter().cloned().collect());
         } else if let Some(task) = self.project_store.task_for_worktree(&target_project_id) {
             if let Some(root_project) = self.project_store.project(&task.root_project_id) {
                 self.expanded_projects.insert(root_project.repo_id.clone());
-                self.project_store
-                    .set_expanded_projects(&self.expanded_projects);
+                self.dispatch_set_expanded_repos(self.expanded_projects.iter().cloned().collect());
             }
         }
 
@@ -11185,8 +11141,9 @@ impl AnotherOneApp {
                         });
 
                         self.expanded_projects.insert(root_project.repo_id.clone());
-                        self.project_store
-                            .set_expanded_projects(&self.expanded_projects);
+                        self.dispatch_set_expanded_repos(
+                            self.expanded_projects.iter().cloned().collect(),
+                        );
 
                         let section_id =
                             SectionId::for_task(&worktree.id, &success.branch_name, &task_id);
@@ -13308,35 +13265,24 @@ where
     })
 }
 
+fn latest_project_list_projection(
+    replies: Vec<daemon_proto::WorkerReply>,
+) -> Option<(
+    Vec<daemon_proto::ProjectSummary>,
+    Vec<daemon_proto::RepoSummary>,
+    daemon_proto::UiSnapshot,
+)> {
+    replies.into_iter().filter_map(|reply| match reply {
+        daemon_proto::WorkerReply::ProjectList { projects, repos, ui } => Some((projects, repos, ui)),
+        _ => None,
+    }).last()
+}
+
 fn reconcile_projected_section_state(
     existing: &SectionState,
-    mut projected: PersistedSectionState,
+    projected: PersistedSectionState,
 ) -> PersistedSectionState {
-    // Passive ProjectList snapshots may be stale relative to a desktop
-    // click/shortcut that already switched tabs. Preserve the local active tab
-    // whenever it still exists in the projected tab list. The narrow exception
-    // is tab creation: if the projection's active tab is newly introduced by
-    // this snapshot, honor it so newly-created tabs/tasks can still become
-    // visible immediately.
-    let local_active_tab_id = existing.active_tab_id();
-    let projected_has_local_active = !local_active_tab_id.is_empty()
-        && projected
-            .tabs
-            .iter()
-            .any(|tab| tab.id == local_active_tab_id);
-    let projected_active_is_new = !projected.active_tab_id.is_empty()
-        && projected
-            .tabs
-            .iter()
-            .any(|tab| tab.id == projected.active_tab_id)
-        && !existing
-            .tabs
-            .iter()
-            .any(|tab| tab.id == projected.active_tab_id);
-    if projected_has_local_active && !projected_active_is_new {
-        projected.active_tab_id = local_active_tab_id;
-    }
-    projected
+    PersistedSectionState::reconcile_projection(Some(&existing.to_persisted()), projected)
 }
 
 fn should_apply_cross_client_focus_to_workspace(actor: &ClientId, target: &ClientId) -> bool {
@@ -13382,7 +13328,7 @@ mod tests {
         encode_terminal_mouse_event, fixed_title_for_project_action, global_tab_navigation_targets,
         has_active_toolbar_git_action, new_tab_seed_agent_id, next_global_tab_navigation_target,
         next_project_navigation_target, next_task_navigation_target,
-        open_in_target_path_for_project, persisted_active_section_key,
+        latest_project_list_projection, open_in_target_path_for_project, persisted_active_section_key,
         reconcile_projected_section_state, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
         should_apply_cross_client_focus_to_workspace, sidebar_task_navigation_targets,
@@ -13850,6 +13796,30 @@ mod tests {
         assert_eq!(state.active_tab, 0);
         assert_eq!(state.next_tab_id, 1);
         assert_eq!(state.cwd, Some(PathBuf::from("/tmp/project")));
+    }
+
+    #[test]
+    fn latest_project_list_projection_uses_newest_snapshot() {
+        let older = daemon_proto::WorkerReply::ProjectList {
+            projects: Vec::new(),
+            repos: Vec::new(),
+            ui: daemon_proto::UiSnapshot {
+                theme_mode: Some("light".to_string()),
+                ..Default::default()
+            },
+        };
+        let newer = daemon_proto::WorkerReply::ProjectList {
+            projects: Vec::new(),
+            repos: Vec::new(),
+            ui: daemon_proto::UiSnapshot {
+                theme_mode: Some("dark".to_string()),
+                ..Default::default()
+            },
+        };
+
+        let (_, _, ui) = latest_project_list_projection(vec![older, newer]).expect("projection");
+
+        assert_eq!(ui.theme_mode.as_deref(), Some("dark"));
     }
 
     #[test]
@@ -16345,6 +16315,56 @@ impl AnotherOneApp {
         true
     }
 
+    fn apply_latest_project_list_projection(
+        &mut self,
+        replies: Vec<daemon_proto::WorkerReply>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((summaries, repo_summaries, ui)) = latest_project_list_projection(replies) else {
+            return false;
+        };
+        let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
+        log::info!(
+            "daemon ProjectList: {} project(s), {} repo(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
+            summaries.len(),
+            repo_summaries.len(),
+            task_total,
+            ui.pinned_task_ids.len(),
+            ui.expanded_repo_ids.len(),
+            ui.last_active_section_id
+        );
+        self.project_store
+            .absorb_projection(summaries, repo_summaries, ui);
+        log::info!(
+            "post-absorb: store has {} projects and tasks for {} root projects",
+            self.project_store.projects.len(),
+            self.project_store.tasks.len()
+        );
+        self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
+
+        let open_sections: std::collections::HashSet<String> = self
+            .workspace_pane
+            .read(cx)
+            .section_states
+            .keys()
+            .map(SectionId::store_key)
+            .collect();
+        let tasks: Vec<_> = self
+            .project_store
+            .tasks
+            .values()
+            .flatten()
+            .filter(|t| open_sections.contains(&t.section_id))
+            .cloned()
+            .collect();
+        if !tasks.is_empty() {
+            self.workspace_pane.update(cx, |workspace, cx| {
+                workspace.reconcile_section_tabs_from_tasks(&tasks, cx);
+            });
+        }
+        true
+    }
+
     /// Drain queued daemon worker replies — currently only
     /// `WorkerReply::ProjectList`, which the daemon-client session
     /// treats as the authoritative project tree. Replaces the local
@@ -16356,72 +16376,7 @@ impl AnotherOneApp {
         if replies.is_empty() {
             return false;
         }
-        let mut changed = false;
-        // See `drain_session_events` — coalesce ProjectList pushes
-        // so only the newest snapshot in a batch is absorbed.
-        let mut latest_project_list: Option<(
-            Vec<daemon_proto::ProjectSummary>,
-            Vec<daemon_proto::RepoSummary>,
-            daemon_proto::UiSnapshot,
-        )> = None;
-        for reply in replies {
-            match reply {
-                daemon_proto::WorkerReply::ProjectList {
-                    projects: summaries,
-                    repos: repo_summaries,
-                    ui,
-                } => {
-                    latest_project_list = Some((summaries, repo_summaries, ui));
-                    changed = true;
-                }
-                // The daemon may push WorkerReply variants the
-                // desktop GUI doesn't consume (it sources most of
-                // its state in-process). Ignore them — MCP clients
-                // and mobile pick up the same variants directly.
-                _ => {}
-            }
-        }
-        if let Some((summaries, repo_summaries, ui)) = latest_project_list {
-            let task_total: usize = summaries.iter().map(|p| p.tasks.len()).sum();
-            log::info!(
-                "daemon ProjectList: {} project(s), {} repo(s), {} task(s) total, ui pinned={} expanded={} last_active={:?}",
-                summaries.len(),
-                repo_summaries.len(),
-                task_total,
-                ui.pinned_task_ids.len(),
-                ui.expanded_repo_ids.len(),
-                ui.last_active_section_id
-            );
-            self.project_store
-                .absorb_projection(summaries, repo_summaries, ui);
-            log::info!(
-                "post-absorb: store has {} projects and tasks for {} root projects",
-                self.project_store.projects.len(),
-                self.project_store.tasks.len()
-            );
-            self.expanded_projects = self.project_store.ui.expanded_repo_ids.clone();
-            // See the parallel block in `drain_session_events`.
-            let open_sections: std::collections::HashSet<String> = self
-                .workspace_pane
-                .read(cx)
-                .section_states
-                .keys()
-                .map(SectionId::store_key)
-                .collect();
-            let tasks: Vec<_> = self
-                .project_store
-                .tasks
-                .values()
-                .flatten()
-                .filter(|t| open_sections.contains(&t.section_id))
-                .cloned()
-                .collect();
-            if !tasks.is_empty() {
-                self.workspace_pane.update(cx, |workspace, cx| {
-                    workspace.reconcile_section_tabs_from_tasks(&tasks, cx);
-                });
-            }
-        }
+        let changed = self.apply_latest_project_list_projection(replies, cx);
         if changed {
             cx.notify();
         }

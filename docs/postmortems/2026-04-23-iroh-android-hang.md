@@ -1,5 +1,7 @@
 # 2026-04-23 · Iroh on Android hung silently
 
+> Historical/obsolete-context note: this postmortem documents the abandoned Flutter/Dart mobile experiment. Keep the Android networking/runtime lessons, but do not treat the Flutter/mobile-core references as current architecture.
+
 > `Endpoint::bind().await` sat Pending forever on the Android emulator
 > with no error, no timeout firing, no iroh log messages. Root cause
 > was **four independent issues stacked**; fixing any one alone

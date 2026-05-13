@@ -5,18 +5,21 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
 
 ## Layout
 
-- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/mobile]] · [[apps/mobile-core]]
-  — one doc per workspace member: what it is, how to run, key files.
+- [[apps/desktop]] · [[apps/daemon-sandbox]] · [[apps/mobile]]
+  — one doc per supported app/runtime area: what it is, how to run, key files.
 - `architecture/` — reusable patterns that have proved out in the codebase.
   Currently: [[architecture/terminal-wrapping-principle]],
   [[architecture/transport-abstraction]],
   [[architecture/peer-to-peer-nodes]],
   [[architecture/frb-tokio-runtime]],
-  [[architecture/git-mv-for-restructures]].
+  [[architecture/git-mv-for-restructures]],
+  [[architecture/daemon-owned-state-authority]],
+  [[architecture/gui-mcp-unification]],
+  [[architecture/daemon-transport-rust]].
 - `design/` — the cross-platform design system extracted from the
   desktop app: [[design/README]], [[design/tokens]],
   [[design/typography]], [[design/spacing]], [[design/components]].
-  Source-of-truth values also live at `desktop/src/tokens.rs` and in
+  Source-of-truth values also live at `app/src/tokens.rs` and in
   `docs/design/tokens.json`.
 - `postmortems/` — real debugging sagas with root cause and fix.
   Currently:
@@ -30,7 +33,7 @@ Markdown files with `[[wiki-links]]` and tags; no plugins required.
 
 ## When to add something
 
-- **App doc** — when a new workspace member (crate or Flutter project) is
+- **App doc** — when a new workspace member (crate) is
   added. Keep the template consistent: "what it is / entry points / run /
   known gaps."
 - **Architecture pattern** — when a design decision is made that'll recur

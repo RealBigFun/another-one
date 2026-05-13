@@ -11,7 +11,7 @@ principle.
 
 ## Font family
 
-Lilex NerdFont Mono. Ships under `desktop/assets/fonts/` in six variants:
+Lilex NerdFont Mono. Ships under `app/assets/fonts/` in six variants:
 
 | File | Weight / style |
 |---|---|
@@ -69,9 +69,9 @@ actions) and defaults to a separate `16px` baseline (see
 treat it as its own thing. Line-height is multiplied by
 `TERMINAL_LINE_HEIGHT_RATIO` for readability.
 
-## What mobile should do
+## What Android should do
 
-Mobile's xterm.dart already uses the Flutter `monospace` alias. Once we
-ship Lilex to mobile, switch the `TerminalStyle` to explicitly request
-it — that'll also fix the powerline separator glyphs we saw rendering as
-boxes in the starship prompt.
+Android surfaces should use the same monospace family where practical.
+If a platform terminal renderer cannot bundle Lilex yet, use the system
+monospace fallback but keep the same size/weight scale so switching to
+Lilex later is a font asset change rather than a layout rewrite.
