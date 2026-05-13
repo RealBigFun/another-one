@@ -2664,7 +2664,12 @@ mod tests {
 
     #[test]
     fn default_selection_falls_back_to_first_enabled_agent() {
-        let enabled_agents = vec![&AGENTS[0], &AGENTS[1], &AGENTS[2]];
+        // DEFAULT_AGENT_ID ("codex" = AGENTS[1]) intentionally omitted
+        // from the enabled list so the function exercises the
+        // fallback-to-first branch. With it present the test would
+        // (correctly) return DEFAULT_AGENT_ID and never hit the
+        // fallback path it claims to cover.
+        let enabled_agents = vec![&AGENTS[0], &AGENTS[2]];
 
         assert_eq!(
             default_new_task_agent_id(&enabled_agents, Some(DEFAULT_AGENT_ID)),

@@ -13923,7 +13923,11 @@ mod tests {
         );
 
         assert_eq!(state.active_tab, 1);
-        assert_eq!(state.next_tab_id, 1);
+        // `PersistedSectionState::normalized()` bumps `next_tab_id`
+        // to `max(persisted.next_tab_id, tabs.len())` so a fresh
+        // tab can't collide with an existing index. With 2 tabs in
+        // the fixture the bumped value is 2, not the persisted 1.
+        assert_eq!(state.next_tab_id, 2);
         assert_eq!(state.cwd, Some(PathBuf::from("/tmp/project")));
     }
 
