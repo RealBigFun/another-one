@@ -709,7 +709,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         Ok(changed)
     }
 
-    fn persist_section_state(&self, section_id: &str, persisted: serde_json::Value) {
+    fn set_section_state(&self, section_id: &str, persisted: serde_json::Value) {
         let Ok(persisted) = serde_json::from_value::<
             another_one_core::project_store::PersistedSectionState,
         >(persisted) else {

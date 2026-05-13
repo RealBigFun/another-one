@@ -244,7 +244,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// `set_terminal_section` (project pages / standalone shells).
     /// Default impl is a no-op for registries that don't track
     /// section state.
-    fn persist_section_state(&self, _section_id: &str, _persisted: serde_json::Value) {}
+    fn set_section_state(&self, _section_id: &str, _persisted: serde_json::Value) {}
 
     /// Re-run the `gh auth status` probe and publish the new
     /// status through `UiSnapshot.gh_auth_status`. Fire-and-forget

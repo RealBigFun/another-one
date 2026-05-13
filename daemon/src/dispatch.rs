@@ -511,7 +511,7 @@ async fn dispatch_call(
             section_id,
             persisted,
         } => {
-            registry.persist_section_state(&section_id, persisted);
+            registry.set_section_state(&section_id, persisted);
             Some(WorkerReply::SetSectionStateAck)
         }
         Control::SetLastActiveSection { section_id } => {
