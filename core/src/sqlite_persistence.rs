@@ -39,7 +39,7 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use crate::project_store::{ProjectStorePersistence, StoreFileV4};
+use crate::project_store::{ProjectStore, ProjectStorePersistence, StoreFileV4};
 
 /// File name for the SQLite database. Lives next to the existing
 /// `projects.json` in the app config dir (see `app_config_dir` in
@@ -174,6 +174,126 @@ impl SqliteProjectStorePersistence {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         read_schema_version(&conn)
     }
+}
+
+/// Outcome of a one-shot migration from `projects.json` to the
+/// SQLite database. Used by tests and (eventually) by the live
+/// boot path in commit D — the call site can branch on the
+/// outcome to surface a one-time toast / log line.
+#[derive(Debug)]
+pub(crate) enum MigrationOutcome {
+    /// SQLite already has an `app_state` row — either we ran a
+    /// migration on a previous launch or the user is on a fresh
+    /// install with no JSON to import. Either way: nothing to do.
+    AlreadyMigrated,
+    /// Imported `projects.json` into SQLite and renamed the JSON
+    /// to `projects.json.bak.<unix-timestamp>`. The bak path is
+    /// returned so the caller can log it.
+    Migrated { backup_path: PathBuf },
+    /// SQLite is empty *and* there's no `projects.json` to import.
+    /// Fresh install on the SQLite binary. The caller should
+    /// proceed with an empty store.
+    NoLegacyState,
+}
+
+/// Migrate from a v4 `projects.json` into the SQLite-backed
+/// `state.sqlite`, idempotently.
+///
+/// Behaviour:
+///
+/// 1. If `state.sqlite` already has an `app_state` row — do
+///    nothing, return `AlreadyMigrated`. Migration ran on a previous
+///    launch.
+/// 2. Else if `projects.json` exists — read it via
+///    [`ProjectStore::try_read_from_json_path`] (which preserves the
+///    existing version-coercion / corrupt-file-backup behaviour),
+///    write the resulting `StoreFileV4` blob into SQLite, then
+///    rename the JSON to `projects.json.bak.<unix-timestamp>` so a
+///    rollback is one rename away. Returns `Migrated { backup_path }`.
+/// 3. Else — nothing to migrate. Returns `NoLegacyState`.
+///
+/// The migration is intentionally one-way: once the JSON is
+/// renamed to `.bak.*`, subsequent launches see no
+/// `projects.json` and skip the import (case 1 or 3). This means
+/// the SQLite database is the durable copy of state from that
+/// point forward; the `.bak.*` file is for human rollback only.
+///
+/// Errors are logged to stderr but do not panic — the caller can
+/// still proceed with an empty store. This matches the JSON
+/// adapter's existing "corrupt file? back it up and continue"
+/// recovery posture.
+pub(crate) fn migrate_from_json(
+    json_path: &Path,
+    db_path: &Path,
+) -> rusqlite::Result<MigrationOutcome> {
+    let conn = open_state_db(db_path)?;
+    init_schema(&conn)?;
+
+    // Case 1: SQLite already has state. Don't overwrite.
+    let has_state: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM app_state WHERE id = 1)",
+            [],
+            |row| row.get::<_, i64>(0).map(|n| n != 0),
+        )
+        .unwrap_or(false);
+    if has_state {
+        return Ok(MigrationOutcome::AlreadyMigrated);
+    }
+
+    // Case 3: no JSON to import.
+    let Some(store) = ProjectStore::try_read_from_json_path(json_path) else {
+        return Ok(MigrationOutcome::NoLegacyState);
+    };
+
+    // Case 2: import.
+    let json = match serde_json::to_string(&store) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!(
+                "sqlite_persistence: failed to serialise legacy StoreFileV4 during migration: {err}"
+            );
+            return Ok(MigrationOutcome::NoLegacyState);
+        }
+    };
+    conn.execute(
+        "INSERT OR REPLACE INTO app_state (id, state_json) VALUES (1, ?1)",
+        params![json],
+    )?;
+
+    let backup_path = legacy_backup_path(json_path);
+    if let Err(err) = std::fs::rename(json_path, &backup_path) {
+        // Rename failed (e.g. cross-fs move on a weird config dir).
+        // The DB write already committed, so we're not data-lossy
+        // here — just leaving the JSON in place. Next launch will
+        // hit the AlreadyMigrated branch and skip re-importing,
+        // which is correct.
+        eprintln!(
+            "sqlite_persistence: imported {json_path:?} into SQLite but failed to back up the JSON: {err}"
+        );
+        return Ok(MigrationOutcome::Migrated {
+            backup_path: json_path.to_path_buf(),
+        });
+    }
+    Ok(MigrationOutcome::Migrated { backup_path })
+}
+
+/// Compute a unique-per-run backup path for the legacy JSON. The
+/// timestamp is unix-epoch seconds, which is enough granularity
+/// because there's exactly one migration per binary launch and any
+/// retry happens at least one second later.
+fn legacy_backup_path(json_path: &Path) -> PathBuf {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut backup = json_path.to_path_buf();
+    let file_name = json_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "projects.json".to_string());
+    backup.set_file_name(format!("{file_name}.bak.{ts}"));
+    backup
 }
 
 impl ProjectStorePersistence for SqliteProjectStorePersistence {
@@ -354,5 +474,136 @@ mod tests {
             "tasks": [],
             "ui": store.ui,
         })
+    }
+
+    // ── Migration tests ──────────────────────────────────────────────────
+
+    /// Fresh install on the SQLite binary: no `projects.json`, no
+    /// `state.sqlite`. Migration is a no-op and reports
+    /// `NoLegacyState`.
+    #[test]
+    fn migrate_with_no_legacy_json_returns_no_legacy_state() {
+        let tmp = TempDir::new().unwrap();
+        let json_path = tmp.path().join("projects.json");
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+
+        let outcome = migrate_from_json(&json_path, &db_path).unwrap();
+        assert!(
+            matches!(outcome, MigrationOutcome::NoLegacyState),
+            "expected NoLegacyState, got {outcome:?}"
+        );
+        // JSON file shouldn't have been created.
+        assert!(!json_path.exists());
+    }
+
+    /// Legacy `projects.json` exists, SQLite is empty: read JSON,
+    /// write to SQLite, rename JSON to `.bak.<ts>`. Subsequent
+    /// `load()` returns the imported state.
+    #[test]
+    fn migrate_imports_legacy_json_and_backs_it_up() {
+        let tmp = TempDir::new().unwrap();
+        let json_path = tmp.path().join("projects.json");
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+
+        // Build a representative legacy file. The shape doesn't
+        // need to be exhaustive — we just want one non-default UI
+        // field to assert on after the round-trip.
+        let legacy = serde_json::json!({
+            "version": 4,
+            "repos": [],
+            "projects": [],
+            "tasks": [],
+            "ui": {
+                "theme_mode": "dark",
+                "left_sidebar_open": false,
+            },
+        });
+        std::fs::write(&json_path, serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        let outcome = migrate_from_json(&json_path, &db_path).unwrap();
+        let backup_path = match outcome {
+            MigrationOutcome::Migrated { backup_path } => backup_path,
+            other => panic!("expected Migrated, got {other:?}"),
+        };
+
+        // JSON renamed to `.bak.<ts>`, original gone.
+        assert!(!json_path.exists());
+        assert!(backup_path.exists());
+        assert!(
+            backup_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.starts_with("projects.json.bak."))
+                .unwrap_or(false),
+            "unexpected backup filename: {backup_path:?}"
+        );
+
+        // SQLite should now hold the legacy state. Re-open and
+        // load to make sure the write committed durably, then
+        // assert on a UI field that survived the round-trip.
+        let adapter = SqliteProjectStorePersistence::open(db_path).unwrap();
+        let loaded = adapter.load();
+        // serde_json round-trip via the StoreFileV4 -> Value path so
+        // we don't need to expose StoreFileV4's private fields here.
+        let loaded_value = serde_json::to_value(&loaded).unwrap();
+        assert_eq!(
+            loaded_value
+                .get("ui")
+                .and_then(|ui| ui.get("theme_mode"))
+                .and_then(|t| t.as_str()),
+            Some("dark")
+        );
+        assert_eq!(
+            loaded_value
+                .get("ui")
+                .and_then(|ui| ui.get("left_sidebar_open"))
+                .and_then(|b| b.as_bool()),
+            Some(false)
+        );
+    }
+
+    /// Migration is idempotent: running it twice is the same as
+    /// running it once. Second invocation hits the `AlreadyMigrated`
+    /// branch, doesn't touch the JSON backup, and doesn't overwrite
+    /// the SQLite state with a fresh one.
+    #[test]
+    fn migrate_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let json_path = tmp.path().join("projects.json");
+        let db_path = tmp.path().join(STATE_DB_FILENAME);
+
+        let legacy = serde_json::json!({
+            "version": 4, "repos": [], "projects": [], "tasks": [],
+            "ui": { "theme_mode": "dark", "left_sidebar_open": false },
+        });
+        std::fs::write(&json_path, serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        // First run: imports.
+        let first = migrate_from_json(&json_path, &db_path).unwrap();
+        assert!(matches!(first, MigrationOutcome::Migrated { .. }));
+
+        // Second run with no projects.json present (it was renamed):
+        // the AlreadyMigrated branch fires.
+        let second = migrate_from_json(&json_path, &db_path).unwrap();
+        assert!(matches!(second, MigrationOutcome::AlreadyMigrated));
+
+        // Third run after recreating projects.json with different
+        // content: the AlreadyMigrated branch still wins, the new
+        // JSON is *not* imported (would clobber the user's current
+        // state otherwise).
+        std::fs::write(
+            &json_path,
+            r#"{"version":4,"repos":[],"projects":[],"tasks":[],"ui":{"theme_mode":"light"}}"#,
+        )
+        .unwrap();
+        let third = migrate_from_json(&json_path, &db_path).unwrap();
+        assert!(matches!(third, MigrationOutcome::AlreadyMigrated));
+
+        let adapter = SqliteProjectStorePersistence::open(db_path).unwrap();
+        let loaded = adapter.load();
+        let theme = serde_json::to_value(&loaded)
+            .ok()
+            .and_then(|v| v.get("ui")?.get("theme_mode")?.as_str().map(str::to_string));
+        assert_eq!(theme, Some("dark".to_string()));
     }
 }

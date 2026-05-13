@@ -3483,6 +3483,24 @@ impl ProjectStore {
         app_config_dir().join("projects.json")
     }
 
+    /// Read a `StoreFileV4` from a v4 `projects.json` path. Returns
+    /// `None` if the path doesn't exist; returns a default store on
+    /// any other read / parse failure (matches `read_from_disk`'s
+    /// existing recovery semantics: malformed file is backed up and
+    /// we continue with a fresh store).
+    ///
+    /// Used by `core::sqlite_persistence::migrate_from_json` to
+    /// import the legacy JSON state on first launch with the
+    /// SQLite-backed binary. Lives here so the version-coercion
+    /// logic in `read_from_disk` stays the single source of truth
+    /// for parsing the on-disk JSON format.
+    pub(crate) fn try_read_from_json_path(path: &Path) -> Option<StoreFileV4> {
+        if !path.exists() {
+            return None;
+        }
+        Some(Self::read_from_disk(path))
+    }
+
     fn read_from_disk(path: &Path) -> StoreFileV4 {
         let Ok(contents) = std::fs::read_to_string(path) else {
             return StoreFileV4::default();
