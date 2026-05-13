@@ -61,7 +61,7 @@ use crate::platform::PlatformServices;
 use crate::project_store::{
     ChangedFile, InvalidProjectBranchSetting, PersistedSectionState, PersistedTerminalTab,
     ProjectAction, ProjectActionKind, ProjectBranchCommitState, ProjectBranchSettingField,
-    ProjectGitState, ProjectStore, RepoBranchRecord, Task, TaskKind, TaskWorktreeBranchMode,
+    ProjectGitState, ProjectStore, Task, TaskKind, TaskWorktreeBranchMode,
 };
 use another_one_core::process::TrackedProcess;
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
@@ -5149,11 +5149,21 @@ impl AnotherOneApp {
 
     fn persist_section_state(&mut self, section_id: &SectionId, persisted: PersistedSectionState) {
         let store_key = section_id.store_key();
-        apply_persisted_section_state_to_project_store(
-            &mut self.project_store,
-            section_id,
-            persisted.clone(),
-        );
+        if let Some(task_id) = section_id.task_id.as_deref() {
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::UpdateTaskTabs {
+                    task_id: task_id.to_string(),
+                    state: persisted.clone(),
+                },
+            );
+        } else {
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::SetTerminalSection {
+                    section_id: section_id.store_key(),
+                    state: persisted.clone(),
+                },
+            );
+        }
         let Ok(value) = serde_json::to_value(&persisted) else {
             log::warn!("persist_section_state: failed to serialise PersistedSectionState");
             return;
@@ -5182,47 +5192,28 @@ impl AnotherOneApp {
     /// (mobile) — there the remote daemon parses its own PTY output
     /// and the new title arrives via the next projection.
     fn apply_pty_title_update(
-        &self,
+        &mut self,
         key: &TerminalRuntimeKey,
         terminal_update: &crate::terminal_runtime::TerminalRuntimeUpdate,
     ) {
         if !terminal_update.reset_title && terminal_update.title.is_none() {
             return;
         }
-        let Ok(mut state) = self.registry_state.lock() else {
+        let update = if terminal_update.reset_title {
+            another_one_core::project_store::PtyTabTitleUpdate::Reset
+        } else if let Some(title) = terminal_update.title.clone() {
+            another_one_core::project_store::PtyTabTitleUpdate::Set(title)
+        } else {
             return;
         };
-        let section_key = key.section_id.store_key();
-        let mut applied = false;
-        if let Some(section) =
-            state.project_store.terminal_sections.get_mut(&section_key)
-        {
-            if let Some(tab) = section.tabs.iter_mut().find(|t| t.id == key.tab_id)
-            {
-                if tab.fixed_title.is_none() {
-                    if terminal_update.reset_title {
-                        let next = tab
-                            .launch_config
-                            .as_ref()
-                            .map(|c| c.default_title())
-                            .unwrap_or_default();
-                        if tab.title != next {
-                            tab.title = next;
-                            applied = true;
-                        }
-                    } else if let Some(t) = &terminal_update.title {
-                        if &tab.title != t {
-                            tab.title = t.clone();
-                            applied = true;
-                        }
-                    }
-                }
-            }
-        }
-        if applied {
-            state.project_store.rebuild_runtime_views();
-            state.notify_state_changed();
-        }
+        // Volatile mutation: `apply_mutation` skips save() for
+        // ApplyPtyTabTitle. The notify still fires so projection
+        // consumers see the new title on the next tick.
+        self.apply_mutation(another_one_core::state_authority::Mutation::ApplyPtyTabTitle {
+            section_key: key.section_id.store_key(),
+            tab_id: key.tab_id.clone(),
+            update,
+        });
     }
 
     fn update_terminal_tab(
@@ -6907,6 +6898,58 @@ impl AnotherOneApp {
         }
     }
 
+    /// Apply one typed mutation against the daemon's authoritative
+    /// `RegistryState.project_store`, mirror the result back into
+    /// the GPUI app's `self.project_store` (the render-side mirror),
+    /// persist (unless the mutation is volatile), and fire a
+    /// state-change tick. This is the single commit point for any
+    /// mutation initiated *from* the GUI.
+    ///
+    /// Replaces the legacy two-step pattern:
+    /// ```text
+    /// self.project_store.<mutator>(args);
+    /// self.commit_local_mutation();
+    /// ```
+    /// with one call, eliminating the class of bug where a mutation
+    /// landed in `self.project_store` but never made it into the
+    /// daemon's mirror (mobile sees stale state).
+    ///
+    /// Persistence: most variants persist via the underlying
+    /// `ProjectStore::*` method's own `save()` call. A few (notably
+    /// `InsertTask`, `RenameTask`, `SetTaskPinned`,
+    /// `update_worktree_checkout`) rely on the helper to save —
+    /// matching the legacy `commit_local_mutation()` behaviour. The
+    /// extra `save()` is cheap when the variant already saved,
+    /// because `ProjectStore::save` is a single-slot mailbox into a
+    /// debounced background writer (see #129).
+    ///
+    /// [`Mutation::is_volatile`] short-circuits the save for the
+    /// PTY-title hot path and git-refresh sweeps, both of which are
+    /// recovered from a fresher source on the next tick.
+    pub(crate) fn apply_mutation(
+        &mut self,
+        mutation: another_one_core::state_authority::Mutation,
+    ) -> another_one_core::state_authority::MutationOutcome {
+        let is_volatile = mutation.is_volatile();
+        let outcome = if let Ok(mut state) = self.registry_state.lock() {
+            let outcome = another_one_core::state_authority::apply(
+                &mut state.project_store,
+                mutation,
+            );
+            if !is_volatile {
+                state.project_store.save();
+            }
+            state.notify_state_changed();
+            self.project_store = state.project_store.clone();
+            outcome
+        } else {
+            another_one_core::state_authority::MutationOutcome::Failed(
+                "registry state unavailable".into(),
+            )
+        };
+        outcome
+    }
+
     fn sync_workspace_section_to_project_store(
         &mut self,
         section_id: &SectionId,
@@ -6921,29 +6964,22 @@ impl AnotherOneApp {
         let Some(persisted) = persisted else {
             return false;
         };
-        apply_persisted_section_state_to_project_store(
-            &mut self.project_store,
-            section_id,
-            persisted,
-        );
+        if let Some(task_id) = section_id.task_id.as_deref() {
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::UpdateTaskTabs {
+                    task_id: task_id.to_string(),
+                    state: persisted,
+                },
+            );
+        } else {
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::SetTerminalSection {
+                    section_id: section_id.store_key(),
+                    state: persisted,
+                },
+            );
+        }
         true
-    }
-
-    /// Persist + sync after a direct GUI mutation. Replaces the
-    /// scattered `self.project_store.save();
-    /// self.sync_registry_project_store();` pattern with a single
-    /// call so no callsite forgets the second half (which leaves
-    /// mobile clients seeing stale state until something else
-    /// triggers a sync).
-    ///
-    /// Use this for any direct `self.project_store.<mutator>` write
-    /// site that hasn't yet been migrated to a `Control::*` verb;
-    /// migrated sites flow through `dispatch_fire_and_forget` →
-    /// daemon → `with_store_mut` → save+broadcast and don't need
-    /// this.
-    pub(crate) fn commit_local_mutation(&self) {
-        self.project_store.save();
-        self.sync_registry_project_store();
     }
 
     /// Poll the daemon-host thread for the `EndpointHandle`. Called
@@ -9027,8 +9063,11 @@ impl AnotherOneApp {
             .map(SectionId::store_key)
             .collect::<HashSet<_>>();
         if !bare_section_keys.is_empty() {
-            self.project_store
-                .remove_terminal_sections(&bare_section_keys);
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::RemoveTerminalSections {
+                    section_ids: bare_section_keys,
+                },
+            );
         }
     }
 
@@ -9475,113 +9514,24 @@ impl AnotherOneApp {
     }
 
     fn apply_project_git_state(&mut self, project_id: &str, state: ProjectGitState) -> bool {
-        let mut changed = false;
+        // Snapshot `changed_files` out before handing the state to
+        // the authority — the store side intentionally ignores it
+        // (changed-file lists live on the GPUI app's render-side
+        // mirror, not in `ProjectStore`). The cheap clone here is a
+        // one-off per refresh tick; we previously moved it through
+        // pattern destructuring inside this function.
+        let changed_files = state.changed_files.clone();
 
-        let ProjectGitState {
-            changed_files,
-            ahead_count,
-            behind_count,
-            metadata,
-            current_branch,
-        } = state;
-        let metadata_checkout = metadata.as_ref().map(|metadata| metadata.checkout.clone());
-        let workspace_repo_id = self
-            .project_store
-            .repo_for_workspace(project_id)
-            .map(|repo| repo.id.clone());
-
-        if let Some(metadata) = metadata {
-            if let Some(repo_id) = workspace_repo_id.as_deref() {
-                if let Some(repo) = self.project_store.repo_mut(&repo_id) {
-                    if repo.branch_order != metadata.branch_order {
-                        repo.branch_order = metadata.branch_order.clone();
-                        changed = true;
-                    }
-                    if repo.branches_by_name != metadata.branches_by_name {
-                        repo.branches_by_name = metadata.branches_by_name.clone();
-                        changed = true;
-                    }
-                    if repo.common_dir != metadata.common_dir {
-                        repo.common_dir = metadata.common_dir.clone();
-                        changed = true;
-                    }
-                }
-            }
-            if let Some(project) = self.project_store.project_mut(project_id) {
-                if project.kind != metadata.kind {
-                    project.kind = metadata.kind;
-                    changed = true;
-                }
-                if project.checkout != metadata.checkout {
-                    project.checkout = metadata.checkout;
-                    changed = true;
-                }
-            }
-        }
-
-        let next_worktree_checkout = metadata_checkout.unwrap_or_else(|| {
-            crate::project_store::ProjectCheckoutState {
-                current_branch: current_branch.clone(),
-                lines_added: 0,
-                lines_removed: 0,
-            }
-        });
-        if self
-            .project_store
-            .update_worktree_checkout(project_id, next_worktree_checkout)
-        {
-            changed = true;
-        }
-
-        if self
-            .project_store
-            .project(project_id)
-            .and_then(|project| project.checkout.current_branch.as_deref())
-            != current_branch.as_deref()
-        {
-            if let Some(project) = self.project_store.project_mut(project_id) {
-                project.checkout.current_branch = current_branch.clone();
-                project.checkout.lines_added = 0;
-                project.checkout.lines_removed = 0;
-                changed = true;
-            }
-        }
-
-        if let Some(repo_id) = workspace_repo_id {
-            if let Some(repo) = self.project_store.repo_mut(&repo_id) {
-                if let Some(branch_name) = current_branch.as_deref() {
-                    if let Some(branch) = repo.branches_by_name.get_mut(branch_name) {
-                        if branch.ahead_count != ahead_count {
-                            branch.ahead_count = ahead_count;
-                            changed = true;
-                        }
-                        if branch.behind_count != behind_count {
-                            branch.behind_count = behind_count;
-                            changed = true;
-                        }
-                    } else {
-                        repo.branches_by_name.insert(
-                            branch_name.to_string(),
-                            RepoBranchRecord {
-                                name: branch_name.to_string(),
-                                last_commit_relative: String::new(),
-                                is_default: false,
-                                ahead_count,
-                                behind_count,
-                            },
-                        );
-                        if !repo.branch_order.iter().any(|name| name == branch_name) {
-                            repo.branch_order.push(branch_name.to_string());
-                        }
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        if changed {
-            self.project_store.refresh_runtime_views();
-        }
+        // Volatile mutation: not persisted; rebuilds runtime views
+        // on change. Atomic across the 5 logical writes (branch
+        // order / branches_by_name / common_dir / project kind+
+        // checkout / worktree checkout / ahead+behind).
+        let mut changed = self
+            .apply_mutation(another_one_core::state_authority::Mutation::ApplyProjectGitState {
+                project_id: project_id.to_string(),
+                state,
+            })
+            .is_changed();
 
         if self
             .changed_files
@@ -9631,9 +9581,16 @@ impl AnotherOneApp {
                 self.git_workspace.mark_refreshed(reply.include_metadata);
                 let mut changed = self.apply_project_git_state(&reply.project_id, reply.state);
                 if reply.include_metadata {
-                    let invalid_settings = self
-                        .project_store
-                        .clear_missing_branch_settings(&reply.project_id);
+                    let invalid_settings = match self.apply_mutation(
+                        another_one_core::state_authority::Mutation::ClearMissingBranchSettings {
+                            project_id: reply.project_id.clone(),
+                        },
+                    ) {
+                        another_one_core::state_authority::MutationOutcome::InvalidBranchSettings(
+                            v,
+                        ) => v,
+                        _ => Vec::new(),
+                    };
                     changed |= self.handle_invalid_project_branch_settings(
                         &reply.project_id,
                         invalid_settings,
@@ -9691,9 +9648,16 @@ impl AnotherOneApp {
                 match reply.result {
                     Ok(state) => {
                         let mut changed = self.apply_project_git_state(&reply.project_id, state);
-                        let invalid_settings = self
-                            .project_store
-                            .clear_missing_branch_settings(&reply.project_id);
+                        let invalid_settings = match self.apply_mutation(
+                            another_one_core::state_authority::Mutation::ClearMissingBranchSettings {
+                                project_id: reply.project_id.clone(),
+                            },
+                        ) {
+                            another_one_core::state_authority::MutationOutcome::InvalidBranchSettings(
+                                v,
+                            ) => v,
+                            _ => Vec::new(),
+                        };
                         changed |= self.handle_invalid_project_branch_settings(
                             &reply.project_id,
                             invalid_settings,
@@ -10013,22 +9977,24 @@ impl AnotherOneApp {
         cx: &mut Context<Self>,
     ) -> (String, SectionId) {
         let task_id = uuid::Uuid::new_v4().to_string();
-        self.project_store.insert_task(Task {
-            id: task_id.clone(),
-            name: task_name,
-            kind,
-            root_project_id,
-            target_project_id: target_project_id.clone(),
-            branch_name: branch_name.clone(),
-            section_id: SectionId::for_task(&target_project_id, &branch_name, &task_id).store_key(),
-            worktree: None,
-            worktree_project_id,
-            tabs: Vec::new(),
-            active_tab_id: String::new(),
-            next_tab_id: 0,
-            cwd: None,
+        self.apply_mutation(another_one_core::state_authority::Mutation::InsertTask {
+            task: Task {
+                id: task_id.clone(),
+                name: task_name,
+                kind,
+                root_project_id,
+                target_project_id: target_project_id.clone(),
+                branch_name: branch_name.clone(),
+                section_id: SectionId::for_task(&target_project_id, &branch_name, &task_id)
+                    .store_key(),
+                worktree: None,
+                worktree_project_id,
+                tabs: Vec::new(),
+                active_tab_id: String::new(),
+                next_tab_id: 0,
+                cwd: None,
+            },
         });
-        self.commit_local_mutation();
 
         if let Some(project) = self.project_store.project(&target_project_id) {
             self.expanded_projects.insert(project.repo_id.clone());
@@ -10255,7 +10221,13 @@ impl AnotherOneApp {
         prepared: another_one_core::project_store::PreparedProject,
         cx: &mut Context<Self>,
     ) {
-        let inserted = self.project_store.insert_prepared_project(prepared.clone());
+        let outcome = self.apply_mutation(
+            another_one_core::state_authority::Mutation::InsertPreparedProject(prepared.clone()),
+        );
+        let inserted = matches!(
+            outcome,
+            another_one_core::state_authority::MutationOutcome::Changed(true)
+        );
         if !inserted {
             self.show_error_toast(
                 "The worktree was created, but the app could not load it.",
@@ -10263,7 +10235,6 @@ impl AnotherOneApp {
             );
             return;
         }
-        self.commit_local_mutation();
 
         let Some(project) = self.project_store.project(&prepared.project.id).cloned() else {
             self.show_error_toast(
@@ -10292,7 +10263,6 @@ impl AnotherOneApp {
             cx,
         );
         self.create_branch_modal = None;
-        self.commit_local_mutation();
         self.show_success_toast(
             format!("Created branch {} in a new worktree.", success.branch_name),
             cx,
@@ -10986,9 +10956,16 @@ impl AnotherOneApp {
                             }) && matches!(toast_kind, ToastKind::Success);
                         if let Some(state) = git_state {
                             self.apply_project_git_state(&project_id, state);
-                            let invalid_settings = self
-                                .project_store
-                                .clear_missing_branch_settings(&project_id);
+                            let invalid_settings = match self.apply_mutation(
+                                another_one_core::state_authority::Mutation::ClearMissingBranchSettings {
+                                    project_id: project_id.clone(),
+                                },
+                            ) {
+                                another_one_core::state_authority::MutationOutcome::InvalidBranchSettings(
+                                    v,
+                                ) => v,
+                                _ => Vec::new(),
+                            };
                             let _ = self.handle_invalid_project_branch_settings(
                                 &project_id,
                                 invalid_settings,
@@ -11203,26 +11180,30 @@ impl AnotherOneApp {
                         };
 
                         let task_id = uuid::Uuid::new_v4().to_string();
-                        self.project_store.insert_task(Task {
-                            id: task_id.clone(),
-                            name: success.task_name.clone(),
-                            kind: TaskKind::Worktree,
-                            root_project_id: success.original_project_id.clone(),
-                            target_project_id: worktree.id.clone(),
-                            branch_name: success.branch_name.clone(),
-                            section_id: SectionId::for_task(
-                                &worktree.id,
-                                &success.branch_name,
-                                &task_id,
-                            )
-                            .store_key(),
-                            worktree: Some(worktree.clone()),
-                            worktree_project_id: Some(worktree.id.clone()),
-                            tabs: Vec::new(),
-                            active_tab_id: String::new(),
-                            next_tab_id: 0,
-                            cwd: Some(worktree.path.clone()),
-                        });
+                        self.apply_mutation(
+                            another_one_core::state_authority::Mutation::InsertTask {
+                                task: Task {
+                                    id: task_id.clone(),
+                                    name: success.task_name.clone(),
+                                    kind: TaskKind::Worktree,
+                                    root_project_id: success.original_project_id.clone(),
+                                    target_project_id: worktree.id.clone(),
+                                    branch_name: success.branch_name.clone(),
+                                    section_id: SectionId::for_task(
+                                        &worktree.id,
+                                        &success.branch_name,
+                                        &task_id,
+                                    )
+                                    .store_key(),
+                                    worktree: Some(worktree.clone()),
+                                    worktree_project_id: Some(worktree.id.clone()),
+                                    tabs: Vec::new(),
+                                    active_tab_id: String::new(),
+                                    next_tab_id: 0,
+                                    cwd: Some(worktree.path.clone()),
+                                },
+                            },
+                        );
 
                         self.expanded_projects.insert(root_project.repo_id.clone());
                         self.dispatch_set_expanded_repos(
@@ -11275,7 +11256,6 @@ impl AnotherOneApp {
                         if pending_launch == Some(PendingTaskLaunch::NewTaskModal) {
                             self.new_task_modal = None;
                         }
-                        self.commit_local_mutation();
                         self.show_success_toast(
                             format!(
                                 "Created worktree task {} on {}.",
@@ -11367,9 +11347,15 @@ impl AnotherOneApp {
                     Ok(project) => {
                         let project_name = project.project.name.clone();
                         let project_id = project.project.id.clone();
-                        let added = self.project_store.insert_prepared_project(project.clone());
+                        let added = matches!(
+                            self.apply_mutation(
+                                another_one_core::state_authority::Mutation::InsertPreparedProject(
+                                    project.clone(),
+                                ),
+                            ),
+                            another_one_core::state_authority::MutationOutcome::Changed(true)
+                        );
                         if added {
-                            self.commit_local_mutation();
                             self.workspace_pane.update(cx, |workspace, cx| {
                                 workspace.activate_project_page(project_id.clone(), cx);
                             });
@@ -11934,8 +11920,11 @@ impl AnotherOneApp {
         };
         if (from - to).abs() < 1. {
             self.sidebar_w = to;
-            self.project_store
-                .set_left_sidebar_open(to > SIDEBAR_COLLAPSED + 8.);
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::SetLeftSidebarOpen {
+                    is_open: to > SIDEBAR_COLLAPSED + 8.,
+                },
+            );
             self.sync_workspace_layout(cx);
             cx.notify();
             return;
@@ -11963,8 +11952,11 @@ impl AnotherOneApp {
                 handle.update(async_cx, |this, cx| {
                     this.sidebar_w = to;
                     this.animating = false;
-                    this.project_store
-                        .set_left_sidebar_open(to > SIDEBAR_COLLAPSED + 8.);
+                    this.apply_mutation(
+                        another_one_core::state_authority::Mutation::SetLeftSidebarOpen {
+                            is_open: to > SIDEBAR_COLLAPSED + 8.,
+                        },
+                    );
                     this.sync_workspace_layout(cx);
                     cx.notify();
                 });
@@ -12113,8 +12105,11 @@ impl AnotherOneApp {
         if had_layout_drag {
             self.clamp_layout(window);
             self.sync_workspace_layout(cx);
-            self.project_store
-                .set_left_sidebar_open(self.sidebar_is_open());
+            self.apply_mutation(
+                another_one_core::state_authority::Mutation::SetLeftSidebarOpen {
+                    is_open: self.sidebar_is_open(),
+                },
+            );
         }
 
         if had_toast_drag || had_terminal_selection || had_settings_selection || had_layout_drag {
@@ -13420,6 +13415,7 @@ fn reconcile_projected_section_state(
     PersistedSectionState::reconcile_projection(Some(&existing.to_persisted()), projected)
 }
 
+#[cfg(test)]
 fn apply_persisted_section_state_to_project_store(
     project_store: &mut ProjectStore,
     section_id: &SectionId,
@@ -16620,8 +16616,13 @@ impl AnotherOneApp {
             ui.expanded_repo_ids.len(),
             ui.last_active_section_id
         );
-        self.project_store
-            .absorb_projection(summaries, repo_summaries, ui);
+        self.apply_mutation(
+            another_one_core::state_authority::Mutation::AbsorbProjection {
+                projects: summaries,
+                repos: repo_summaries,
+                ui,
+            },
+        );
         log::info!(
             "post-absorb: store has {} projects and tasks for {} root projects",
             self.project_store.projects.len(),

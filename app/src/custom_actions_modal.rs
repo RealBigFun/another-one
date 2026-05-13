@@ -1715,10 +1715,16 @@ impl AnotherOneApp {
                                 cx.stop_propagation();
                                 return;
                             };
-                            if this
-                                .project_store
-                                .delete_project_action(&project_id, &action_id)
-                            {
+                            let outcome = this.apply_mutation(
+                                another_one_core::state_authority::Mutation::DeleteProjectAction {
+                                    project_id,
+                                    action_id: action_id.clone(),
+                                },
+                            );
+                            if matches!(
+                                outcome,
+                                another_one_core::state_authority::MutationOutcome::Changed(true)
+                            ) {
                                 this.custom_action_modal = None;
                                 this.show_success_toast("Action deleted.", cx);
                                 cx.notify();
@@ -2069,17 +2075,24 @@ impl AnotherOneApp {
             kind,
         };
 
-        let saved =
-            self.project_store
-                .upsert_project_action(&project_id, action, state.save_global_copy);
+        let saved = self.apply_mutation(
+            another_one_core::state_authority::Mutation::UpsertProjectAction {
+                project_id,
+                action,
+                save_global_copy: state.save_global_copy,
+            },
+        );
 
         match saved {
-            Ok(()) => {
+            another_one_core::state_authority::MutationOutcome::Unit => {
                 self.custom_action_modal = None;
                 self.show_success_toast("Action saved.", cx);
                 cx.notify();
             }
-            Err(error) => self.show_error_toast(error, cx),
+            another_one_core::state_authority::MutationOutcome::Failed(error) => {
+                self.show_error_toast(error, cx)
+            }
+            other => unreachable!("unexpected outcome for UpsertProjectAction: {other:?}"),
         }
     }
 }

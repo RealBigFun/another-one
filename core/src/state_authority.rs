@@ -28,7 +28,8 @@ use crate::git_actions::GitActionLlmSettings;
 use crate::open_in::OpenInAppKind;
 use crate::project_store::{
     InvalidProjectBranchSetting, PersistedSectionState, PreparedProject, ProjectAction,
-    ProjectCheckoutState, ProjectStore, RepoDefaultCommitAction, ThemeMode,
+    ProjectCheckoutState, ProjectGitState, ProjectStore, PtyTabTitleUpdate,
+    RepoDefaultCommitAction, ThemeMode,
 };
 use crate::shortcuts::ShortcutAction;
 
@@ -89,6 +90,32 @@ pub enum Mutation {
     UpdateWorktreeCheckout {
         worktree_id: String,
         checkout: ProjectCheckoutState,
+    },
+
+    // ── Volatile (in-memory only — NOT persisted) ───────────────
+    /// PTY-driven OSC-0/1/2 title update. CAS-style: honours
+    /// `fixed_title`, only mutates on a real diff. **Not persisted**
+    /// — this fires hundreds of times per second under CDP / sub-
+    /// agent bursts and the JSON write path can't keep up. Title
+    /// is recovered on next `Control::SetSectionState` or on store
+    /// reload via the normal section-state persist path. SQLite (PR2)
+    /// will make this a single-row UPDATE and we can drop the
+    /// volatility distinction.
+    ApplyPtyTabTitle {
+        section_key: String,
+        tab_id: String,
+        update: PtyTabTitleUpdate,
+    },
+
+    /// Compound git-refresh write: branches, branch order, common
+    /// dir, kind, checkout, ahead/behind. **Not persisted** — git
+    /// state is recomputed on the next refresh tick, never read back
+    /// from disk. Modeled as one mutation so the 5 logical field
+    /// writes commit atomically (no projection sees a half-updated
+    /// `branch_order` vs `branches_by_name`).
+    ApplyProjectGitState {
+        project_id: String,
+        state: ProjectGitState,
     },
 
     // ── Task catalog ────────────────────────────────────────────
@@ -212,6 +239,24 @@ pub enum Mutation {
     },
 }
 
+impl Mutation {
+    /// Volatile mutations live in memory only — never written to
+    /// `projects.json` (today) or the SQLite store (after PR2).
+    /// Today these are the two compound hot-path mutations:
+    /// PTY-title CAS and the git-refresh sweep. Both are recovered
+    /// from a fresher source on the next tick, so persisting them
+    /// would just amplify churn for no reader.
+    ///
+    /// `AnotherOneApp::apply_mutation` skips its post-mutation
+    /// `save()` for volatile variants.
+    pub fn is_volatile(&self) -> bool {
+        matches!(
+            self,
+            Mutation::ApplyPtyTabTitle { .. } | Mutation::ApplyProjectGitState { .. }
+        )
+    }
+}
+
 /// Typed mutation outcomes. Variants only carry data callers
 /// actually inspect today — anything else is `Unit`.
 ///
@@ -331,6 +376,16 @@ pub fn apply(store: &mut ProjectStore, mutation: Mutation) -> MutationOutcome {
             worktree_id,
             checkout,
         } => MutationOutcome::Changed(store.update_worktree_checkout(&worktree_id, checkout)),
+
+        // ── Volatile ────────────────────────────────────────────
+        Mutation::ApplyPtyTabTitle {
+            section_key,
+            tab_id,
+            update,
+        } => MutationOutcome::Changed(store.apply_pty_tab_title(&section_key, &tab_id, update)),
+        Mutation::ApplyProjectGitState { project_id, state } => {
+            MutationOutcome::Changed(store.apply_project_git_state(&project_id, state))
+        }
 
         // ── Task catalog ────────────────────────────────────────
         Mutation::InsertTask { task } => {

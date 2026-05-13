@@ -759,6 +759,20 @@ pub struct PersistedTerminalTab {
     pub failure_details: Option<String>,
 }
 
+/// Input for [`ProjectStore::apply_pty_tab_title`]: a PTY OSC 0/1/2
+/// escape either resets the title to the launch_config default
+/// (empty / unset payload) or sets it to the supplied string.
+/// CAS lives entirely on the store side so the read-then-write
+/// happens under one lock acquisition.
+#[derive(Debug, Clone)]
+pub enum PtyTabTitleUpdate {
+    /// Empty/unset payload — fall back to the tab's launch_config
+    /// `default_title()`.
+    Reset,
+    /// Non-empty payload from the OSC sequence.
+    Set(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedSectionState {
     pub active_tab_id: String,
@@ -3258,6 +3272,169 @@ impl ProjectStore {
                 }
             })
             .collect()
+    }
+
+    /// CAS-style update for PTY-derived tab titles. Honours the
+    /// `fixed_title` opt-out, only mutates on a real diff, and
+    /// rebuilds runtime views (so projection consumers see the new
+    /// title) on change. Returns `true` iff the title actually
+    /// changed.
+    ///
+    /// Volatile — does **not** call `save()`. Today this fires
+    /// hundreds of times per second under CDP / sub-agent bursts and
+    /// the JSON write path can't keep up; tracked in #129's writer
+    /// debounce. SQLite (PR2) makes this a single-row UPDATE and
+    /// the volatility distinction goes away.
+    pub fn apply_pty_tab_title(
+        &mut self,
+        section_key: &str,
+        tab_id: &str,
+        update: PtyTabTitleUpdate,
+    ) -> bool {
+        let Some(section) = self.terminal_sections.get_mut(section_key) else {
+            return false;
+        };
+        let Some(tab) = section.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        if tab.fixed_title.is_some() {
+            return false;
+        }
+        let next = match update {
+            PtyTabTitleUpdate::Reset => tab
+                .launch_config
+                .as_ref()
+                .map(|c| c.default_title())
+                .unwrap_or_default(),
+            PtyTabTitleUpdate::Set(t) => t,
+        };
+        if tab.title == next {
+            return false;
+        }
+        tab.title = next;
+        self.rebuild_runtime_views();
+        true
+    }
+
+    /// Apply one git-refresh tick to the project's repo + project +
+    /// worktree-checkout state. Returns `true` iff anything changed
+    /// (so the caller can short-circuit downstream notify / snapshot
+    /// invalidation).
+    ///
+    /// Volatile — does **not** call `save()`. Git state is
+    /// recomputed on the next refresh tick and never read back from
+    /// disk; persisting it would just amplify churn for no reader.
+    /// The 5 logical writes (branch order, branches_by_name, common
+    /// dir, project kind/checkout, worktree checkout, ahead/behind)
+    /// commit atomically here so projection consumers never see
+    /// `branch_order` updated against a stale `branches_by_name`.
+    ///
+    /// `state.changed_files` is intentionally ignored — changed-file
+    /// state lives outside `ProjectStore` (on the GPUI app's render-
+    /// side mirror).
+    pub fn apply_project_git_state(
+        &mut self,
+        project_id: &str,
+        state: ProjectGitState,
+    ) -> bool {
+        let mut changed = false;
+        let ProjectGitState {
+            changed_files: _,
+            ahead_count,
+            behind_count,
+            metadata,
+            current_branch,
+        } = state;
+        let metadata_checkout = metadata.as_ref().map(|m| m.checkout.clone());
+        let workspace_repo_id = self.repo_for_workspace(project_id).map(|r| r.id.clone());
+
+        if let Some(metadata) = metadata {
+            if let Some(repo_id) = workspace_repo_id.as_deref() {
+                if let Some(repo) = self.repo_mut(repo_id) {
+                    if repo.branch_order != metadata.branch_order {
+                        repo.branch_order = metadata.branch_order.clone();
+                        changed = true;
+                    }
+                    if repo.branches_by_name != metadata.branches_by_name {
+                        repo.branches_by_name = metadata.branches_by_name.clone();
+                        changed = true;
+                    }
+                    if repo.common_dir != metadata.common_dir {
+                        repo.common_dir = metadata.common_dir.clone();
+                        changed = true;
+                    }
+                }
+            }
+            if let Some(project) = self.project_mut(project_id) {
+                if project.kind != metadata.kind {
+                    project.kind = metadata.kind;
+                    changed = true;
+                }
+                if project.checkout != metadata.checkout {
+                    project.checkout = metadata.checkout;
+                    changed = true;
+                }
+            }
+        }
+
+        let next_worktree_checkout = metadata_checkout.unwrap_or(ProjectCheckoutState {
+            current_branch: current_branch.clone(),
+            lines_added: 0,
+            lines_removed: 0,
+        });
+        if self.update_worktree_checkout(project_id, next_worktree_checkout) {
+            changed = true;
+        }
+
+        if self
+            .project(project_id)
+            .and_then(|p| p.checkout.current_branch.as_deref())
+            != current_branch.as_deref()
+        {
+            if let Some(project) = self.project_mut(project_id) {
+                project.checkout.current_branch = current_branch.clone();
+                project.checkout.lines_added = 0;
+                project.checkout.lines_removed = 0;
+                changed = true;
+            }
+        }
+
+        if let Some(repo_id) = workspace_repo_id {
+            if let Some(repo) = self.repo_mut(&repo_id) {
+                if let Some(branch_name) = current_branch.as_deref() {
+                    if let Some(branch) = repo.branches_by_name.get_mut(branch_name) {
+                        if branch.ahead_count != ahead_count {
+                            branch.ahead_count = ahead_count;
+                            changed = true;
+                        }
+                        if branch.behind_count != behind_count {
+                            branch.behind_count = behind_count;
+                            changed = true;
+                        }
+                    } else {
+                        repo.branches_by_name.insert(
+                            branch_name.to_string(),
+                            RepoBranchRecord {
+                                name: branch_name.to_string(),
+                                last_commit_relative: String::new(),
+                                is_default: false,
+                                ahead_count,
+                                behind_count,
+                            },
+                        );
+                        if !repo.branch_order.iter().any(|n| n == branch_name) {
+                            repo.branch_order.push(branch_name.to_string());
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if changed {
+            self.refresh_runtime_views();
+        }
+        changed
     }
 
     pub fn rebuild_runtime_views(&mut self) {
