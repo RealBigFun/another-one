@@ -120,15 +120,6 @@ impl AnotherOneApp {
             .unwrap_or_else(|| format!("project:{}", project.id))
     }
 
-    fn sidebar_branch_for_project(
-        &self,
-        project: &Project,
-        prefer_default: bool,
-    ) -> Option<Branch> {
-        self.project_store
-            .primary_branch_for_project(&project.id, prefer_default)
-    }
-
     fn sidebar_root_project_for_project(&self, project_id: &str) -> Option<Project> {
         sidebar_root_project_for_project(&self.project_store.projects, project_id)
     }
@@ -180,7 +171,6 @@ impl AnotherOneApp {
                     let branch = self
                         .project_store
                         .branch_view(&target.project_id, &target.branch_name)
-                        .or_else(|| self.sidebar_branch_for_project(&root_project, false))
                         .unwrap_or_else(|| Branch {
                             name: target.branch_name.clone(),
                             lines_added: 0,
