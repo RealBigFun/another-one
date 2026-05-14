@@ -36,11 +36,14 @@ use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi;
 use another_one_core::terminal_types::TerminalGridSize;
-use daemon_proto::TerminalFrame;
+use daemon_proto::{
+    ScrollbackRange, TerminalFrame, TerminalScrollbackReply, TerminalSearchReply,
+    TerminalSearchRequest,
+};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use super::frame::serialize_full_frame;
+use super::frame::{read_scrollback, search, serialize_full_frame};
 
 /// Default inbox capacity. Sized to absorb a burst of small `Bytes`
 /// chunks from a chatty harness without backpressuring the PTY reader
@@ -72,6 +75,27 @@ pub enum TerminalCommand {
     /// it with "freshly cleared screen").
     RequestFullFrame {
         reply: oneshot::Sender<Option<Arc<TerminalFrame>>>,
+    },
+    /// Resize both the Term grid and (Phase 4) the PTY master to the
+    /// new dimensions. Emits a fresh `Full` frame so subscribed
+    /// viewers observe the new size on the next pacer tick. The
+    /// PTY-master half lands in Phase 4 when `Control::LaunchTab`
+    /// moves to the daemon; for Phase 2 this only resizes the Term.
+    Resize { size: TerminalGridSize },
+    /// Run a search against the live grid + scrollback for this tab.
+    /// Replies with grid-coordinate matches; coordinates are signed
+    /// so the renderer can map negatives back into scrollback.
+    Search {
+        request: TerminalSearchRequest,
+        reply: oneshot::Sender<TerminalSearchReply>,
+    },
+    /// Read a slice of scrollback rows. `start = 0` is the topmost
+    /// line of the live screen; increasing `start` walks into the
+    /// past. Used by viewers when the user scrolls past the
+    /// snapshot's backbuffer (which Phase 2b ships empty for now).
+    ReadScrollback {
+        range: ScrollbackRange,
+        reply: oneshot::Sender<TerminalScrollbackReply>,
     },
     /// Tear down the task. The loop returns after this; the Term and
     /// any held resources drop on its way out.
@@ -231,6 +255,14 @@ impl TerminalTask {
         self.emit_full_frame();
     }
 
+    /// Resize the Term grid. Phase 4 will route the same command to
+    /// the PTY master; for Phase 2 this is Term-only.
+    fn resize(&mut self, size: TerminalGridSize) {
+        self.term.resize(size);
+        self.dirty = true;
+        self.emit_full_frame();
+    }
+
     /// Build a `TerminalFrame::Full` from the current Term state
     /// and publish it on the watch channel. Phase 3's pacer
     /// observes via `Receiver::changed`; Phase 2 tests observe via
@@ -304,12 +336,18 @@ async fn run_terminal_task(
                 state.apply_bytes(&bytes);
             }
             TerminalCommand::RequestFullFrame { reply } => {
-                // Send a fresh frame even if no bytes have arrived;
-                // None tells the caller "task is up but the screen
-                // is still default-blank". Subscribers join via
-                // `subscribe()` instead of polling, so this verb
-                // is mostly for tests + Phase 3 cold-start.
                 let _ = reply.send(state.latest.clone());
+            }
+            TerminalCommand::Resize { size } => {
+                state.resize(size);
+            }
+            TerminalCommand::Search { request, reply } => {
+                let result = search(&state.term, &request);
+                let _ = reply.send(result);
+            }
+            TerminalCommand::ReadScrollback { range, reply } => {
+                let result = read_scrollback(&state.term, range);
+                let _ = reply.send(result);
             }
             TerminalCommand::Shutdown => {
                 tracing::trace!("terminal task shutdown");
@@ -498,6 +536,139 @@ mod tests {
             TerminalFrame::Full { seq, .. } => assert_eq!(*seq, 1),
             _ => panic!("expected Full"),
         }
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn resize_reshapes_grid_and_emits_frame() {
+        let handle = spawn_terminal_task(small_size());
+        // Seed some bytes; the seq starts at 1 here.
+        handle
+            .send(TerminalCommand::Bytes(b"hi".to_vec()))
+            .await
+            .expect("send bytes");
+        handle
+            .send(TerminalCommand::Resize {
+                size: TerminalGridSize {
+                    cols: 20,
+                    rows: 5,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+            })
+            .await
+            .expect("send resize");
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::RequestFullFrame { reply: tx })
+            .await
+            .expect("send request");
+        let frame = rx.await.expect("reply").expect("frame");
+        match &*frame {
+            TerminalFrame::Full { seq, snapshot } => {
+                assert_eq!(*seq, 2, "resize bumps seq past the bytes-emit");
+                assert_eq!(snapshot.cols, 20);
+                assert_eq!(snapshot.rows, 5);
+            }
+            _ => panic!("expected Full"),
+        }
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn search_finds_literal_substring_with_case_fold() {
+        use daemon_proto::{TerminalCaseFold, TerminalSearchRequest};
+
+        let handle = spawn_terminal_task(small_size());
+        handle
+            .send(TerminalCommand::Bytes(b"hello".to_vec()))
+            .await
+            .expect("send bytes");
+
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::Search {
+                request: TerminalSearchRequest {
+                    pattern: "LL".into(),
+                    regex: false,
+                    case_fold: TerminalCaseFold::Insensitive,
+                },
+                reply: tx,
+            })
+            .await
+            .expect("send search");
+        let result = rx.await.expect("reply");
+        assert_eq!(result.matches.len(), 1, "single match for 'LL' in 'hello'");
+        let m = &result.matches[0];
+        assert_eq!(m.line, 0);
+        assert_eq!(m.start_col, 2);
+        assert_eq!(m.end_col, 4);
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn search_with_regex_returns_all_matches() {
+        use daemon_proto::{TerminalCaseFold, TerminalSearchRequest};
+
+        let handle = spawn_terminal_task(small_size());
+        handle
+            .send(TerminalCommand::Bytes(b"abc123".to_vec()))
+            .await
+            .expect("send bytes");
+
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::Search {
+                request: TerminalSearchRequest {
+                    pattern: r"\d".into(),
+                    regex: true,
+                    case_fold: TerminalCaseFold::Sensitive,
+                },
+                reply: tx,
+            })
+            .await
+            .expect("send search");
+        let result = rx.await.expect("reply");
+        assert_eq!(result.matches.len(), 3, "three digits matched");
+        let cols: Vec<u16> = result.matches.iter().map(|m| m.start_col).collect();
+        assert_eq!(cols, vec![3, 4, 5]);
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn read_scrollback_includes_top_of_live_screen() {
+        use daemon_proto::ScrollbackRange;
+
+        // Empty input -> only viewport, no scrollback. Reading
+        // start=0 with count=2 returns the topmost viewport row
+        // and stops there (history is empty so offset=1 walks off
+        // the end). Range_actual.count reflects what was returned.
+        let handle = spawn_terminal_task(small_size());
+        handle
+            .send(TerminalCommand::Bytes(b"top".to_vec()))
+            .await
+            .expect("send bytes");
+
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::ReadScrollback {
+                range: ScrollbackRange { start: 0, count: 2 },
+                reply: tx,
+            })
+            .await
+            .expect("send read_scrollback");
+        let result = rx.await.expect("reply");
+        assert_eq!(result.range_actual.start, 0);
+        assert_eq!(
+            result.range_actual.count, 1,
+            "only Line(0) is in range with no scrollback history"
+        );
+        assert_eq!(result.rows.len(), 1);
+        let chars: String = result.rows[0].cells.iter().map(|c| c.ch).collect();
+        assert!(
+            chars.starts_with("top"),
+            "row 0 starts with 'top', got {chars:?}"
+        );
         handle.shutdown().await.expect("shutdown");
     }
 }
