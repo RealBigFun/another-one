@@ -1069,7 +1069,7 @@ fn cursor_snapshot_from_proto(
         column,
         width,
         kind,
-        color: default_foreground_color(),
+        color: crate::theme::terminal_default_cursor(),
         blinking: matches!(
             shape,
             Shape::BlockBlinking | Shape::UnderlineBlinking | Shape::BeamBlinking
@@ -1986,6 +1986,14 @@ mod tests {
                 "line {i} content differs: proto={proto_trimmed:?} alacritty={ala_trimmed:?}"
             );
         }
+    }
+
+    #[test]
+    fn proto_cursor_uses_terminal_cursor_theme_color() {
+        let proto = proto_snapshot_from_lines(16, 2, &["hi"]);
+        let surface = build_surface_snapshot_from_proto(&proto);
+        let cursor = surface.cursor.expect("visible cursor");
+        assert_eq!(cursor.color, crate::theme::terminal_default_cursor());
     }
 
     #[test]

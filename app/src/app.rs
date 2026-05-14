@@ -5921,6 +5921,18 @@ impl AnotherOneApp {
 
         #[cfg(not(target_os = "android"))]
         {
+            // Claim the desktop viewport before dispatching LaunchTab
+            // so daemon-side spawn can open the PTY at the pane's
+            // actual grid size instead of the fallback 80×24.
+            if let Ok(mut state) = self.registry_state.lock() {
+                state.claim_viewport(
+                    crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID,
+                    request.key.clone(),
+                    request.size.cols,
+                    request.size.rows,
+                );
+            }
+
             // ── Client-role split (NOT a platform split) ───────────
             // Registry-host role: this binary also owns PTYs, so
             // the spawn goes to the local `terminal_launch` pipe
@@ -8391,14 +8403,43 @@ impl AnotherOneApp {
                     },
                 );
             }
-            let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) else {
-                continue;
-            };
             let size = TerminalGridSize {
                 cols: request.cols,
                 rows: request.rows,
                 pixel_width: 0,
                 pixel_height: 0,
+            };
+            if let Ok(state) = self.registry_state.lock() {
+                if let Some(master) = state.pty_masters.get(&request.key) {
+                    match master.lock() {
+                        Ok(master) => {
+                            if let Err(error) = master.resize(size.as_pty_size()) {
+                                self.terminal_manager
+                                    .errors
+                                    .insert(request.key.clone(), error.to_string());
+                            }
+                        }
+                        Err(_) => {
+                            self.terminal_manager.errors.insert(
+                                request.key.clone(),
+                                "terminal PTY resize lock poisoned".to_string(),
+                            );
+                        }
+                    }
+                }
+                if let Some(task) = state.term_tasks.get(&request.key) {
+                    if let Err(error) =
+                        task.try_send(daemon::terminal::TerminalCommand::Resize { size })
+                    {
+                        log::trace!(
+                            "terminal task resize for {:?} failed: {error:?}",
+                            request.key
+                        );
+                    }
+                }
+            }
+            let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) else {
+                continue;
             };
             match runtime.resize(size) {
                 Ok(true) => {
