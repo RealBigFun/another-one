@@ -91,6 +91,23 @@ fn load_or_create_client_secret_key(path: &std::path::Path) -> anyhow::Result<Se
     Ok(sk)
 }
 
+/// Load (or generate) a stable client secret key at `path` and
+/// return the matching iroh `EndpointId` as its canonical string.
+///
+/// Used by the desktop's loopback-client bootstrap (`daemon_host`):
+/// the daemon writes the resulting id into its `paired_peers`
+/// allowlist before the GUI dials, so the in-process iroh dial
+/// completes without going through the QR/Hello pairing flow.
+/// Stable across runs because the daemon's allowlist must remain
+/// valid — a fresh per-run key would re-pair on every boot and
+/// bloat the allowlist file.
+pub fn load_or_create_loopback_client_endpoint_id(
+    path: &std::path::Path,
+) -> anyhow::Result<String> {
+    let sk = load_or_create_client_secret_key(path)?;
+    Ok(sk.public().to_string())
+}
+
 fn hex_encode_32(bytes: &[u8; 32]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(64);

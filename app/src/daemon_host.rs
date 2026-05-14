@@ -2566,38 +2566,57 @@ pub(crate) fn spawn(
         spawn_gh_auth_check(guard.gh_auth_status.clone(), guard.state_change_tx.clone());
     }
     let (endpoint_tx, endpoint_rx) = mpsc::channel();
-    // Build the in-memory pair *before* spawning the daemon thread so
-    // we can hand the client half back synchronously. `pair()` itself
-    // needs a tokio context (it `tokio::spawn`s the recv router) — use
-    // the shared session-host runtime which is also what drives every
-    // GUI-issued `session.call(...)`.
-    let (server_session, client_session) = crate::session_host::runtime_handle().block_on(async {
-        // `daemon_transport::in_memory` is deprecated
-        // (see docs/designs/01-daemon-canonical-terminal.md);
-        // the desktop in-process daemon seam still uses it until
-        // the migration lands.
-        #[allow(deprecated)]
-        {
-            daemon_transport::in_memory::pair("gui:desktop")
-        }
-    });
-    let session: Arc<dyn daemon_transport::Session> = Arc::from(client_session);
-    let server_session: Arc<dyn daemon_transport::ServerSession> = Arc::from(server_session);
+    // Loopback handshake: the daemon thread brings up iroh + pre-
+    // allowlists the GUI client's NodeId, then sends the dial inputs
+    // (pairing url + the on-disk path that pins the GUI client's
+    // secret key) back here so we can dial the in-process iroh
+    // endpoint as a regular client. Replaces the `in_memory::pair`
+    // shortcut: the GUI is now an iroh client just like mobile, with
+    // the only distinction being it lives in the same process.
+    let (loopback_tx, loopback_rx) = mpsc::sync_channel::<DesktopLoopbackHandshake>(1);
     thread::Builder::new()
         .name("another-one-daemon".into())
-        .spawn(move || run(registry_state, event_bus, endpoint_tx, server_session))
+        .spawn(move || run(registry_state, event_bus, endpoint_tx, loopback_tx))
         .expect("spawn daemon-host thread");
+    // Block on the daemon thread's iroh bind. If the bind failed the
+    // sender is dropped without sending; surface that as a hard
+    // panic since the desktop has no fallback transport for its own
+    // dispatch path. (`endpoint_rx` will also yield the matching
+    // `Err` for the rest of the boot path to log.)
+    let handshake = loopback_rx
+        .recv()
+        .expect("daemon thread must send loopback handshake before exit");
+    let session = crate::session_host::runtime_handle().block_on(async move {
+        let legacy = daemon_client::connect_with_secret_key(
+            &handshake.pairing_url,
+            Some(handshake.client_secret_key_path),
+        )
+        .await
+        .expect("loopback iroh dial against in-process daemon");
+        daemon_client::wrap_legacy_session(std::sync::Arc::new(legacy))
+    });
+    let session: Arc<dyn daemon_transport::Session> = Arc::from(session);
     DaemonHostHandles {
         endpoint_rx,
         session,
     }
 }
 
+/// Daemon → GUI handshake describing how the GUI dials the
+/// in-process iroh endpoint as its loopback client. The daemon
+/// thread builds this after `run_endpoint` succeeds and after it has
+/// pre-allowlisted the GUI's `EndpointId` in `paired_peers` so the
+/// dial completes without a Hello/QR step.
+struct DesktopLoopbackHandshake {
+    pairing_url: String,
+    client_secret_key_path: PathBuf,
+}
+
 fn run(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
     tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
-    in_process_server: Arc<dyn daemon_transport::ServerSession>,
+    loopback_tx: mpsc::SyncSender<DesktopLoopbackHandshake>,
 ) {
     // Four workers so a single stuck PTY write (child paused /
     // pipe buffer full) + its `block_in_place` scope don't starve
@@ -2702,25 +2721,39 @@ fn run(
         drop(listener);
     });
 
-    // Drive the in-process Session. The GUI on the same process holds
-    // the matched client half (`session: Arc<dyn Session>` on
-    // `AnotherOneApp`) and issues every daemon-equivalent verb through
-    // it; we accept those verbs here on the daemon's own runtime via
-    // the same `serve_session` dispatcher the iroh accept loop drives
-    // for mobile clients. Nothing about handler logic is in-process
-    // vs over the wire — it's the same dispatch path either way, which
-    // is the whole point of the daemon-transport seam.
-    let in_process_registry = registry.clone();
-    runtime.spawn(async move {
-        if let Err(e) =
-            daemon::dispatch::serve_session(in_process_server, in_process_registry).await
-        {
-            log::warn!("in-process serve_session ended with error: {e}");
-        }
-    });
+    // The GUI side of this process is now an iroh client just like
+    // mobile (see `DesktopLoopbackHandshake`). Its connection enters
+    // the same iroh accept loop `run_endpoint` drives below; there
+    // is no longer a parallel `serve_session(in_process_server,…)`
+    // task because no in-memory pair exists.
 
     let endpoint_result = runtime.block_on(async {
-        daemon::run_endpoint(registry, paths.secret_key, paths.paired_peers).await
+        let handle =
+            daemon::run_endpoint(registry, paths.secret_key.clone(), paths.paired_peers.clone())
+                .await?;
+        // Pre-allowlist the GUI loopback client's `EndpointId` so the
+        // dial below skips the QR/Hello flow. The desktop's loopback
+        // identity is intentionally separate from the daemon's
+        // server identity — the daemon authorises the GUI as a
+        // peer, the same way it authorises mobile peers, just
+        // bootstrapped on disk instead of via QR.
+        let client_secret_key_path = paths.client_secret_key.clone();
+        let client_endpoint_id = match daemon_client::load_or_create_loopback_client_endpoint_id(
+            &client_secret_key_path,
+        ) {
+            Ok(id) => id,
+            Err(err) => {
+                return Err(err.context("load loopback client secret key"));
+            }
+        };
+        if let Err(err) = daemon::persist_pairing(&client_endpoint_id, &paths.paired_peers) {
+            return Err(err.context("pre-pair desktop loopback client"));
+        }
+        let _ = loopback_tx.send(DesktopLoopbackHandshake {
+            pairing_url: handle.pairing_url(),
+            client_secret_key_path,
+        });
+        Ok(handle)
     });
 
     match endpoint_result {
@@ -2749,6 +2782,10 @@ fn run(
 struct DaemonPaths {
     secret_key: PathBuf,
     paired_peers: PathBuf,
+    /// On-disk pin for the GUI loopback client's iroh secret key.
+    /// Stable across runs so the daemon's `paired_peers` allowlist
+    /// stays valid — see `DesktopLoopbackHandshake`.
+    client_secret_key: PathBuf,
 }
 
 /// Public accessor for the allowlist path so the "Pair mobile" modal's
@@ -2778,5 +2815,6 @@ fn daemon_paths() -> anyhow::Result<DaemonPaths> {
     Ok(DaemonPaths {
         secret_key: dir.join("secret_key"),
         paired_peers: dir.join("paired_peers"),
+        client_secret_key: dir.join("client_secret_key"),
     })
 }

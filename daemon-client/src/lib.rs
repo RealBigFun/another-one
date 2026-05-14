@@ -24,5 +24,8 @@ pub use iroh_transport::{
     iroh_factory, pairing_target, socket_target, wrap_legacy_session, IrohTransportFactory,
 };
 pub use pairing_url::{parse_pairing_url, PairingUrl};
-pub use session::{connect, connect_with_secret_key, Session, SessionEvent};
+pub use session::{
+    connect, connect_with_secret_key, load_or_create_loopback_client_endpoint_id, Session,
+    SessionEvent,
+};
 pub use status::{drain_status, DialStatus};
