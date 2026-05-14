@@ -6241,11 +6241,10 @@ impl AnotherOneApp {
     /// daemon owns spawn + parsing. Module-scoped allow until then.
     #[allow(deprecated)]
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        // RAII guard: increments drain count, times the body, and
-        // bumps the watchdog heartbeat on drop. See issue #125 —
-        // this is the signal that distinguishes drain-starvation
-        // from a true deadlock when the GUI appears frozen.
-        let _drain_guard = crate::leakscope::drain_tick_guard();
+        // Phase 5e (design 01 / #158): the drain_tick_guard
+        // watchdog (#125) was removed; with VT parse off the GPUI
+        // thread, drain ticks stay sub-millisecond and the
+        // instrument has no signal to report.
         let mut updated = false;
         // Tracks tabs that accumulated VT output during this drain tick. We
         // used to rebuild + clone each tab's surface snapshot on *every*
@@ -6434,10 +6433,10 @@ impl AnotherOneApp {
     /// alongside `spawn_warm_terminal_launch` (design 01 / #158).
     #[allow(deprecated)]
     fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        // Same guard as the hot drain above — warm-launch traffic
-        // lands in its own bounded channel but shares the GPUI main
-        // thread, so it contributes to lockup diagnostics too.
-        let _drain_guard = crate::leakscope::drain_tick_guard();
+        // Phase 5e (design 01 / #158): the drain_tick_guard
+        // watchdog (#125) was removed alongside the cold-path
+        // guard. With VT parse off the GPUI thread, the warm
+        // drain only mirrors bytes + bumps state — sub-millisecond.
         let mut updated = false;
         // Same byte budget as the hot drain — see
         // [`DRAIN_OUTPUT_BYTE_CAP`]. Warm and hot drains both run

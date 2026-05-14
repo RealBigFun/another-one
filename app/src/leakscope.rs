@@ -94,62 +94,13 @@ pub fn set_live_counts(tabs: usize, snapshots: usize) {
     LIVE_SNAPSHOTS.store(snapshots, Ordering::Relaxed);
 }
 
-/// RAII guard returned by [`drain_tick_guard`]. Starts a timer on
-/// construction; on drop, records the elapsed duration into the
-/// drain-tick histogram and bumps the heartbeat. Using a guard means
-/// early returns, `continue`s, and even panics inside the drain body
-/// still end up accounted for — the alternative (manual timing at
-/// every return site) drifted out of sync the moment somebody added
-/// a new branch.
-pub struct DrainTickGuard {
-    start: Instant,
-}
-
-impl DrainTickGuard {
-    #[inline]
-    fn new() -> Self {
-        DRAIN_CALLS.fetch_add(1, Ordering::Relaxed);
-        DrainTickGuard {
-            start: Instant::now(),
-        }
-    }
-}
-
-impl Drop for DrainTickGuard {
-    fn drop(&mut self) {
-        let ns = self.start.elapsed().as_nanos() as u64;
-        DRAIN_SUM_NS.fetch_add(ns, Ordering::Relaxed);
-        DRAIN_MAX_NS.fetch_max(ns, Ordering::Relaxed);
-        if ns >= 16_000_000 {
-            DRAINS_OVER_16MS.fetch_add(1, Ordering::Relaxed);
-        }
-        if ns >= 100_000_000 {
-            DRAINS_OVER_100MS.fetch_add(1, Ordering::Relaxed);
-        }
-        if ns >= 1_000_000_000 {
-            DRAINS_OVER_1S.fetch_add(1, Ordering::Relaxed);
-        }
-        // Heartbeat is wall-clock Unix millis, not monotonic
-        // `Instant::now`, because the watchdog thread needs to
-        // compare against its own `SystemTime::now` without sharing
-        // an `Instant` across threads (Instants can't be constructed
-        // from a raw timestamp, so we'd otherwise have to thread a
-        // baseline Instant through the whole module).
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        LAST_DRAIN_UNIX_MS.store(now_ms, Ordering::Relaxed);
-    }
-}
-
-/// Start a drain-tick timing scope. Bind the return value to a local
-/// (`let _guard = ...`) at the top of any drain function whose time
-/// should land in the histogram + heartbeat.
-#[inline]
-pub fn drain_tick_guard() -> DrainTickGuard {
-    DrainTickGuard::new()
-}
+// `DrainTickGuard` and `drain_tick_guard` were removed as part of
+// Phase 5e (design 01 / #158): the GPUI drain no longer parses VT,
+// so per-tick durations stay sub-millisecond and the watchdog has
+// nothing meaningful to report. The drain-time histogram fields
+// (DRAIN_*_NS, DRAINS_OVER_*) are kept compiled for the sampler
+// dump but never bumped; deletion of the unused atomics happens in
+// a follow-up tidy pass.
 
 /// Spawn the 1 Hz sampler and the watchdog. No-op when neither
 /// `debug_assertions` nor the `leakscope` feature is active, and
