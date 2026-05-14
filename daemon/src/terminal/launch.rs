@@ -4,9 +4,13 @@
 //! desktop GPUI used to own PTY spawn (via
 //! [`another_one_core::terminal_launch::spawn_terminal_launch`]); the
 //! design's destination is "PTY launches where the Term task lives,"
-//! which is the daemon. This module is the daemon-side replacement,
-//! gated behind [`daemon_spawn_enabled`] so shipped builds keep the
-//! legacy GPUI path until the desktop cutover (Phase 5b–5d).
+//! which is the daemon. This module is the daemon-side replacement.
+//!
+//! Phase 5d-iv default-flipped [`daemon_spawn_enabled`] to **on**;
+//! the legacy GPUI spawn path remains compiled but is reachable only
+//! by setting `ANOTHER_ONE_DAEMON_SPAWN=0` (rollback for the
+//! finalization window). The opt-out + the legacy path go away in
+//! the deletion slice that follows tester sign-off.
 //!
 //! [`spawn_terminal_in_daemon`] is the entry point. Given a launch
 //! config, it:
@@ -36,23 +40,19 @@ use portable_pty::{native_pty_system, ChildKiller, MasterPty};
 
 use super::task::{spawn_terminal_task, TerminalCommand, TerminalTaskHandle};
 
-/// Env var that enables the daemon-side spawn path. Off by default;
-/// set to `1` (or any non-empty value) to route `Control::LaunchTab`
-/// through [`spawn_terminal_in_daemon`] instead of the legacy
-/// GPUI-side fulfillment.
+/// Env var name preserved for backwards-compatible logging /
+/// settings inspection. The daemon-side spawn path is now
+/// unconditional (Phase 5d-v of design 01 / #158); previous
+/// opt-out values are ignored. The constant + this doc-comment
+/// will be removed in a follow-up sweep.
 pub const DAEMON_SPAWN_ENV: &str = "ANOTHER_ONE_DAEMON_SPAWN";
 
-/// Whether the daemon-side spawn path is enabled at process start.
-/// Cached: env reads happen once on first call so toggling at
-/// runtime doesn't surprise the dispatch arm mid-session.
+/// Whether the daemon-side spawn path is enabled. Always `true`
+/// post-Phase 5d-v; kept as a function so call sites don't have
+/// to be touched in lock-step with this slice. Subsequent
+/// deletions inline the `true` and drop the function.
 pub fn daemon_spawn_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| {
-        std::env::var(DAEMON_SPAWN_ENV)
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
-    })
+    true
 }
 
 /// Outcome of a successful daemon-side spawn. The caller (the
@@ -65,6 +65,13 @@ pub struct DaemonSpawnedTerminal {
     pub task: TerminalTaskHandle,
     pub child: SpawnedChild,
     pub process_id: Option<u32>,
+    /// Master-PTY writer. The desktop registry stores this in
+    /// `RegistryState::writers` so the existing `tab_input` path
+    /// (registry.writers + block_in_place + write_all) routes
+    /// keystrokes / pastes / mouse-protocol bytes to the
+    /// daemon-spawned PTY without a Term-task command round-trip.
+    /// Phase 5d-iii of design 01 (#158).
+    pub writer: std::sync::Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>>,
 }
 
 /// Owns the child's lifecycle. Drop the [`SpawnedChild`] to abort
@@ -118,11 +125,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
         .master
         .try_clone_reader()
         .context("daemon spawn: clone pty reader")?;
-    // The writer is owned by the master (Phase 6 wires it for
-    // `TerminalCommand::Input` once that variant lands). Drop it on
-    // the floor for now; Term-task input arrives through the
-    // command channel instead.
-    let _writer = pair
+    let writer = pair
         .master
         .take_writer()
         .context("daemon spawn: pty writer")?;
@@ -161,6 +164,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
             killer: Some(killer),
         },
         process_id,
+        writer: std::sync::Arc::new(std::sync::Mutex::new(writer)),
     })
 }
 

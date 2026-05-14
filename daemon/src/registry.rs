@@ -422,6 +422,40 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         None
     }
 
+    /// Run a literal-or-regex search against the Term task's
+    /// viewport + scrollback. Phase 5f of design 01 (#158);
+    /// replaces client-side grid walks. Default impl errors so
+    /// registries that don't host Term tasks fail loudly.
+    fn terminal_search<'a>(
+        &'a self,
+        _section_id: &'a str,
+        _tab_id: &'a str,
+        _request: daemon_proto::TerminalSearchRequest,
+    ) -> RegistryFuture<'a, anyhow::Result<daemon_proto::TerminalSearchReply>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "terminal_search not supported by this registry"
+            ))
+        })
+    }
+
+    /// Read a slice of the Term task's scrollback history. Phase
+    /// 5f of design 01 (#158); the snapshot's backbuffer covers
+    /// momentum scroll, this verb covers anything older. Default
+    /// errors as for [`terminal_search`].
+    fn terminal_read_scrollback<'a>(
+        &'a self,
+        _section_id: &'a str,
+        _tab_id: &'a str,
+        _range: daemon_proto::ScrollbackRange,
+    ) -> RegistryFuture<'a, anyhow::Result<daemon_proto::TerminalScrollbackReply>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "terminal_read_scrollback not supported by this registry"
+            ))
+        })
+    }
+
     // ── Project mutation (another-one-ojm.2) ──────────────────────
 
     /// Add an on-disk project at `path` to the daemon's store.

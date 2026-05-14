@@ -372,6 +372,13 @@ impl LiveTerminalRuntime {
         self.term.grid().display_offset()
     }
 
+    /// Current grid dimensions. Phase 5b uses this when spawning a
+    /// daemon-canonical Term task alongside the legacy runtime so
+    /// both sides agree on the initial cols/rows.
+    pub fn size(&self) -> TerminalGridSize {
+        self.size
+    }
+
     pub fn screen_lines(&self) -> usize {
         self.term.grid().screen_lines()
     }
@@ -471,6 +478,10 @@ impl LiveTerminalRuntime {
     /// viewport), and `[start_col, end_col)` is a half-open cell range.
     /// Multi-byte UTF-8 chars occupy a single cell so column ranges line
     /// up with cell positions, not UTF-8 byte offsets.
+    /// Phase 5f of design 01 (#158): superseded by
+    /// `Control::TerminalSearch`. Kept compiled for tests +
+    /// future viewer-side fallback; not called by production paths.
+    #[allow(dead_code)]
     pub fn search_scrollback(&self, query: &str) -> Vec<TerminalScrollbackMatch> {
         search_scrollback_in_term(&self.term, query)
     }
@@ -574,6 +585,10 @@ pub(crate) fn encode_paste_payload(text: &str, bracketed: bool) -> String {
 /// an empty list. Match positions are in alacritty grid coordinates:
 /// `line` is `Line.0` (negative for scrollback rows, 0..=screen_lines-1
 /// is in viewport), `[start_col, end_col)` is a half-open cell range.
+/// Phase 5f of design 01 (#158): superseded by daemon-side
+/// search via `Control::TerminalSearch`. Kept for tests + as a
+/// reference impl while the daemon-side path matures.
+#[allow(dead_code)]
 pub(crate) fn search_scrollback_in_term<T: EventListener>(
     term: &Term<T>,
     query: &str,

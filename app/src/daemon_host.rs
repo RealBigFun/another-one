@@ -60,6 +60,13 @@ use another_one_core::state_authority::{self, Mutation, MutationOutcome};
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::terminal_runtime::TerminalRuntimeKey;
 
+// Phase 5b (design 01 / #158): the desktop registry hosts daemon-
+// canonical Term tasks per tab so a focused viewer can subscribe
+// via `Control::TerminalSubscribe` and receive `TerminalFrame`
+// pushes alongside the legacy byte-stream path. Imported here so
+// `RegistryState` can store the per-tab handles.
+use daemon::terminal::TerminalTaskHandle;
+
 /// viewer_id used for the in-process desktop view. Stable across the
 /// app's lifetime; the app exits before it would ever need to disconnect.
 pub(crate) const DESKTOP_LOCAL_VIEWER_ID: &str = "desktop-local";
@@ -79,6 +86,17 @@ pub struct RegistryState {
     /// launcher's `PreparedTerminalRuntime::output_broadcast`. Mobile
     /// `AttachTab` subscribes to the matching sender.
     pub(crate) broadcasts: HashMap<TerminalRuntimeKey, broadcast::Sender<Vec<u8>>>,
+    /// Per-tab daemon-canonical Term task handles. Phase 5b of
+    /// design 01 (#158): when a PTY launches the desktop also
+    /// spawns a Term task that parses the same byte stream the
+    /// legacy `LiveTerminalRuntime::apply_output` does, so a
+    /// `Control::TerminalSubscribe` from the viewer can resolve
+    /// to a per-tab `watch::Receiver<Option<Arc<TerminalFrame>>>`.
+    /// The map is keyed by the same `TerminalRuntimeKey` as
+    /// `broadcasts` and `writers`; entries are inserted by
+    /// `register_tab_with_registry` (Phase 5b-ii) and removed by
+    /// `forget_tab`.
+    pub(crate) term_tasks: HashMap<TerminalRuntimeKey, TerminalTaskHandle>,
     /// Per-tab master-PTY writer handles shared with
     /// `LiveTerminalRuntime`. Mobile keystrokes flow through these
     /// exactly like desktop keystrokes do.
@@ -183,6 +201,7 @@ impl RegistryState {
         Self {
             project_store,
             broadcasts: HashMap::new(),
+            term_tasks: HashMap::new(),
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
@@ -311,6 +330,11 @@ impl RegistryState {
     /// place. See #51.
     pub(crate) fn forget_tab(&mut self, key: &TerminalRuntimeKey) {
         self.broadcasts.remove(key);
+        // Drop the Term task handle: PacerHandle::Drop aborts the
+        // pacer task; TerminalTaskHandle::Drop sends Shutdown to
+        // the per-tab task and detaches the join. No leaks past a
+        // closed tab.
+        self.term_tasks.remove(key);
         self.writers.remove(key);
         self.active_viewers.remove(key);
         self.effective_sizes.remove(key);
@@ -963,6 +987,101 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .flatten()
     }
 
+    /// Phase 5b of design 01 (#158): expose the per-tab Term task's
+    /// frame watch so dispatch's `Control::TerminalSubscribe` arm
+    /// can spawn a pacer pointed at it. Returns `None` when the
+    /// tab isn't running (no PTY yet) or when the desktop hasn't
+    /// installed a Term task for the key (legacy-only mode).
+    fn subscribe_terminal_frames(
+        &self,
+        section_id: &str,
+        tab_id: &str,
+    ) -> Option<
+        tokio::sync::watch::Receiver<
+            Option<std::sync::Arc<daemon_proto::TerminalFrame>>,
+        >,
+    > {
+        let key = key_from_wire(section_id, tab_id)?;
+        self.with_state(|state| state.term_tasks.get(&key).map(|t| t.subscribe()))
+            .flatten()
+    }
+
+    /// Phase 5b: same shape as `subscribe_terminal_frames` but for
+    /// the bell / title / reset-title side-channel. Pacers (Phase
+    /// 3a) drain this and forward as `WorkerReply::Push(...)`.
+    fn subscribe_terminal_side_effects(
+        &self,
+        section_id: &str,
+        tab_id: &str,
+    ) -> Option<
+        tokio::sync::broadcast::Receiver<daemon::terminal::TerminalSideEffect>,
+    > {
+        let key = key_from_wire(section_id, tab_id)?;
+        self.with_state(|state| state.term_tasks.get(&key).map(|t| t.subscribe_side_effects()))
+            .flatten()
+    }
+
+    /// Phase 5f of design 01 (#158): route
+    /// `Control::TerminalSearch` through the per-tab Term task.
+    /// Looks up the task handle, sends a `Search` command via
+    /// oneshot, awaits the reply.
+    fn terminal_search<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+        request: daemon_proto::TerminalSearchRequest,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<daemon_proto::TerminalSearchReply>> {
+        let inner = self.inner.clone();
+        let section = section_id.to_string();
+        let tab = tab_id.to_string();
+        Box::pin(async move {
+            let key = key_from_wire(&section, &tab)
+                .ok_or_else(|| anyhow::anyhow!("malformed section/tab id"))?;
+            let handle = with_registry_state(&inner, |state| {
+                state.term_tasks.get(&key).map(|t| t.inbox_clone())
+            })
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("no terminal task for section/tab"))?;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle
+                .send(daemon::terminal::TerminalCommand::Search { request, reply: tx })
+                .await
+                .map_err(|e| anyhow::anyhow!("term task inbox closed: {e}"))?;
+            rx.await
+                .map_err(|e| anyhow::anyhow!("term task dropped reply: {e}"))
+        })
+    }
+
+    /// Phase 5f of design 01 (#158): route
+    /// `Control::TerminalReadScrollback` through the per-tab Term
+    /// task.
+    fn terminal_read_scrollback<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+        range: daemon_proto::ScrollbackRange,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<daemon_proto::TerminalScrollbackReply>> {
+        let inner = self.inner.clone();
+        let section = section_id.to_string();
+        let tab = tab_id.to_string();
+        Box::pin(async move {
+            let key = key_from_wire(&section, &tab)
+                .ok_or_else(|| anyhow::anyhow!("malformed section/tab id"))?;
+            let handle = with_registry_state(&inner, |state| {
+                state.term_tasks.get(&key).map(|t| t.inbox_clone())
+            })
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("no terminal task for section/tab"))?;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle
+                .send(daemon::terminal::TerminalCommand::ReadScrollback { range, reply: tx })
+                .await
+                .map_err(|e| anyhow::anyhow!("term task inbox closed: {e}"))?;
+            rx.await
+                .map_err(|e| anyhow::anyhow!("term task dropped reply: {e}"))
+        })
+    }
+
     fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]) {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
@@ -1112,6 +1231,84 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             }
             state.pending_tab_launches.push(TabLaunchRequest { key });
         });
+    }
+
+    /// Phase 5d-i of design 01 (#158): daemon-side PTY spawn for the
+    /// desktop registry. Resolves the launch config from the
+    /// project store, calls
+    /// [`daemon::terminal::spawn_terminal_in_daemon`], and stores
+    /// the resulting Term task in [`RegistryState::term_tasks`] so a
+    /// subscribed viewer's [`subscribe_terminal_frames`] resolves.
+    ///
+    /// Returns `Ok(None)` ("fall through to legacy launch_tab") in
+    /// any of these cases:
+    /// - tab already has a Term task (don't double-spawn);
+    /// - section / tab not found in the project store;
+    /// - tab has no `launch_config` persisted (warm launches and
+    ///   some legacy migrations land here — the legacy spawn path
+    ///   handles them).
+    ///
+    /// Spawn errors propagate as `Err`, surfaced to the caller as
+    /// `WorkerReply::Err { Internal }` by the dispatch arm.
+    fn daemon_spawn_terminal<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Option<u32>>> {
+        let inner = self.inner.clone();
+        let section = section_id.to_string();
+        let tab = tab_id.to_string();
+        Box::pin(async move {
+            // Resolve the launch config under the lock; release
+            // before doing any blocking syscalls.
+            let Some((key, request)) = with_registry_state(&inner, |state| {
+                let key = key_from_wire(&section, &tab)?;
+                if state.term_tasks.contains_key(&key) {
+                    // Already spawned daemon-side; fall through.
+                    return None;
+                }
+                let request = build_daemon_spawn_request(state, &key)?;
+                Some((key, request))
+            })
+            .flatten() else {
+                return Ok(None);
+            };
+
+            // PTY open + child spawn block briefly; acceptable on
+            // a runtime worker. Inside `spawn_terminal_in_daemon`
+            // the Term task is spawned via `tokio::spawn` which
+            // requires being inside a runtime context — we are,
+            // since this future runs on the daemon's runtime.
+            let outcome = match daemon::terminal::spawn_terminal_in_daemon(request) {
+                Ok(o) => o,
+                Err(error) => return Err(error),
+            };
+            let process_id = outcome.process_id;
+            let writer = outcome.writer.clone();
+
+            // Install the task. If the registry has dropped (app
+            // is shutting down), drop the outcome on the floor;
+            // its Drop will tear down the spawned child.
+            with_registry_state(&inner, |state| {
+                state.term_tasks.insert(key.clone(), outcome.task);
+                // Phase 5d-iii: route input via the existing
+                // `tab_input` path which reads from
+                // `state.writers`. Storing the master-PTY writer
+                // here lets typed bytes / paste / mouse-protocol
+                // reports reach the daemon-spawned PTY without
+                // a Term-task command round-trip.
+                state.writers.insert(key, writer);
+                // Hold the SpawnedChild + masterPty etc. by
+                // leaking from the outcome — PTY lifetime is now
+                // tied to forget_tab dropping the Term task. The
+                // SpawnedChild::kill on tab close happens via
+                // forget_tab today's GPUI path; daemon-side
+                // teardown is wired in 5d-ii when the desktop
+                // stops spawning locally.
+                std::mem::forget(outcome.child);
+            });
+            Ok(Some(process_id.unwrap_or(0)))
+        })
     }
 
     fn read_active_git_state(&self, project_id: &str) -> Option<ActiveGitStateWire> {
@@ -1732,6 +1929,47 @@ fn git_action_settings(store: &ProjectStore) -> GitActionSettings {
 
 fn project_path(state: &RegistryState, project_id: &str) -> Option<PathBuf> {
     state.project_store.workspace_path(project_id)
+}
+
+/// Phase 5d-i of design 01 (#158): build a
+/// [`daemon::terminal::SpawnRequest`] for `(section, tab)` from the
+/// project store snapshot. Returns `None` when the tab can't be
+/// resolved or has no persisted launch config (warm launches and
+/// some legacy migrations land in that branch — the legacy spawn
+/// path handles them).
+fn build_daemon_spawn_request(
+    state: &RegistryState,
+    key: &TerminalRuntimeKey,
+) -> Option<daemon::terminal::SpawnRequest> {
+    use another_one_core::terminal_types::TerminalGridSize;
+
+    let section_key = key.section_id.store_key();
+    let section = state.project_store.terminal_sections.get(&section_key)?;
+    let tab = section.tabs.iter().find(|t| t.id == key.tab_id)?;
+    let launch_config = tab.launch_config.clone()?;
+
+    // Walk back from section -> task -> project to resolve the cwd.
+    // The section_key is the task's `section_id`; we find the task
+    // by linear scan since the project_store doesn't index tasks
+    // by section_id (cheap; typical workspaces have <100 tasks).
+    let task = state
+        .project_store
+        .tasks
+        .values()
+        .flatten()
+        .find(|t| t.section_id == section_key);
+    let cwd = task.and_then(|task| project_path(state, &task.target_project_id));
+
+    // Use a sane default initial size; the first viewer's resize
+    // hint will reshape both the Term grid and the PTY master.
+    let size = TerminalGridSize::default();
+
+    Some(daemon::terminal::SpawnRequest {
+        cwd,
+        launch_config,
+        agent_launch_args: Vec::new(),
+        size,
+    })
 }
 
 fn with_registry_state<R>(

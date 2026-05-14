@@ -1916,6 +1916,24 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Phase 5b of design 01 (#158): the tab the desktop currently
+    /// has a `Control::TerminalSubscribe` open for, if any. None
+    /// when no tab is focused or the daemon-spawn flag is off.
+    /// Tracking the prior subscription lets `update_terminal_subscription`
+    /// emit a clean Unsubscribe before the next Subscribe.
+    subscribed_terminal_key: Option<TerminalRuntimeKey>,
+    /// Phase 5d-ii of design 01 (#158): tabs the desktop has
+    /// dispatched `Control::LaunchTab` for daemon-side spawn,
+    /// keyed by the runtime key with the requested initial size.
+    /// Removed when the matching `WorkerReply::TerminalLaunched`
+    /// push arrives (success) or the launch errors out (failure
+    /// reaches the dispatch_fire_and_forget callback). Prevents
+    /// duplicate `LaunchTab` calls across render ticks while a
+    /// spawn is in flight.
+    in_flight_remote_launches: HashMap<
+        TerminalRuntimeKey,
+        another_one_core::terminal_types::TerminalGridSize,
+    >,
     /// Last terminal mutation that needs low-latency drain/render ticks.
     last_terminal_activity: Instant,
     /// Input to send once a newly launched action terminal is ready.
@@ -1934,6 +1952,12 @@ pub struct AnotherOneApp {
     /// Active scrollback search (Cmd-F). At most one terminal at a time;
     /// opening the search on a different terminal closes any previous.
     pub(crate) terminal_search: Option<TerminalSearchState>,
+    /// Phase 5f of design 01 (#158): in-flight
+    /// `Control::TerminalSearch` reply channel. The session call
+    /// callback pushes `(query, reply)` so a stale reply for a
+    /// query the user already changed gets ignored.
+    terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
+    terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -4706,6 +4730,12 @@ impl AnotherOneApp {
             mpsc::sync_channel(TERMINAL_LAUNCH_QUEUE_CAP);
         let (warm_terminal_launch_sender, warm_terminal_launch_receiver) =
             mpsc::sync_channel(WARM_TERMINAL_LAUNCH_QUEUE_CAP);
+        let (terminal_search_reply_tx, terminal_search_reply_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(
+                String,
+                TerminalRuntimeKey,
+                daemon_proto::TerminalSearchReply,
+            )>();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -4838,6 +4868,8 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
+            subscribed_terminal_key: None,
+            in_flight_remote_launches: HashMap::new(),
             last_terminal_activity: Instant::now(),
             pending_post_launch_input: HashMap::new(),
             terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
@@ -4845,6 +4877,8 @@ impl AnotherOneApp {
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             terminal_search: None,
+            terminal_search_reply_tx,
+            terminal_search_reply_rx,
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
@@ -5617,7 +5651,7 @@ impl AnotherOneApp {
             if let (Some(broadcast), Some(writer)) =
                 (runtime.output_broadcast(), runtime.writer_handle())
             {
-                self.register_tab_with_registry(&key, broadcast, writer);
+                self.register_tab_with_registry(&key, broadcast, writer, runtime.size());
             }
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
@@ -5641,8 +5675,30 @@ impl AnotherOneApp {
     #[allow(deprecated)] // Phase 4 (design 01 / #158): PTY spawn moves to daemon.
     fn ensure_active_terminal_runtime(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(request) = self.active_terminal_request(window, cx) else {
+            // No active tab — if we held a daemon-side
+            // subscription, drop it so a backgrounded section
+            // doesn't keep the pacer alive.
+            if self.subscribed_terminal_key.is_some()
+                && daemon::terminal::daemon_spawn_enabled()
+            {
+                if let Some(old) = self.subscribed_terminal_key.take() {
+                    let session = self.session_handle();
+                    crate::session_host::dispatch_fire_and_forget(
+                        session,
+                        daemon_proto::Control::TerminalUnsubscribe {
+                            section_id: old.section_id.store_key(),
+                            tab_id: old.tab_id.clone(),
+                        },
+                        |_| {},
+                    );
+                }
+            }
             return;
         };
+
+        // Phase 5b-iii: keep the daemon-canonical subscription
+        // pointed at the focused tab. No-op when the flag is off.
+        self.update_terminal_subscription(&request.key);
 
         if self.live_terminal_runtimes.contains_key(&request.key) {
             if self.animating {
@@ -5876,14 +5932,33 @@ impl AnotherOneApp {
             // future unify-control-plane pass will collapse this
             // into a single always-dispatch-through-session path
             // that the host role handles via its loopback session.
-            spawn_terminal_launch(
-                self.terminal_launch_sender.clone(),
-                request.key,
-                Some(request.cwd),
-                request.launch_config,
-                request.agent_launch_args,
-                request.size,
-            );
+            //
+            // Phase 5d-v (design 01 / #158): cold launches go
+            // through Control::LaunchTab unconditionally. The
+            // daemon owns the PTY; the WorkerReply::TerminalLaunched
+            // push installs a viewer-only runtime via
+            // apply_proto_terminal_launched. The legacy GPUI-thread
+            // spawn path was deleted alongside this fork.
+            if !self.in_flight_remote_launches.contains_key(&request.key) {
+                self.in_flight_remote_launches
+                    .insert(request.key.clone(), request.size);
+                let session = self.session_handle();
+                let key_for_callback = request.key.clone();
+                crate::session_host::dispatch_fire_and_forget(
+                    session,
+                    daemon_proto::Control::LaunchTab {
+                        section_id: request.key.section_id.store_key(),
+                        tab_id: request.key.tab_id.clone(),
+                    },
+                    move |result| {
+                        if let Err(err) = result {
+                            log::warn!(
+                                "daemon-side LaunchTab for {key_for_callback:?} failed: {err}"
+                            );
+                        }
+                    },
+                );
+            }
         }
     }
 
@@ -6040,10 +6115,83 @@ impl AnotherOneApp {
                             updated = true;
                         }
                         other => {
-                            log::debug!(
-                                "session pushed unsolicited reply: {:?}",
-                                std::mem::discriminant(&other)
-                            );
+                            // Phase 5c (design 01 / #158): the
+                            // daemon-canonical Term task surfaces
+                            // bell / title via `WorkerReply::Push`
+                            // — these are the side-channel events
+                            // that legacy `apply_output` produced
+                            // through `TerminalRuntimeUpdate`. With
+                            // the flag on, `apply_output` is
+                            // skipped, so these pushes are the
+                            // only path. Without the flag the
+                            // legacy path also fires; the GPUI
+                            // state is idempotent (same bell time,
+                            // same title), so the dual-write
+                            // overlap is harmless.
+                            match other {
+                                daemon_proto::WorkerReply::TerminalTitle {
+                                    section_id,
+                                    tab_id,
+                                    title,
+                                } => {
+                                    self.apply_proto_terminal_title(
+                                        &section_id,
+                                        &tab_id,
+                                        Some(title),
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalResetTitle {
+                                    section_id,
+                                    tab_id,
+                                } => {
+                                    self.apply_proto_terminal_title(
+                                        &section_id,
+                                        &tab_id,
+                                        None,
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalBell {
+                                    section_id,
+                                    tab_id,
+                                } => {
+                                    self.apply_proto_terminal_bell(
+                                        &section_id,
+                                        &tab_id,
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalLaunched {
+                                    section_id,
+                                    tab_id,
+                                    process_id: _,
+                                } => {
+                                    self.apply_proto_terminal_launched(
+                                        &section_id,
+                                        &tab_id,
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalExited {
+                                    section_id,
+                                    tab_id,
+                                    success: _,
+                                    code: _,
+                                } => {
+                                    self.apply_proto_terminal_exited(
+                                        &section_id,
+                                        &tab_id,
+                                    );
+                                    updated = true;
+                                }
+                                other => {
+                                    log::debug!(
+                                        "session pushed unsolicited reply: {:?}",
+                                        std::mem::discriminant(&other)
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -6107,11 +6255,10 @@ impl AnotherOneApp {
     /// daemon owns spawn + parsing. Module-scoped allow until then.
     #[allow(deprecated)]
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        // RAII guard: increments drain count, times the body, and
-        // bumps the watchdog heartbeat on drop. See issue #125 —
-        // this is the signal that distinguishes drain-starvation
-        // from a true deadlock when the GUI appears frozen.
-        let _drain_guard = crate::leakscope::drain_tick_guard();
+        // Phase 5e (design 01 / #158): the drain_tick_guard
+        // watchdog (#125) was removed; with VT parse off the GPUI
+        // thread, drain ticks stay sub-millisecond and the
+        // instrument has no signal to report.
         let mut updated = false;
         // Tracks tabs that accumulated VT output during this drain tick. We
         // used to rebuild + clone each tab's surface snapshot on *every*
@@ -6121,7 +6268,7 @@ impl AnotherOneApp {
         // that got output, drain the whole queue, then rebuild snapshots
         // once at the end. At 60 Hz drain frequency this caps snapshot
         // work at 60 rebuilds/sec even under sustained output storms.
-        let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        let output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
         // Bounded per-tick output budget. See
         // [`DRAIN_OUTPUT_BYTE_CAP`] for the why; once we've parsed
         // this many `Output` bytes we break out of the greedy
@@ -6151,7 +6298,7 @@ impl AnotherOneApp {
                     if let (Some(broadcast), Some(writer)) =
                         (runtime.output_broadcast(), runtime.writer_handle())
                     {
-                        self.register_tab_with_registry(&key, broadcast, writer);
+                        self.register_tab_with_registry(&key, broadcast, writer, runtime.size());
                     }
                     self.terminal_surface_snapshots
                         .insert(key.clone(), runtime.snapshot());
@@ -6167,28 +6314,21 @@ impl AnotherOneApp {
                     crate::leakscope::note_drain_output(bytes.len());
                     drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
-                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        let terminal_update = runtime.apply_output(&bytes);
-                        output_dirty_keys.insert(key.clone());
-                        if terminal_update.bell {
-                            self.terminal_bell_at.insert(key.clone(), Instant::now());
-                        }
-                        // Daemon-authoritative title: in-process write
-                        // to `terminal_sections` (no Control::Persist
-                        // round-trip). See `apply_pty_title_update`.
-                        self.apply_pty_title_update(&key, &terminal_update);
-                        // Mirror the chunk to MCP subscribers. Each
-                        // session has its own broadcast::Receiver so
-                        // a slow consumer doesn't stall the daemon's
-                        // own output processing. `maybe_emit_tab_output`
-                        // short-circuits when no one's listening — the
-                        // common case — to avoid a per-chunk clone on
-                        // the GPUI thread. See #127.
-                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
-                        updated = true;
-                    } else if self.maybe_retry_claude_restore(&key, cx) {
-                        updated = true;
-                    }
+                    // Phase 5b dual-write: tee bytes into the
+                    // daemon-canonical Term task so a focused
+                    // viewer's `Control::TerminalSubscribe` sees
+                    // the same content the legacy `apply_output`
+                    // path renders. Best-effort; see
+                    // `try_send_bytes_to_term_task`.
+                    self.try_send_bytes_to_term_task(&key, &bytes);
+                    // Phase 5d-v (design 01 / #158): VT parse runs
+                    // daemon-side; the GPUI drain only mirrors
+                    // bytes to MCP subscribers + checks the
+                    // claude-restore retry hook for tabs whose
+                    // legacy runtime is gone.
+                    self.maybe_emit_tab_output(&key.tab_id, &bytes);
+                    let _ = self.maybe_retry_claude_restore(&key, cx);
+                    updated = true;
                     if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
                         // Yield back to the GPUI run loop. Remaining
                         // replies stay in the bounded channel and
@@ -6307,10 +6447,10 @@ impl AnotherOneApp {
     /// alongside `spawn_warm_terminal_launch` (design 01 / #158).
     #[allow(deprecated)]
     fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        // Same guard as the hot drain above — warm-launch traffic
-        // lands in its own bounded channel but shares the GPUI main
-        // thread, so it contributes to lockup diagnostics too.
-        let _drain_guard = crate::leakscope::drain_tick_guard();
+        // Phase 5e (design 01 / #158): the drain_tick_guard
+        // watchdog (#125) was removed alongside the cold-path
+        // guard. With VT parse off the GPUI thread, the warm
+        // drain only mirrors bytes + bumps state — sub-millisecond.
         let mut updated = false;
         // Same byte budget as the hot drain — see
         // [`DRAIN_OUTPUT_BYTE_CAP`]. Warm and hot drains both run
@@ -6356,7 +6496,7 @@ impl AnotherOneApp {
                         if let (Some(broadcast), Some(writer)) =
                             (runtime.output_broadcast(), runtime.writer_handle())
                         {
-                            self.register_tab_with_registry(&key, broadcast, writer);
+                            self.register_tab_with_registry(&key, broadcast, writer, runtime.size());
                         }
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
@@ -6391,29 +6531,17 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         self.append_terminal_recent_output(&key, &bytes);
-                        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                            let terminal_update = runtime.apply_output(&bytes);
-                            self.terminal_surface_snapshots
-                                .insert(key.clone(), runtime.snapshot());
-                            if terminal_update.bell {
-                                self.terminal_bell_at.insert(key.clone(), Instant::now());
-                            }
-                            // Daemon-authoritative title via
-                            // `apply_pty_title_update` (no
-                            // SetSectionState round-trip per
-                            // PTY echo).
-                            self.apply_pty_title_update(&key, &terminal_update);
-                            // Same Output broadcast as the cold-path
-                            // drain — warm-prewarm tabs (MCP spawn,
-                            // GUI new-task fast path) also surface
-                            // their bytes to MCP subscribers. Guarded
-                            // on receiver_count so the no-subscriber
-                            // case skips the per-chunk clone.
-                            self.maybe_emit_tab_output(&key.tab_id, &bytes);
-                            updated = true;
-                        } else if self.maybe_retry_claude_restore(&key, cx) {
-                            updated = true;
-                        }
+                        // Phase 5b dual-write (warm-launch path).
+                        self.try_send_bytes_to_term_task(&key, &bytes);
+                        // Phase 5d-v (design 01 / #158): GPUI parse
+                        // is gone for the post-attach warm path; the
+                        // daemon-canonical Term task owns grid +
+                        // bell + title. Mirror to MCP subscribers,
+                        // retry claude-restore for known-stale
+                        // runtimes, and bump the byte-cap.
+                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
+                        let _ = self.maybe_retry_claude_restore(&key, cx);
+                        updated = true;
                         if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
                             break;
                         }
@@ -6549,20 +6677,224 @@ impl AnotherOneApp {
     /// writer = `Arc<Mutex<…>>` shared with the runtime's own stdin
     /// path. Overwrites any prior entry for `key` — a relaunch swaps
     /// its sender but mobile clients keep their session open.
+    ///
+    /// Phase 5b of design 01 (#158): also spawns a daemon-canonical
+    /// `TerminalTaskHandle` for `key` and stores it in
+    /// `RegistryState::term_tasks`. The Term task subscribes to the
+    /// same broadcast (via `register_tab_with_registry`'s caller
+    /// also tee-ing bytes through `try_send_bytes_to_term_task`) so
+    /// `Control::TerminalSubscribe` from the viewer resolves to a
+    /// live frame stream alongside the legacy `apply_output` path.
     pub(crate) fn register_tab_with_registry(
         &self,
         key: &TerminalRuntimeKey,
         broadcast_sender: tokio::sync::broadcast::Sender<Vec<u8>>,
         writer: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
+        size: another_one_core::terminal_types::TerminalGridSize,
     ) {
+        // Spawn the Term task on the shared session-host runtime so
+        // it has a tokio context. `enter()` makes `tokio::spawn`
+        // work inside `daemon::terminal::spawn_terminal_task`.
+        let term_task = {
+            let _guard = crate::session_host::runtime_handle().enter();
+            daemon::terminal::spawn_terminal_task(size)
+        };
         if let Ok(mut state) = self.registry_state.lock() {
             state.broadcasts.insert(key.clone(), broadcast_sender);
             state.writers.insert(key.clone(), writer);
+            state.term_tasks.insert(key.clone(), term_task);
             // Launch completed — clear the "in flight" guard so a
             // follow-up LaunchTab that arrives after a tab exits
             // isn't silently dropped as "already being spawned".
             state.in_flight_launches.remove(key);
         }
+    }
+
+    /// Phase 5b of design 01 (#158): tee one chunk of PTY bytes
+    /// into the daemon-canonical Term task for `key`, if one is
+    /// installed. Best-effort — a missing or full inbox is logged
+    /// at trace and dropped (the legacy `apply_output` path still
+    /// delivers the same bytes; dropping the daemon-side copy
+    /// only loses the snapshot derived from this chunk, which the
+    /// next chunk's frame will overwrite).
+    pub(crate) fn try_send_bytes_to_term_task(
+        &self,
+        key: &TerminalRuntimeKey,
+        bytes: &[u8],
+    ) {
+        if let Ok(state) = self.registry_state.lock() {
+            if let Some(task) = state.term_tasks.get(key) {
+                if let Err(err) = task
+                    .try_send(daemon::terminal::TerminalCommand::Bytes(bytes.to_vec()))
+                {
+                    log::trace!(
+                        "term task try_send for {:?} failed: {err:?}",
+                        key
+                    );
+                }
+            }
+        }
+    }
+
+    /// Phase 5b-iii of design 01 (#158): keep the desktop's
+    /// `Control::TerminalSubscribe` aimed at the focused tab. Called
+    /// every render tick from `ensure_active_terminal_runtime`. The
+    /// flag check is the only thing that gates this work — with the
+    /// flag off, every call is a `daemon_spawn_enabled() == false`
+    /// short-circuit and nothing else runs.
+    /// Phase 5c of design 01 (#158): apply a daemon-pushed
+    /// `WorkerReply::TerminalTitle` to GPUI-side state. Mirrors
+    /// what the legacy `apply_pty_title_update` does for the
+    /// alacritty-driven path; routed here from
+    /// `drain_session_events`'s Push arm so that a flag-on viewer
+    /// (with `apply_output` skipped) still gets title updates.
+    fn apply_proto_terminal_title(&mut self, section_id: &str, tab_id: &str, title: Option<String>) {
+        let Some(section_id) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalTitle push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id,
+            tab_id: tab_id.to_string(),
+        };
+        let update = match title {
+            Some(title) => crate::terminal_runtime::TerminalRuntimeUpdate {
+                title: Some(title),
+                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
+            },
+            None => crate::terminal_runtime::TerminalRuntimeUpdate {
+                reset_title: true,
+                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
+            },
+        };
+        self.apply_pty_title_update(&key, &update);
+    }
+
+    /// Phase 5c: handle a daemon-pushed `WorkerReply::TerminalBell`.
+    /// Same purpose as the bell branch in the legacy
+    /// `apply_output` drain — record the bell timestamp so the
+    /// renderer flashes the pane.
+    fn apply_proto_terminal_bell(&mut self, section_id: &str, tab_id: &str) {
+        let Some(section_id) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalBell push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id,
+            tab_id: tab_id.to_string(),
+        };
+        self.terminal_bell_at.insert(key, Instant::now());
+    }
+
+    /// Phase 5d-ii of design 01 (#158): handle a daemon-pushed
+    /// `WorkerReply::TerminalLaunched` for a desktop-issued
+    /// `Control::LaunchTab`. Builds a viewer-only
+    /// `LiveTerminalRuntime::from_remote(size)` and inserts it into
+    /// `live_terminal_runtimes` so the next render tick's
+    /// `ensure_active_terminal_runtime` finds it and opens a
+    /// `TerminalSubscribe` (Phase 5b-iii).
+    ///
+    /// The size comes from `in_flight_remote_launches`, populated
+    /// when LaunchTab was dispatched. If the entry is missing
+    /// (push raced ahead of the dispatch callback or a stale
+    /// retry), fall back to the default 80x24 — the next focus
+    /// pass will reshape via the standard viewport-claim path.
+    fn apply_proto_terminal_launched(&mut self, section_id: &str, tab_id: &str) {
+        let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalLaunched push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id: section_id_parsed,
+            tab_id: tab_id.to_string(),
+        };
+        let size = self
+            .in_flight_remote_launches
+            .remove(&key)
+            .unwrap_or_default();
+        // Avoid double-installing if the runtime is already there
+        // (legacy spawn raced ahead, or a retry produced two pushes).
+        if self.live_terminal_runtimes.contains_key(&key) {
+            return;
+        }
+        // Mirror the bookkeeping the legacy
+        // `TerminalLaunchReply::Launched` arm does so the UI sees
+        // the launch-completed state. `tracked_process` is None
+        // here — the proto push doesn't carry the launch_config
+        // needed for resource attribution; the resource indicator
+        // simply won't have a row for daemon-spawned tabs until a
+        // follow-up tightens the push payload.
+        self.terminal_manager.mark_launch_succeeded(key.clone(), None);
+        self.clear_terminal_recent_output(&key);
+        let runtime = crate::terminal_runtime::LiveTerminalRuntime::from_remote(size);
+        self.terminal_surface_snapshots
+            .insert(key.clone(), Default::default());
+        self.live_terminal_runtimes.insert(key, runtime);
+    }
+
+    /// Phase 5d-ii of design 01 (#158): handle a daemon-pushed
+    /// `WorkerReply::TerminalExited`. Drops the viewer-only
+    /// runtime so the renderer surfaces the closed-tab state and
+    /// the next launch fork won't see a stale entry.
+    fn apply_proto_terminal_exited(&mut self, section_id: &str, tab_id: &str) {
+        let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalExited push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id: section_id_parsed,
+            tab_id: tab_id.to_string(),
+        };
+        self.live_terminal_runtimes.remove(&key);
+        self.terminal_surface_snapshots.remove(&key);
+        self.in_flight_remote_launches.remove(&key);
+    }
+
+    fn update_terminal_subscription(&mut self, focused: &TerminalRuntimeKey) {
+        if !daemon::terminal::daemon_spawn_enabled() {
+            return;
+        }
+        if self.subscribed_terminal_key.as_ref() == Some(focused) {
+            return;
+        }
+        let session = self.session_handle();
+        // Unsubscribe from the previous tab if any. Idempotent on
+        // the daemon side; we don't await the reply because we
+        // don't care about ordering against the next subscribe —
+        // the daemon's pacer keys on (viewer, section, tab) so
+        // overlap is harmless.
+        if let Some(old) = self.subscribed_terminal_key.take() {
+            crate::session_host::dispatch_fire_and_forget(
+                Arc::clone(&session),
+                daemon_proto::Control::TerminalUnsubscribe {
+                    section_id: old.section_id.store_key(),
+                    tab_id: old.tab_id.clone(),
+                },
+                |result| {
+                    if let Err(err) = result {
+                        log::trace!("TerminalUnsubscribe failed: {err}");
+                    }
+                },
+            );
+        }
+        // Subscribe to the new focused tab. `since_seq: None`
+        // requests a fresh `Full` frame; max_fps=60 is a hint that
+        // the pacer ignores in v1 (single fixed cap).
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::TerminalSubscribe {
+                section_id: focused.section_id.store_key(),
+                tab_id: focused.tab_id.clone(),
+                max_fps: 60,
+                since_seq: None,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::trace!("TerminalSubscribe failed: {err}");
+                }
+            },
+        );
+        self.subscribed_terminal_key = Some(focused.clone());
     }
 
     /// Drop a tab's entries from the registry. Called when the
@@ -8141,6 +8473,24 @@ impl AnotherOneApp {
             self.pending_post_launch_input.insert(key.clone(), bytes);
             return false;
         };
+        // Phase 5d-iii (design 01 / #158): viewer-only runtimes
+        // (daemon-spawned PTY) have no local writer; route input
+        // via Session::push_data — the daemon's tab_input lands
+        // bytes on the master-PTY writer the registry stored in
+        // `state.writers` during daemon_spawn_terminal.
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            let payload = bytes.clone();
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("post-launch session push_data failed: {err}");
+                }
+            });
+            self.last_terminal_activity = Instant::now();
+            return true;
+        }
         let wrote = runtime.write_input(&bytes).is_ok();
         if wrote {
             self.last_terminal_activity = Instant::now();
@@ -8327,32 +8677,91 @@ impl AnotherOneApp {
         };
         let key = state.key.clone();
         let query = state.query.clone();
-        let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
+        // Empty query — just clear results and bail.
+        if query.is_empty() {
+            if let Some(state) = self.terminal_search.as_mut() {
+                state.matches.clear();
+                state.current_index = 0;
+            }
+            cx.notify();
             return;
-        };
-        let mut matches = runtime.search_scrollback(&query);
-        // Sort top-to-bottom (most-negative line first), left-to-right
-        // so prev/next traversal is deterministic regardless of the
-        // scan order chosen by `search_scrollback_in_term`.
-        matches.sort_by_key(|m| (m.line, m.start_col));
-        // Now pick a starting index against the sorted list — the first
-        // match at or below the current viewport top so the initial
-        // selection feels local to where the user was looking.
-        let display_offset = runtime.display_offset() as i32;
-        let top_grid_line = -display_offset - runtime.screen_lines() as i32 + 1;
-        let mut current_index = 0;
-        for (idx, m) in matches.iter().enumerate() {
-            if m.line >= top_grid_line {
-                current_index = idx;
-                break;
+        }
+        // Phase 5f of design 01 (#158): search runs against the
+        // daemon's canonical Term task via Control::TerminalSearch.
+        // Fire and forget; the reply lands in
+        // `terminal_search_reply_rx` for `drain_terminal_search_replies`
+        // to apply on the next render tick.
+        let session = self.session_handle();
+        let reply_tx = self.terminal_search_reply_tx.clone();
+        let key_for_callback = key.clone();
+        let query_for_callback = query.clone();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::TerminalSearch {
+                section_id: key.section_id.store_key(),
+                tab_id: key.tab_id.clone(),
+                request: daemon_proto::TerminalSearchRequest {
+                    pattern: query.clone(),
+                    regex: false,
+                    case_fold: daemon_proto::TerminalCaseFold::Insensitive,
+                },
+            },
+            move |result| match result {
+                Ok(daemon_proto::WorkerReply::TerminalSearch { reply, .. }) => {
+                    let _ = reply_tx.send((query_for_callback, key_for_callback, reply));
+                }
+                Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
+                    log::warn!("TerminalSearch err: {message}");
+                }
+                Ok(other) => {
+                    log::warn!("TerminalSearch unexpected reply: {:?}", std::mem::discriminant(&other));
+                }
+                Err(err) => {
+                    log::warn!("TerminalSearch session call failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Phase 5f of design 01 (#158): drain replies from the search
+    /// RPC channel. Stale replies (query no longer matches the
+    /// active search) are silently dropped.
+    fn drain_terminal_search_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+        loop {
+            match self.terminal_search_reply_rx.try_recv() {
+                Ok((query, key, reply)) => {
+                    let active_matches = match self.terminal_search.as_ref() {
+                        Some(s) if s.key == key && s.query == query => true,
+                        _ => false,
+                    };
+                    if !active_matches {
+                        continue;
+                    }
+                    let mut matches: Vec<TerminalScrollbackMatch> = reply
+                        .matches
+                        .into_iter()
+                        .map(|m| TerminalScrollbackMatch {
+                            line: m.line as i32,
+                            start_col: m.start_col as usize,
+                            end_col: m.end_col as usize,
+                        })
+                        .collect();
+                    matches.sort_by_key(|m| (m.line, m.start_col));
+                    if let Some(state) = self.terminal_search.as_mut() {
+                        state.matches = matches;
+                        state.current_index = state
+                            .current_index
+                            .min(state.matches.len().saturating_sub(1));
+                    }
+                    self.scroll_to_current_search_match(cx);
+                    updated = true;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
-        if let Some(state) = self.terminal_search.as_mut() {
-            state.matches = matches;
-            state.current_index = current_index.min(state.matches.len().saturating_sub(1));
-        }
-        self.scroll_to_current_search_match(cx);
-        cx.notify();
+        updated
     }
 
     fn scroll_to_current_search_match(&mut self, _cx: &mut Context<Self>) {
@@ -8686,6 +9095,21 @@ impl AnotherOneApp {
                 "failed to forward mouse event to terminal — falling back to local handling"
             );
             return false;
+        }
+        // Phase 5d-iii (design 01 / #158): viewer-only runtimes
+        // (daemon-spawned PTY) accept write_input but it's a
+        // no-op. Route the mouse-protocol payload through
+        // Session::push_data too so the daemon's tab_input lands
+        // it on the master-PTY writer.
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("mouse-event session push_data failed: {err}");
+                }
+            });
         }
         true
     }
@@ -16820,6 +17244,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_check_runs_lookup(cx);
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
+                            should_notify |= this.drain_terminal_search_replies(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;
