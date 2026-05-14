@@ -365,6 +365,27 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
 
+    /// Daemon-side spawn entry point (Phase 4 of design 01 / #158).
+    /// When [`crate::terminal::daemon_spawn_enabled`] is true, the
+    /// `Control::LaunchTab` dispatch arm calls this instead of
+    /// [`launch_tab`]: the registry resolves the tab's launch
+    /// config, spawns the PTY + Term task daemon-side, registers
+    /// the task so [`subscribe_terminal_frames`] resolves, and
+    /// returns the child's process id (when known).
+    ///
+    /// Default impl returns `Ok(None)` to signal "this registry
+    /// doesn't host daemon-side spawn yet"; the dispatch arm
+    /// interprets that as fall-through-to-legacy. Registries that
+    /// implement this return `Ok(Some(pid))` on success or a typed
+    /// `Err` for a real spawn failure.
+    fn daemon_spawn_terminal<'a>(
+        &'a self,
+        _section_id: &'a str,
+        _tab_id: &'a str,
+    ) -> RegistryFuture<'a, anyhow::Result<Option<u32>>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Subscribe to a per-tab `daemon_proto::TerminalFrame` watch
     /// for `(section_id, tab_id)`. Returns `None` when no Term task
     /// exists for that key (PTY not yet launched, tab unknown, or

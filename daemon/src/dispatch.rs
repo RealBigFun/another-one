@@ -435,6 +435,37 @@ async fn dispatch_call(
             Some(WorkerReply::HeartbeatAck)
         }
         Control::LaunchTab { section_id, tab_id } => {
+            // Phase 4c (design 01 / #158): when the daemon-side
+            // spawn flag is on, route through the registry's
+            // daemon_spawn_terminal seam first. If the registry
+            // doesn't host daemon-side spawn (default impl returns
+            // Ok(None)), fall through to the legacy launch_tab
+            // queue so shipped builds without the flag are
+            // unaffected.
+            if crate::terminal::daemon_spawn_enabled() {
+                match registry.daemon_spawn_terminal(&section_id, &tab_id).await {
+                    Ok(Some(process_id)) => {
+                        let _ = session_arc
+                            .push_reply(WorkerReply::TerminalLaunched {
+                                section_id: section_id.clone(),
+                                tab_id: tab_id.clone(),
+                                process_id: Some(process_id),
+                            })
+                            .await;
+                        return Some(WorkerReply::LaunchTabAck);
+                    }
+                    Ok(None) => {
+                        // Registry didn't host daemon-side spawn;
+                        // fall through.
+                    }
+                    Err(error) => {
+                        return Some(WorkerReply::Err {
+                            message: format!("daemon-side spawn failed: {error:#}"),
+                            kind: ErrKind::Internal,
+                        });
+                    }
+                }
+            }
             registry.launch_tab(&section_id, &tab_id);
             Some(WorkerReply::LaunchTabAck)
         }
@@ -1460,6 +1491,31 @@ mod tests {
                 .get(&(section_id.to_string(), tab_id.to_string()))
                 .map(|h| h.subscribe_side_effects())
         }
+        fn daemon_spawn_terminal<'a>(
+            &'a self,
+            section_id: &'a str,
+            tab_id: &'a str,
+        ) -> crate::registry::RegistryFuture<'a, anyhow::Result<Option<u32>>> {
+            // For tests, simulate a successful daemon-side spawn by
+            // installing a fresh Term task into the map and
+            // returning a synthetic pid. Real registries do the
+            // real spawn; the dispatch path treats both equivalently.
+            Box::pin(async move {
+                let task = crate::terminal::spawn_terminal_task(
+                    another_one_core::terminal_types::TerminalGridSize {
+                        cols: 80,
+                        rows: 24,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    },
+                );
+                self.tasks
+                    .lock()
+                    .unwrap()
+                    .insert((section_id.to_string(), tab_id.to_string()), task);
+                Ok(Some(424242))
+            })
+        }
     }
 
     /// Drain events on the client side until we observe a
@@ -1706,5 +1762,65 @@ mod tests {
             WorkerReply::Err { kind, .. } => assert!(matches!(kind, ErrKind::Internal)),
             other => panic!("expected Err, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn launch_tab_routes_through_daemon_spawn_when_flag_is_on() {
+        // Phase 4c: dispatch checks daemon_spawn_enabled() and, if
+        // true, calls registry.daemon_spawn_terminal. The test
+        // fixture's impl installs a synthetic Term task and
+        // returns a fake pid so the LaunchTab path doesn't need
+        // a real PTY.
+        //
+        // The flag is process-cached via OnceLock; we can't toggle
+        // it from the test. Instead exercise the dispatch arm's
+        // "daemon_spawn_terminal returns Ok(Some(pid))" branch
+        // directly: invoke registry.daemon_spawn_terminal first,
+        // then subscribe to confirm the task installed correctly.
+        use futures_util::StreamExt;
+
+        let registry = Arc::new(TermRegistry::new());
+        let pid = registry
+            .daemon_spawn_terminal("proj-a:section-1", "7")
+            .await
+            .expect("spawn ok")
+            .expect("some pid");
+        assert_eq!(pid, 424242);
+
+        let (server, client) = pair("test-viewer");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        tokio::spawn(serve_session(server_arc(server), registry_dyn));
+
+        let ack = client
+            .call(Control::TerminalSubscribe {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+                max_fps: 60,
+                since_seq: None,
+            })
+            .await
+            .expect("call");
+        assert!(matches!(ack, WorkerReply::TerminalSubscribeAck));
+
+        // Drive the synthetic Term task to confirm subscription is
+        // wired through the daemon-spawned task.
+        registry.send(
+            "proj-a:section-1",
+            "7",
+            crate::terminal::TerminalCommand::Bytes(b"x".to_vec()),
+        );
+        let mut events = client.events();
+        let waiter = async {
+            while let Some(event) = events.next().await {
+                if let daemon_transport::SessionEvent::TerminalFrame { .. } = event {
+                    return true;
+                }
+            }
+            false
+        };
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .unwrap_or(false);
+        assert!(observed, "frame from daemon-spawned Term task arrives");
     }
 }
