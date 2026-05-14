@@ -4,9 +4,13 @@
 //! desktop GPUI used to own PTY spawn (via
 //! [`another_one_core::terminal_launch::spawn_terminal_launch`]); the
 //! design's destination is "PTY launches where the Term task lives,"
-//! which is the daemon. This module is the daemon-side replacement,
-//! gated behind [`daemon_spawn_enabled`] so shipped builds keep the
-//! legacy GPUI path until the desktop cutover (Phase 5b–5d).
+//! which is the daemon. This module is the daemon-side replacement.
+//!
+//! Phase 5d-iv default-flipped [`daemon_spawn_enabled`] to **on**;
+//! the legacy GPUI spawn path remains compiled but is reachable only
+//! by setting `ANOTHER_ONE_DAEMON_SPAWN=0` (rollback for the
+//! finalization window). The opt-out + the legacy path go away in
+//! the deletion slice that follows tester sign-off.
 //!
 //! [`spawn_terminal_in_daemon`] is the entry point. Given a launch
 //! config, it:
@@ -36,10 +40,13 @@ use portable_pty::{native_pty_system, ChildKiller, MasterPty};
 
 use super::task::{spawn_terminal_task, TerminalCommand, TerminalTaskHandle};
 
-/// Env var that enables the daemon-side spawn path. Off by default;
-/// set to `1` (or any non-empty value) to route `Control::LaunchTab`
-/// through [`spawn_terminal_in_daemon`] instead of the legacy
-/// GPUI-side fulfillment.
+/// Env var that controls the daemon-side spawn path. **Default: on**
+/// (Phase 5d-iv of design 01 / #158). Set to `0` (or `false` /
+/// `off` / `no`) to opt back out and use the legacy GPUI spawn
+/// path; any other value (including unset) keeps the daemon-side
+/// path active. The opt-out exists for rollback during the
+/// finalization window; it goes away in the deletion slice that
+/// follows tester sign-off.
 pub const DAEMON_SPAWN_ENV: &str = "ANOTHER_ONE_DAEMON_SPAWN";
 
 /// Whether the daemon-side spawn path is enabled at process start.
@@ -49,9 +56,15 @@ pub fn daemon_spawn_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var(DAEMON_SPAWN_ENV)
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
+        match std::env::var(DAEMON_SPAWN_ENV) {
+            // Explicit opt-out tokens. Any other value (including
+            // unset / empty / `1`) keeps the daemon-side path on.
+            Ok(v) => !matches!(
+                v.as_str(),
+                "0" | "false" | "FALSE" | "off" | "OFF" | "no" | "NO"
+            ),
+            Err(_) => true,
+        }
     })
 }
 
