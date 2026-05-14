@@ -1023,9 +1023,11 @@ async fn dispatch_call(
             max_fps,
             since_seq,
         } => {
+            tracing::trace!("DBG: dispatch TerminalSubscribe section={section_id} tab={tab_id} viewer={viewer_id}");
             let frame_watch = match registry.subscribe_terminal_frames(&section_id, &tab_id) {
                 Some(rx) => rx,
                 None => {
+                    tracing::warn!("DBG: TerminalSubscribe no term task for {section_id}/{tab_id}");
                     return Some(WorkerReply::Err {
                         message: format!(
                             "no terminal task for section_id={section_id} tab_id={tab_id} \

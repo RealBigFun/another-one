@@ -249,7 +249,15 @@ async fn push_frame(
         frame: (**frame).clone(),
     };
     match session.push_reply(reply).await {
-        Ok(()) => true,
+        Ok(()) => {
+            tracing::trace!(
+                viewer = %config.viewer_id,
+                section = %config.section_id,
+                tab = %config.tab_id,
+                "DBG: pacer pushed TerminalFrame"
+            );
+            true
+        }
         Err(err) => {
             tracing::debug!(
                 viewer = %config.viewer_id,

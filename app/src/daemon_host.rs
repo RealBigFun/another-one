@@ -1255,6 +1255,7 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         section_id: &'a str,
         tab_id: &'a str,
     ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Option<u32>>> {
+        log::trace!("DBG: daemon_spawn_terminal section={section_id} tab={tab_id}");
         let inner = self.inner.clone();
         let section = section_id.to_string();
         let tab = tab_id.to_string();
