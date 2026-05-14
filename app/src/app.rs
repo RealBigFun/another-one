@@ -16613,13 +16613,12 @@ impl AnotherOneApp {
             ui.expanded_repo_ids.len(),
             ui.last_active_section_id
         );
-        self.apply_mutation(
-            another_one_core::state_authority::Mutation::AbsorbProjection {
-                projects: summaries,
-                repos: repo_summaries,
-                ui,
-            },
-        );
+        // Passive snapshots update the render-side mirror only. On
+        // desktop the registry is already authoritative; feeding a
+        // stale push back through `apply_mutation` can erase a just-
+        // created local task.
+        self.project_store
+            .absorb_projection(summaries, repo_summaries, ui);
         log::info!(
             "post-absorb: store has {} projects and tasks for {} root projects",
             self.project_store.projects.len(),
