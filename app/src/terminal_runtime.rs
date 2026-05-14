@@ -372,6 +372,13 @@ impl LiveTerminalRuntime {
         self.term.grid().display_offset()
     }
 
+    /// Current grid dimensions. Phase 5b uses this when spawning a
+    /// daemon-canonical Term task alongside the legacy runtime so
+    /// both sides agree on the initial cols/rows.
+    pub fn size(&self) -> TerminalGridSize {
+        self.size
+    }
+
     pub fn screen_lines(&self) -> usize {
         self.term.grid().screen_lines()
     }

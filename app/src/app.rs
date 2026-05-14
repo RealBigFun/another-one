@@ -5617,7 +5617,7 @@ impl AnotherOneApp {
             if let (Some(broadcast), Some(writer)) =
                 (runtime.output_broadcast(), runtime.writer_handle())
             {
-                self.register_tab_with_registry(&key, broadcast, writer);
+                self.register_tab_with_registry(&key, broadcast, writer, runtime.size());
             }
             self.terminal_surface_snapshots
                 .insert(key.clone(), runtime.snapshot());
@@ -6151,7 +6151,7 @@ impl AnotherOneApp {
                     if let (Some(broadcast), Some(writer)) =
                         (runtime.output_broadcast(), runtime.writer_handle())
                     {
-                        self.register_tab_with_registry(&key, broadcast, writer);
+                        self.register_tab_with_registry(&key, broadcast, writer, runtime.size());
                     }
                     self.terminal_surface_snapshots
                         .insert(key.clone(), runtime.snapshot());
@@ -6167,6 +6167,13 @@ impl AnotherOneApp {
                     crate::leakscope::note_drain_output(bytes.len());
                     drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
+                    // Phase 5b dual-write: tee bytes into the
+                    // daemon-canonical Term task so a focused
+                    // viewer's `Control::TerminalSubscribe` sees
+                    // the same content the legacy `apply_output`
+                    // path renders. Best-effort; see
+                    // `try_send_bytes_to_term_task`.
+                    self.try_send_bytes_to_term_task(&key, &bytes);
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
                         output_dirty_keys.insert(key.clone());
@@ -6356,7 +6363,7 @@ impl AnotherOneApp {
                         if let (Some(broadcast), Some(writer)) =
                             (runtime.output_broadcast(), runtime.writer_handle())
                         {
-                            self.register_tab_with_registry(&key, broadcast, writer);
+                            self.register_tab_with_registry(&key, broadcast, writer, runtime.size());
                         }
                         self.terminal_surface_snapshots
                             .insert(key.clone(), runtime.snapshot());
@@ -6391,6 +6398,9 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         self.append_terminal_recent_output(&key, &bytes);
+                        // Phase 5b dual-write (warm-launch path):
+                        // see the cold-launch arm above for context.
+                        self.try_send_bytes_to_term_task(&key, &bytes);
                         if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                             let terminal_update = runtime.apply_output(&bytes);
                             self.terminal_surface_snapshots
@@ -6549,19 +6559,62 @@ impl AnotherOneApp {
     /// writer = `Arc<Mutex<…>>` shared with the runtime's own stdin
     /// path. Overwrites any prior entry for `key` — a relaunch swaps
     /// its sender but mobile clients keep their session open.
+    ///
+    /// Phase 5b of design 01 (#158): also spawns a daemon-canonical
+    /// `TerminalTaskHandle` for `key` and stores it in
+    /// `RegistryState::term_tasks`. The Term task subscribes to the
+    /// same broadcast (via `register_tab_with_registry`'s caller
+    /// also tee-ing bytes through `try_send_bytes_to_term_task`) so
+    /// `Control::TerminalSubscribe` from the viewer resolves to a
+    /// live frame stream alongside the legacy `apply_output` path.
     pub(crate) fn register_tab_with_registry(
         &self,
         key: &TerminalRuntimeKey,
         broadcast_sender: tokio::sync::broadcast::Sender<Vec<u8>>,
         writer: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
+        size: another_one_core::terminal_types::TerminalGridSize,
     ) {
+        // Spawn the Term task on the shared session-host runtime so
+        // it has a tokio context. `enter()` makes `tokio::spawn`
+        // work inside `daemon::terminal::spawn_terminal_task`.
+        let term_task = {
+            let _guard = crate::session_host::runtime_handle().enter();
+            daemon::terminal::spawn_terminal_task(size)
+        };
         if let Ok(mut state) = self.registry_state.lock() {
             state.broadcasts.insert(key.clone(), broadcast_sender);
             state.writers.insert(key.clone(), writer);
+            state.term_tasks.insert(key.clone(), term_task);
             // Launch completed — clear the "in flight" guard so a
             // follow-up LaunchTab that arrives after a tab exits
             // isn't silently dropped as "already being spawned".
             state.in_flight_launches.remove(key);
+        }
+    }
+
+    /// Phase 5b of design 01 (#158): tee one chunk of PTY bytes
+    /// into the daemon-canonical Term task for `key`, if one is
+    /// installed. Best-effort — a missing or full inbox is logged
+    /// at trace and dropped (the legacy `apply_output` path still
+    /// delivers the same bytes; dropping the daemon-side copy
+    /// only loses the snapshot derived from this chunk, which the
+    /// next chunk's frame will overwrite).
+    pub(crate) fn try_send_bytes_to_term_task(
+        &self,
+        key: &TerminalRuntimeKey,
+        bytes: &[u8],
+    ) {
+        if let Ok(state) = self.registry_state.lock() {
+            if let Some(task) = state.term_tasks.get(key) {
+                if let Err(err) = task
+                    .try_send(daemon::terminal::TerminalCommand::Bytes(bytes.to_vec()))
+                {
+                    log::trace!(
+                        "term task try_send for {:?} failed: {err:?}",
+                        key
+                    );
+                }
+            }
         }
     }
 
