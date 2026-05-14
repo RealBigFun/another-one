@@ -40,7 +40,7 @@ use daemon_proto::{
     ScrollbackRange, TerminalFrame, TerminalScrollbackReply, TerminalSearchReply,
     TerminalSearchRequest,
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::frame::{read_scrollback, search, serialize_full_frame};
@@ -53,6 +53,32 @@ use super::frame::{read_scrollback, search, serialize_full_frame};
 /// task is genuinely stuck (which would only happen during
 /// `Processor::advance` of a degenerate input).
 const INBOX_CAPACITY: usize = 256;
+
+/// Side-channel capacity. Bell + title events are low-rate per tab
+/// (a TUI rings the bell at most a handful of times per second; title
+/// changes are even rarer), so 64 is generous. A subscriber that lags
+/// past this cap surfaces as `broadcast::error::RecvError::Lagged` to
+/// the consumer; Phase 3c's dispatcher logs and continues.
+const SIDE_EFFECT_CAPACITY: usize = 64;
+
+/// Out-of-band signals from the Term task. These ride a dedicated
+/// channel separate from the frame stream so viewers can react
+/// regardless of frame cadence (a bell flash should fire even on a
+/// throttled-to-zero subscription, and the sidebar wants title
+/// updates for unfocused tabs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalSideEffect {
+    /// Title bar text changed. Wire-form is
+    /// `WorkerReply::TerminalTitle { section_id, tab_id, title }`;
+    /// the dispatch layer attaches the (section_id, tab_id) when
+    /// rebroadcasting (Phase 3c).
+    Title(String),
+    /// Title was reset to default. Wire-form:
+    /// `WorkerReply::TerminalResetTitle`.
+    ResetTitle,
+    /// Bell rang. Wire-form: `WorkerReply::TerminalBell`.
+    Bell,
+}
 
 /// A unit of work for the per-tab Term task. The enum grows over
 /// Phase 2 as handlers come online; pattern matches inside the task
@@ -113,6 +139,12 @@ pub struct TerminalTaskHandle {
     /// first byte and emits a `Full`. Cloned cheaply by Phase 3's
     /// pacer when subscribing.
     frame_watch: watch::Receiver<Option<Arc<TerminalFrame>>>,
+    /// Shared sender for [`TerminalSideEffect`] events (Title,
+    /// Bell, ResetTitle). New subscribers call `subscribe_side_effects`
+    /// to receive future events; the receiver count tells the task
+    /// whether anyone is listening (broadcast doesn't need an
+    /// explicit subscriber list).
+    side_effects: broadcast::Sender<TerminalSideEffect>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -128,6 +160,13 @@ impl TerminalTaskHandle {
     /// when no bytes have been parsed yet.
     pub fn latest_frame(&self) -> Option<Arc<TerminalFrame>> {
         self.frame_watch.borrow().clone()
+    }
+
+    /// Subscribe to bell / title / reset-title events. New
+    /// subscribers see future events only — events emitted before
+    /// the subscribe call are gone (no replay).
+    pub fn subscribe_side_effects(&self) -> broadcast::Receiver<TerminalSideEffect> {
+        self.side_effects.subscribe()
     }
     /// Send a command into the task's inbox. Returns `Err` when the
     /// task has already exited — callers treat that as "tab is gone"
@@ -185,10 +224,12 @@ impl Drop for TerminalTaskHandle {
 pub fn spawn_terminal_task(size: TerminalGridSize) -> TerminalTaskHandle {
     let (tx, rx) = mpsc::channel(INBOX_CAPACITY);
     let (frame_tx, frame_rx) = watch::channel(None::<Arc<TerminalFrame>>);
-    let join = tokio::spawn(run_terminal_task(rx, size, frame_tx));
+    let (side_tx, _) = broadcast::channel(SIDE_EFFECT_CAPACITY);
+    let join = tokio::spawn(run_terminal_task(rx, size, frame_tx, side_tx.clone()));
     TerminalTaskHandle {
         inbox: tx,
         frame_watch: frame_rx,
+        side_effects: side_tx,
         join: Some(join),
     }
 }
@@ -200,8 +241,10 @@ struct TerminalTask {
     parser: ansi::Processor,
     /// Events the alacritty `Term` surfaces during parsing
     /// (PtyWrite, Title, Bell, ColorRequest, …). The proxy pushes
-    /// here; the task drains after each `Bytes` and routes to the
-    /// side-channel + writer (Phases 2d, 4).
+    /// here; the task drains after each `Bytes` and routes
+    /// supported variants to `side_effects`. PtyWrite / ColorRequest
+    /// / TextAreaSizeRequest need writer access and land in Phase 4;
+    /// for now they're discarded.
     event_queue: Arc<Mutex<VecDeque<AlacrittyEvent>>>,
     /// Set after every Term mutation; cleared when the task emits a
     /// frame. With Phase 2b's frame emission wired the flag is
@@ -220,10 +263,19 @@ struct TerminalTask {
     /// Latest frame, also kept here so `RequestFullFrame` can reply
     /// without re-borrowing the watch channel.
     latest: Option<Arc<TerminalFrame>>,
+    /// Side-channel emitter for bell / title / reset-title events.
+    /// Sends are best-effort — a `send` with no subscribers returns
+    /// `Err` we discard; the events were observably delivered to
+    /// nobody, which matches the design.
+    side_effects: broadcast::Sender<TerminalSideEffect>,
 }
 
 impl TerminalTask {
-    fn new(size: TerminalGridSize, frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>) -> Self {
+    fn new(
+        size: TerminalGridSize,
+        frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>,
+        side_effects: broadcast::Sender<TerminalSideEffect>,
+    ) -> Self {
         let event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let proxy = TermEventProxy {
             queue: Arc::clone(&event_queue),
@@ -237,21 +289,18 @@ impl TerminalTask {
             seq: 0,
             frame_watch,
             latest: None,
+            side_effects,
         }
     }
 
-    /// Apply one chunk of bytes from the PTY reader. Drains any
-    /// events the parser surfaces during this advance and discards
-    /// them for now; Phase 2d replaces the discard with a real
-    /// side-channel emitter. Bumps `seq` and emits a fresh `Full`
-    /// frame so subscribed viewers (or `RequestFullFrame` callers)
-    /// observe the post-advance state.
+    /// Apply one chunk of bytes from the PTY reader. Routes
+    /// supported events (Title/Bell/ResetTitle) through the
+    /// side-effect channel; PtyWrite-shaped events that need writer
+    /// access are discarded with a trace log until Phase 4.
     fn apply_bytes(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
         self.dirty = true;
-        if let Ok(mut queue) = self.event_queue.lock() {
-            queue.clear();
-        }
+        self.drain_events();
         self.emit_full_frame();
     }
 
@@ -261,6 +310,48 @@ impl TerminalTask {
         self.term.resize(size);
         self.dirty = true;
         self.emit_full_frame();
+    }
+
+    /// Drain the alacritty event queue into the side-channel.
+    /// Events the task can't yet handle (PtyWrite/ColorRequest/
+    /// TextAreaSizeRequest — all need writer access for the
+    /// response) are discarded with a trace log. Phase 4 wires
+    /// those to the PTY writer.
+    fn drain_events(&mut self) {
+        let drained: Vec<AlacrittyEvent> = match self.event_queue.lock() {
+            Ok(mut queue) => queue.drain(..).collect(),
+            Err(poisoned) => {
+                let mut queue = poisoned.into_inner();
+                queue.drain(..).collect()
+            }
+        };
+        for event in drained {
+            match event {
+                AlacrittyEvent::Title(title) => {
+                    let _ = self.side_effects.send(TerminalSideEffect::Title(title));
+                }
+                AlacrittyEvent::ResetTitle => {
+                    let _ = self.side_effects.send(TerminalSideEffect::ResetTitle);
+                }
+                AlacrittyEvent::Bell => {
+                    let _ = self.side_effects.send(TerminalSideEffect::Bell);
+                }
+                AlacrittyEvent::PtyWrite(_)
+                | AlacrittyEvent::ColorRequest(_, _)
+                | AlacrittyEvent::TextAreaSizeRequest(_) => {
+                    tracing::trace!(
+                        "terminal task: dropping writer-bound event (Phase 4 wires it)"
+                    );
+                }
+                AlacrittyEvent::Wakeup
+                | AlacrittyEvent::MouseCursorDirty
+                | AlacrittyEvent::CursorBlinkingChange
+                | AlacrittyEvent::ClipboardStore(_, _)
+                | AlacrittyEvent::ClipboardLoad(_, _)
+                | AlacrittyEvent::Exit
+                | AlacrittyEvent::ChildExit(_) => {}
+            }
+        }
     }
 
     /// Build a `TerminalFrame::Full` from the current Term state
@@ -328,8 +419,9 @@ async fn run_terminal_task(
     mut inbox: mpsc::Receiver<TerminalCommand>,
     size: TerminalGridSize,
     frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>,
+    side_effects: broadcast::Sender<TerminalSideEffect>,
 ) {
-    let mut state = TerminalTask::new(size, frame_watch);
+    let mut state = TerminalTask::new(size, frame_watch, side_effects);
     while let Some(command) = inbox.recv().await {
         match command {
             TerminalCommand::Bytes(bytes) => {
@@ -378,7 +470,8 @@ mod tests {
 
     fn fresh_state() -> TerminalTask {
         let (frame_tx, _frame_rx) = watch::channel(None::<Arc<TerminalFrame>>);
-        TerminalTask::new(small_size(), frame_tx)
+        let (side_tx, _side_rx) = broadcast::channel(SIDE_EFFECT_CAPACITY);
+        TerminalTask::new(small_size(), frame_tx, side_tx)
     }
 
     #[test]
@@ -669,6 +762,52 @@ mod tests {
             chars.starts_with("top"),
             "row 0 starts with 'top', got {chars:?}"
         );
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn bell_byte_emits_side_effect() {
+        // BEL = 0x07. alacritty's Term surfaces an Event::Bell on
+        // every BEL the parser sees; the task forwards it through
+        // the broadcast.
+        let handle = spawn_terminal_task(small_size());
+        let mut subscriber = handle.subscribe_side_effects();
+        handle
+            .send(TerminalCommand::Bytes(vec![b'h', 0x07, b'i']))
+            .await
+            .expect("send bytes");
+        // Bounded wait so a regression doesn't hang the harness.
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            subscriber.recv(),
+        )
+        .await
+        .expect("timeout")
+        .expect("recv");
+        assert_eq!(event, TerminalSideEffect::Bell);
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn osc_title_emits_side_effect() {
+        // OSC 0 ; <title> ST changes the window title. Sequence:
+        // ESC ] 0 ; my-title ESC \
+        let handle = spawn_terminal_task(small_size());
+        let mut subscriber = handle.subscribe_side_effects();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x1b]0;hello-title\x1b\\");
+        handle
+            .send(TerminalCommand::Bytes(bytes))
+            .await
+            .expect("send bytes");
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            subscriber.recv(),
+        )
+        .await
+        .expect("timeout")
+        .expect("recv");
+        assert_eq!(event, TerminalSideEffect::Title("hello-title".into()));
         handle.shutdown().await.expect("shutdown");
     }
 }
