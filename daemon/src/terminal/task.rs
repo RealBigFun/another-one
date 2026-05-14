@@ -189,6 +189,14 @@ impl TerminalTaskHandle {
         self.inbox.try_send(command)
     }
 
+    /// Clone of the task's inbox sender. Phase 4's daemon-side PTY
+    /// reader thread uses this with `blocking_send` to feed bytes
+    /// from the master into the Term task without holding the
+    /// outer `TerminalTaskHandle` across thread boundaries.
+    pub fn inbox_clone(&self) -> mpsc::Sender<TerminalCommand> {
+        self.inbox.clone()
+    }
+
     /// Cleanly stop the task and wait for the loop to exit.
     pub async fn shutdown(mut self) -> std::io::Result<()> {
         // Best-effort send; if the task already exited the channel

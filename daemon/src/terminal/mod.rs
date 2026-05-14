@@ -13,7 +13,9 @@
 
 pub mod task;
 pub mod frame;
+pub mod launch;
 pub mod pacer;
 
+pub use launch::{daemon_spawn_enabled, spawn_terminal_in_daemon, DaemonSpawnedTerminal, SpawnRequest, SpawnedChild};
 pub use pacer::{spawn_pacer, PacerConfig, PacerHandle};
 pub use task::{spawn_terminal_task, TerminalCommand, TerminalSideEffect, TerminalTaskHandle};
