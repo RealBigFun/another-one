@@ -21,6 +21,7 @@ path = "src/main.rs"
 another-one-core = { path = "../core" }
 daemon-proto = { path = "../daemon-proto" }
 daemon-transport = { path = "../daemon-transport" }
+alacritty_terminal = "0.26.0"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "io-util", "signal"] }
 portable-pty = "0.9"

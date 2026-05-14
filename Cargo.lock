@@ -1804,6 +1804,7 @@ dependencies = [
 name = "daemon"
 version = "0.2.0"
 dependencies = [
+ "alacritty_terminal",
  "another-one-core",
  "anyhow",
  "axum",
