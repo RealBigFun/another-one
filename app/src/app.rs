@@ -14258,7 +14258,7 @@ fn reconcile_projected_section_state(
     PersistedSectionState::reconcile_projection(Some(&existing.to_persisted()), projected)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-harness"))]
 fn apply_persisted_section_state_to_project_store(
     project_store: &mut ProjectStore,
     section_id: &SectionId,
