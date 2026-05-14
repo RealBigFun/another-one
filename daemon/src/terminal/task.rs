@@ -36,8 +36,11 @@ use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi;
 use another_one_core::terminal_types::TerminalGridSize;
-use tokio::sync::mpsc;
+use daemon_proto::TerminalFrame;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+
+use super::frame::serialize_full_frame;
 
 /// Default inbox capacity. Sized to absorb a burst of small `Bytes`
 /// chunks from a chatty harness without backpressuring the PTY reader
@@ -59,6 +62,17 @@ pub enum TerminalCommand {
     /// (`Control::LaunchTab` moves to the daemon); for Phase 2 the
     /// only producer is the test suite.
     Bytes(Vec<u8>),
+    /// Hand the latest serialized `Full` frame back through the
+    /// reply oneshot. Used by Phase 3's pacer to recover after a
+    /// `seq` gap, by tests that want a deterministic snapshot, and
+    /// by future `Control::TerminalSubscribe` first-frame delivery.
+    /// Replies with `None` when the task has not yet observed any
+    /// bytes (frame `seq` would be 0 and the snapshot is empty
+    /// anyway, but we surface the absence so callers don't conflate
+    /// it with "freshly cleared screen").
+    RequestFullFrame {
+        reply: oneshot::Sender<Option<Arc<TerminalFrame>>>,
+    },
     /// Tear down the task. The loop returns after this; the Term and
     /// any held resources drop on its way out.
     Shutdown,
@@ -71,10 +85,26 @@ pub enum TerminalCommand {
 #[derive(Debug)]
 pub struct TerminalTaskHandle {
     inbox: mpsc::Sender<TerminalCommand>,
+    /// Latest emitted frame. `None` until the task observes its
+    /// first byte and emits a `Full`. Cloned cheaply by Phase 3's
+    /// pacer when subscribing.
+    frame_watch: watch::Receiver<Option<Arc<TerminalFrame>>>,
     join: Option<JoinHandle<()>>,
 }
 
 impl TerminalTaskHandle {
+    /// Subscribe to the task's frame stream. Phase 3's per-viewer
+    /// pacer holds a clone of this receiver; Phase 2 tests use it
+    /// directly to assert frame emission.
+    pub fn subscribe(&self) -> watch::Receiver<Option<Arc<TerminalFrame>>> {
+        self.frame_watch.clone()
+    }
+
+    /// Snapshot the latest frame without spawning a watcher. `None`
+    /// when no bytes have been parsed yet.
+    pub fn latest_frame(&self) -> Option<Arc<TerminalFrame>> {
+        self.frame_watch.borrow().clone()
+    }
     /// Send a command into the task's inbox. Returns `Err` when the
     /// task has already exited — callers treat that as "tab is gone"
     /// and should drop the handle.
@@ -130,9 +160,11 @@ impl Drop for TerminalTaskHandle {
 /// do until `Bytes` arrive on the inbox.
 pub fn spawn_terminal_task(size: TerminalGridSize) -> TerminalTaskHandle {
     let (tx, rx) = mpsc::channel(INBOX_CAPACITY);
-    let join = tokio::spawn(run_terminal_task(rx, size));
+    let (frame_tx, frame_rx) = watch::channel(None::<Arc<TerminalFrame>>);
+    let join = tokio::spawn(run_terminal_task(rx, size, frame_tx));
     TerminalTaskHandle {
         inbox: tx,
+        frame_watch: frame_rx,
         join: Some(join),
     }
 }
@@ -148,13 +180,26 @@ struct TerminalTask {
     /// side-channel + writer (Phases 2d, 4).
     event_queue: Arc<Mutex<VecDeque<AlacrittyEvent>>>,
     /// Set after every Term mutation; cleared when the task emits a
-    /// frame (Phase 2b). Phase 2a only flips it; the mutation rate
-    /// is the visible behaviour the bytes-loop test asserts.
+    /// frame. With Phase 2b's frame emission wired the flag is
+    /// load-bearing only for batching across multiple `Bytes`
+    /// chunks in one drain; Phase 3's pacer pulls from the watch
+    /// channel directly.
     dirty: bool,
+    /// Monotonic frame counter. Increments on every emitted `Full`;
+    /// resets only when the task is recreated (PTY relaunch).
+    seq: u64,
+    /// Channel viewers (and Phase 3 pacers) read frames from. The
+    /// receiver count tells us whether anyone is listening; with
+    /// zero receivers we still update the watch (cheap), so a late
+    /// subscriber that calls `latest_frame()` gets the current state.
+    frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>,
+    /// Latest frame, also kept here so `RequestFullFrame` can reply
+    /// without re-borrowing the watch channel.
+    latest: Option<Arc<TerminalFrame>>,
 }
 
 impl TerminalTask {
-    fn new(size: TerminalGridSize) -> Self {
+    fn new(size: TerminalGridSize, frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>) -> Self {
         let event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let proxy = TermEventProxy {
             queue: Arc::clone(&event_queue),
@@ -165,19 +210,42 @@ impl TerminalTask {
             parser: ansi::Processor::default(),
             event_queue,
             dirty: false,
+            seq: 0,
+            frame_watch,
+            latest: None,
         }
     }
 
     /// Apply one chunk of bytes from the PTY reader. Drains any
     /// events the parser surfaces during this advance and discards
     /// them for now; Phase 2d replaces the discard with a real
-    /// side-channel emitter.
+    /// side-channel emitter. Bumps `seq` and emits a fresh `Full`
+    /// frame so subscribed viewers (or `RequestFullFrame` callers)
+    /// observe the post-advance state.
     fn apply_bytes(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
         self.dirty = true;
         if let Ok(mut queue) = self.event_queue.lock() {
             queue.clear();
         }
+        self.emit_full_frame();
+    }
+
+    /// Build a `TerminalFrame::Full` from the current Term state
+    /// and publish it on the watch channel. Phase 3's pacer
+    /// observes via `Receiver::changed`; Phase 2 tests observe via
+    /// `Receiver::borrow`.
+    fn emit_full_frame(&mut self) {
+        self.seq = self.seq.wrapping_add(1);
+        let frame = serialize_full_frame(&self.term, self.seq);
+        // `send` returns `Err` only when there are zero receivers;
+        // we still want to hold the latest internally so a future
+        // subscriber sees current state. Watch values are
+        // automatically retained by the channel even with zero
+        // receivers, so the explicit error is just informational.
+        let _ = self.frame_watch.send(Some(Arc::clone(&frame)));
+        self.latest = Some(frame);
+        self.dirty = false;
     }
 
     /// Borrow the underlying Term for tests. Production code paths
@@ -191,6 +259,11 @@ impl TerminalTask {
     #[cfg(test)]
     fn dirty(&self) -> bool {
         self.dirty
+    }
+
+    #[cfg(test)]
+    fn latest(&self) -> Option<Arc<TerminalFrame>> {
+        self.latest.clone()
     }
 }
 
@@ -219,12 +292,24 @@ impl EventListener for TermEventProxy {
     }
 }
 
-async fn run_terminal_task(mut inbox: mpsc::Receiver<TerminalCommand>, size: TerminalGridSize) {
-    let mut state = TerminalTask::new(size);
+async fn run_terminal_task(
+    mut inbox: mpsc::Receiver<TerminalCommand>,
+    size: TerminalGridSize,
+    frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>,
+) {
+    let mut state = TerminalTask::new(size, frame_watch);
     while let Some(command) = inbox.recv().await {
         match command {
             TerminalCommand::Bytes(bytes) => {
                 state.apply_bytes(&bytes);
+            }
+            TerminalCommand::RequestFullFrame { reply } => {
+                // Send a fresh frame even if no bytes have arrived;
+                // None tells the caller "task is up but the screen
+                // is still default-blank". Subscribers join via
+                // `subscribe()` instead of polling, so this verb
+                // is mostly for tests + Phase 3 cold-start.
+                let _ = reply.send(state.latest.clone());
             }
             TerminalCommand::Shutdown => {
                 tracing::trace!("terminal task shutdown");
@@ -242,6 +327,7 @@ mod tests {
     use super::*;
     use alacritty_terminal::grid::Dimensions;
     use alacritty_terminal::index::{Column, Line, Point};
+    use daemon_proto::TerminalFrame;
 
     fn small_size() -> TerminalGridSize {
         TerminalGridSize {
@@ -252,14 +338,21 @@ mod tests {
         }
     }
 
+    fn fresh_state() -> TerminalTask {
+        let (frame_tx, _frame_rx) = watch::channel(None::<Arc<TerminalFrame>>);
+        TerminalTask::new(small_size(), frame_tx)
+    }
+
     #[test]
     fn apply_bytes_writes_into_grid_and_marks_dirty() {
-        let mut state = TerminalTask::new(small_size());
-        assert!(!state.dirty(), "freshly constructed task is not dirty");
+        let mut state = fresh_state();
+        // Freshly constructed task isn't dirty and has no frame.
+        assert!(state.latest().is_none(), "no frame before any bytes");
 
         state.apply_bytes(b"hello");
 
-        assert!(state.dirty(), "applying bytes marks the tab dirty");
+        // Apply emits a frame, which clears `dirty`.
+        assert!(!state.dirty(), "dirty cleared after frame emit");
 
         // First five cells of the first row should now contain
         // 'h','e','l','l','o' — sanity-check via the alacritty grid.
@@ -273,15 +366,49 @@ mod tests {
 
     #[test]
     fn apply_bytes_handles_empty_chunks_idempotently() {
-        let mut state = TerminalTask::new(small_size());
+        let mut state = fresh_state();
         state.apply_bytes(b"");
-        // Empty advance still flips dirty (parsers traverse the
-        // state machine even on zero bytes); behaviour matches
-        // alacritty.
-        assert!(state.dirty());
+        // Empty advance still emits a frame (callers can't tell
+        // "no change" from "changed back to identical" without seq;
+        // the seq is the source of truth for change tracking).
         let grid = state.term().grid();
         assert_eq!(grid.columns(), 10);
         assert_eq!(grid.screen_lines(), 3);
+        assert!(state.latest().is_some());
+    }
+
+    #[test]
+    fn emit_full_frame_increments_seq_and_publishes_snapshot() {
+        let mut state = fresh_state();
+        state.apply_bytes(b"hi");
+        let first = state.latest().expect("first frame");
+        state.apply_bytes(b"there");
+        let second = state.latest().expect("second frame");
+
+        match (&*first, &*second) {
+            (
+                TerminalFrame::Full {
+                    seq: s1,
+                    snapshot: snap1,
+                },
+                TerminalFrame::Full {
+                    seq: s2,
+                    snapshot: snap2,
+                },
+            ) => {
+                assert_eq!(*s1, 1);
+                assert_eq!(*s2, 2);
+                assert_eq!(snap1.cols, 10);
+                assert_eq!(snap1.rows, 3);
+                let row0 = &snap2.viewport[0].cells;
+                let chars: String = row0.iter().map(|c| c.ch).collect();
+                assert!(
+                    chars.starts_with("hithere"),
+                    "row 0 starts with 'hithere', got {chars:?}"
+                );
+            }
+            _ => panic!("expected two Full frames"),
+        }
     }
 
     #[tokio::test]
@@ -297,9 +424,6 @@ mod tests {
     #[tokio::test]
     async fn task_exits_when_handle_dropped() {
         let handle = spawn_terminal_task(small_size());
-        // Steal the inbox so we can observe the task closing it
-        // after the handle is dropped (Drop sends Shutdown in the
-        // background).
         let inbox = handle.inbox.clone();
         drop(handle);
         for _ in 0..50 {
@@ -309,5 +433,71 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         panic!("task did not close inbox after handle drop");
+    }
+
+    #[tokio::test]
+    async fn request_full_frame_returns_none_before_any_bytes() {
+        let handle = spawn_terminal_task(small_size());
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::RequestFullFrame { reply: tx })
+            .await
+            .expect("send request");
+        let frame = rx.await.expect("reply");
+        assert!(frame.is_none(), "no frame before any bytes parsed");
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn request_full_frame_returns_latest_after_bytes() {
+        let handle = spawn_terminal_task(small_size());
+        handle
+            .send(TerminalCommand::Bytes(b"hi".to_vec()))
+            .await
+            .expect("send bytes");
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::RequestFullFrame { reply: tx })
+            .await
+            .expect("send request");
+        let frame = rx.await.expect("reply").expect("frame present");
+        match &*frame {
+            TerminalFrame::Full { seq, snapshot } => {
+                assert_eq!(*seq, 1);
+                assert_eq!(snapshot.viewport[0].cells[0].ch, 'h');
+                assert_eq!(snapshot.viewport[0].cells[1].ch, 'i');
+            }
+            _ => panic!("expected Full frame"),
+        }
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn watch_receiver_observes_frame_emission() {
+        let handle = spawn_terminal_task(small_size());
+        let mut rx = handle.subscribe();
+
+        // Initial value is `None` (no frames yet).
+        assert!(rx.borrow().is_none());
+
+        handle
+            .send(TerminalCommand::Bytes(b"x".to_vec()))
+            .await
+            .expect("send bytes");
+
+        // Wait for the watch to flip; bounded so a regression
+        // doesn't hang the test harness.
+        for _ in 0..50 {
+            if rx.borrow().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let snap = rx.borrow().clone().expect("frame published");
+        match &*snap {
+            TerminalFrame::Full { seq, .. } => assert_eq!(*seq, 1),
+            _ => panic!("expected Full"),
+        }
+        handle.shutdown().await.expect("shutdown");
     }
 }

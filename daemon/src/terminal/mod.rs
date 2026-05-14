@@ -12,5 +12,6 @@
 //! PTY spawn here. Refs #158.
 
 pub mod task;
+pub mod frame;
 
 pub use task::{spawn_terminal_task, TerminalCommand, TerminalTaskHandle};
