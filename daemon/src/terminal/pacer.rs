@@ -44,8 +44,10 @@ use std::time::Duration;
 
 use daemon_proto::{TerminalFrame, WorkerReply};
 use daemon_transport::ServerSession;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio::task::{AbortHandle, JoinHandle};
+
+use super::TerminalSideEffect;
 
 /// Single fixed pacing interval. 60 fps matches a typical desktop
 /// refresh and is comfortably above human flicker thresholds for
@@ -99,12 +101,21 @@ impl Drop for PacerHandle {
 }
 
 /// Spawn a pacer task. Returns the handle the registry holds.
+///
+/// `side_effects` is optional: when `Some`, the pacer also forwards
+/// bell / title / reset-title events as `WorkerReply::Push(...)`
+/// variants on the same session. Side-channel events bypass the
+/// frame-rate cap because they're low-rate and the renderer wants
+/// to react to them regardless of frame cadence (sidebar title
+/// updates while the tab is unfocused, bell flashes on a throttled
+/// subscription).
 pub fn spawn_pacer(
     config: PacerConfig,
     frame_watch: watch::Receiver<Option<Arc<TerminalFrame>>>,
+    side_effects: Option<broadcast::Receiver<TerminalSideEffect>>,
     session: Arc<dyn ServerSession>,
 ) -> PacerHandle {
-    let join: JoinHandle<()> = tokio::spawn(run_pacer(config, frame_watch, session));
+    let join: JoinHandle<()> = tokio::spawn(run_pacer(config, frame_watch, side_effects, session));
     PacerHandle {
         abort: join.abort_handle(),
     }
@@ -113,6 +124,7 @@ pub fn spawn_pacer(
 async fn run_pacer(
     config: PacerConfig,
     mut frame_watch: watch::Receiver<Option<Arc<TerminalFrame>>>,
+    mut side_effects: Option<broadcast::Receiver<TerminalSideEffect>>,
     session: Arc<dyn ServerSession>,
 ) {
     // Cold-start: emit the current frame if the watch already
@@ -132,51 +144,83 @@ async fn run_pacer(
         }
     }
 
-    // Steady state: wait for changes, debounce, emit. We keep the
-    // last `Instant` we emitted so back-to-back changes within one
-    // pacer interval coalesce into a single send (Phase 8's diff
-    // emission is what removes the multi-row redundancy; for now
-    // skipping intermediate Full frames is the cheapest way to
-    // stay under 60 fps).
+    // Steady state: select between frame updates and side-channel
+    // events. Frame updates pace at 60 fps; side-channel events
+    // (bell/title/reset-title) emit immediately because they're
+    // low-rate and the renderer wants them out-of-band.
     let mut last_emit = tokio::time::Instant::now();
     loop {
-        // Park on the next change. `changed()` returns Err only
-        // when the sender (the Term task) drops; that means the
-        // tab is gone, so we wind down.
-        if frame_watch.changed().await.is_err() {
-            tracing::trace!(
-                viewer = %config.viewer_id,
-                section = %config.section_id,
-                tab = %config.tab_id,
-                "pacer: frame watch closed; exiting"
-            );
-            return;
-        }
+        // Helper: a future that resolves with the next side-channel
+        // event, or never resolves when there's no side-channel
+        // receiver (collapses the select to single-arm). Returns
+        // Option<TerminalSideEffect>; None means the broadcast was
+        // closed/lagged (broadcast::Receiver::recv -> Err) and we
+        // skip without exiting.
+        let side_recv: futures_util::future::BoxFuture<'_, Option<TerminalSideEffect>> =
+            match side_effects.as_mut() {
+                Some(rx) => Box::pin(async move { rx.recv().await.ok() }),
+                None => Box::pin(std::future::pending()),
+            };
 
-        // Respect the pace cap. `tokio::time::sleep_until` is a
-        // no-op when the deadline is in the past, so this only
-        // costs a syscall when we'd actually exceed 60 fps.
-        let next_allowed = last_emit + PACER_INTERVAL;
-        let now = tokio::time::Instant::now();
-        if now < next_allowed {
-            tokio::time::sleep_until(next_allowed).await;
-        }
-
-        // Re-borrow after the wait so we publish the freshest
-        // value the watch holds. Multiple updates that landed
-        // during our sleep collapse to one emit here. Drop the
-        // guard before awaiting `push_reply`.
-        let frame = {
-            let guard = frame_watch.borrow_and_update();
-            match guard.clone() {
-                Some(f) => f,
-                None => continue,
+        tokio::select! {
+            // Frame stream: park on next change, debounce, emit.
+            res = frame_watch.changed() => {
+                if res.is_err() {
+                    tracing::trace!(
+                        viewer = %config.viewer_id,
+                        section = %config.section_id,
+                        tab = %config.tab_id,
+                        "pacer: frame watch closed; exiting"
+                    );
+                    return;
+                }
+                let next_allowed = last_emit + PACER_INTERVAL;
+                let now = tokio::time::Instant::now();
+                if now < next_allowed {
+                    tokio::time::sleep_until(next_allowed).await;
+                }
+                let frame = {
+                    let guard = frame_watch.borrow_and_update();
+                    match guard.clone() {
+                        Some(f) => f,
+                        None => continue,
+                    }
+                };
+                if !push_frame(&session, &config, &frame).await {
+                    return;
+                }
+                last_emit = tokio::time::Instant::now();
             }
-        };
-        if !push_frame(&session, &config, &frame).await {
-            return;
+            // Side-channel: bell / title / reset-title. Emitted
+            // immediately, no rate cap.
+            event = side_recv => {
+                let Some(event) = event else { continue };
+                let reply = match event {
+                    TerminalSideEffect::Title(title) => WorkerReply::TerminalTitle {
+                        section_id: config.section_id.clone(),
+                        tab_id: config.tab_id.clone(),
+                        title,
+                    },
+                    TerminalSideEffect::ResetTitle => WorkerReply::TerminalResetTitle {
+                        section_id: config.section_id.clone(),
+                        tab_id: config.tab_id.clone(),
+                    },
+                    TerminalSideEffect::Bell => WorkerReply::TerminalBell {
+                        section_id: config.section_id.clone(),
+                        tab_id: config.tab_id.clone(),
+                    },
+                };
+                if session.push_reply(reply).await.is_err() {
+                    tracing::debug!(
+                        viewer = %config.viewer_id,
+                        section = %config.section_id,
+                        tab = %config.tab_id,
+                        "pacer: side-channel push_reply failed; exiting"
+                    );
+                    return;
+                }
+            }
         }
-        last_emit = tokio::time::Instant::now();
     }
 }
 
@@ -263,6 +307,7 @@ mod tests {
                 since_seq,
             },
             term_handle.subscribe(),
+            Some(term_handle.subscribe_side_effects()),
             server_arc,
         );
         (client, term_handle, pacer)
@@ -347,6 +392,7 @@ mod tests {
                 since_seq: Some(1),
             },
             term_handle.subscribe(),
+            None,
             server_arc,
         );
         let mut events = client.events();

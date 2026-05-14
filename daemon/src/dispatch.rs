@@ -1004,6 +1004,11 @@ async fn dispatch_call(
                     });
                 }
             };
+            // Side-effect subscription is best-effort: a registry
+            // that hosts frames but not side-channels (or where
+            // the per-tab broadcast hasn't been wired yet) returns
+            // None and the pacer simply doesn't push bell/title.
+            let side_effects = registry.subscribe_terminal_side_effects(&section_id, &tab_id);
             let pacer = spawn_pacer(
                 PacerConfig {
                     viewer_id: viewer_id.to_string(),
@@ -1013,6 +1018,7 @@ async fn dispatch_call(
                     since_seq,
                 },
                 frame_watch,
+                side_effects,
                 Arc::clone(&session_arc),
             );
             subs.insert(section_id, tab_id, pacer);
@@ -1442,6 +1448,18 @@ mod tests {
                 .get(&(section_id.to_string(), tab_id.to_string()))
                 .map(|h| h.subscribe())
         }
+        fn subscribe_terminal_side_effects(
+            &self,
+            section_id: &str,
+            tab_id: &str,
+        ) -> Option<tokio::sync::broadcast::Receiver<crate::terminal::TerminalSideEffect>>
+        {
+            self.tasks
+                .lock()
+                .unwrap()
+                .get(&(section_id.to_string(), tab_id.to_string()))
+                .map(|h| h.subscribe_side_effects())
+        }
     }
 
     /// Drain events on the client side until we observe a
@@ -1605,6 +1623,67 @@ mod tests {
             "no frame after unsubscribe; got {:?}",
             nothing
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_subscribe_fans_bell_through_push_reply() {
+        // Bell on the Term task arrives as Push(TerminalBell) on
+        // every subscribed viewer.
+        use futures_util::StreamExt;
+        let registry = Arc::new(TermRegistry::new());
+        let term = crate::terminal::spawn_terminal_task(
+            another_one_core::terminal_types::TerminalGridSize {
+                cols: 10,
+                rows: 3,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+        );
+        registry.install("proj-a:section-1", "7", term);
+
+        let (server, client) = pair("test-viewer");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        tokio::spawn(serve_session(server_arc(server), registry_dyn));
+
+        let ack = client
+            .call(Control::TerminalSubscribe {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+                max_fps: 60,
+                since_seq: None,
+            })
+            .await
+            .expect("call");
+        assert!(matches!(ack, WorkerReply::TerminalSubscribeAck));
+
+        // Send a BEL byte through the installed term task.
+        registry.send(
+            "proj-a:section-1",
+            "7",
+            crate::terminal::TerminalCommand::Bytes(vec![0x07]),
+        );
+
+        let mut events = client.events();
+        let waiter = async {
+            while let Some(event) = events.next().await {
+                if let daemon_transport::SessionEvent::Push(
+                    WorkerReply::TerminalBell {
+                        section_id, tab_id,
+                    },
+                ) = event
+                {
+                    return Some((section_id, tab_id));
+                }
+            }
+            None
+        };
+        let (section_id, tab_id) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+                .await
+                .expect("timeout")
+                .expect("bell push arrives");
+        assert_eq!(section_id, "proj-a:section-1");
+        assert_eq!(tab_id, "7");
     }
 
     #[tokio::test]
