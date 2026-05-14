@@ -424,17 +424,27 @@ fn launch_warm_terminal(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum DiscoveryKind {
+/// What kind of discovery to run after the launch (Codex session
+/// id capture, Pi session id capture, etc.). Made `pub` for the
+/// daemon-side `daemon::terminal::launch` (Phase 4 of design 01,
+/// #158); existing GPUI callers continue to receive
+/// `Option<DiscoveryKind>` from [`build_command`].
+pub enum DiscoveryKind {
     Codex { root: PathBuf },
     Pi { capture: PiSessionCapture },
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct PiSessionCapture {
+pub struct PiSessionCapture {
     path: PathBuf,
 }
 
-fn build_command(
+/// Build the `portable_pty::CommandBuilder` (and resolved
+/// `TerminalLaunchConfig` + optional `DiscoveryKind`) for a
+/// terminal launch. Made `pub` so the daemon-side spawn path
+/// (Phase 4 of design 01 / #158) can call it; the legacy
+/// GPUI-side `spawn_terminal_launch` keeps using it too.
+pub fn build_command(
     env: &HarnessEnv,
     cwd: &Path,
     launch_config: TerminalLaunchConfig,
@@ -723,7 +733,12 @@ fn newest_claude_session_id(cwd: &Path) -> Option<String> {
     newest.map(|(_, id)| id)
 }
 
-fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
+/// Apply the standard environment overrides AnotherOne adds to
+/// every spawned terminal (`TERM`, `COLORTERM`, `PATH` extensions,
+/// MCP socket env vars, etc.). Pub so the daemon-side spawn path
+/// can reuse it; the legacy GPUI-side `launch_terminal` calls it
+/// too.
+pub fn apply_terminal_environment(builder: &mut CommandBuilder, cwd: &Path) {
     builder.env("ZED_TERM", "true");
     builder.env("TERM", "xterm-256color");
     builder.env("COLORTERM", "truecolor");

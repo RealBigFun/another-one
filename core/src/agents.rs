@@ -317,13 +317,13 @@ pub fn terminal_launch_config_for_selected_agent(
     }
 }
 
-pub(crate) struct CommandOutput {
+pub struct CommandOutput {
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
 }
 
-pub(crate) trait CommandRunner: Send + Sync {
+pub trait CommandRunner: Send + Sync {
     fn run(&self, program: &str, args: &[&str], cwd: &Path) -> anyhow::Result<CommandOutput>;
 }
 
@@ -345,7 +345,7 @@ impl CommandRunner for OsCommandRunner {
     }
 }
 
-pub(crate) struct HarnessEnv {
+pub struct HarnessEnv {
     pub claude_projects_root: Option<PathBuf>,
     pub pi_sessions_root: Option<PathBuf>,
     pub codex_root: Option<PathBuf>,
@@ -370,7 +370,7 @@ impl HarnessEnv {
         }
     }
 
-    pub(crate) fn from_os() -> Self {
+    pub fn from_os() -> Self {
         let home = dirs::home_dir();
         let app_state = dirs::config_dir()
             .or_else(|| Some(std::env::temp_dir()))
