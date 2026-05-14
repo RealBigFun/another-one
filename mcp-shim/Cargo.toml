@@ -1,6 +1,6 @@
 [package]
 name = "another-one-mcp-shim"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Tiny stdio ↔ UDS forwarder. Harnesses launch this; it connects to the running AnotherOne daemon's MCP socket and copies bytes in both directions."
 publish = false
