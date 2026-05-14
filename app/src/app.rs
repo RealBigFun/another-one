@@ -5919,42 +5919,32 @@ impl AnotherOneApp {
             // into a single always-dispatch-through-session path
             // that the host role handles via its loopback session.
             //
-            // Phase 5d-ii (design 01 / #158): with the daemon-spawn
-            // flag on, the daemon owns the PTY. Send Control::LaunchTab
-            // and let the resulting WorkerReply::TerminalLaunched push
-            // install a viewer-only runtime. Without the flag, fall
-            // through to the legacy GPUI-thread spawn unchanged.
-            if daemon::terminal::daemon_spawn_enabled() {
-                if !self.in_flight_remote_launches.contains_key(&request.key) {
-                    self.in_flight_remote_launches
-                        .insert(request.key.clone(), request.size);
-                    let session = self.session_handle();
-                    let key_for_callback = request.key.clone();
-                    crate::session_host::dispatch_fire_and_forget(
-                        session,
-                        daemon_proto::Control::LaunchTab {
-                            section_id: request.key.section_id.store_key(),
-                            tab_id: request.key.tab_id.clone(),
-                        },
-                        move |result| {
-                            if let Err(err) = result {
-                                log::warn!(
-                                    "daemon-side LaunchTab for {key_for_callback:?} failed: {err}"
-                                );
-                            }
-                        },
-                    );
-                }
-                return;
+            // Phase 5d-v (design 01 / #158): cold launches go
+            // through Control::LaunchTab unconditionally. The
+            // daemon owns the PTY; the WorkerReply::TerminalLaunched
+            // push installs a viewer-only runtime via
+            // apply_proto_terminal_launched. The legacy GPUI-thread
+            // spawn path was deleted alongside this fork.
+            if !self.in_flight_remote_launches.contains_key(&request.key) {
+                self.in_flight_remote_launches
+                    .insert(request.key.clone(), request.size);
+                let session = self.session_handle();
+                let key_for_callback = request.key.clone();
+                crate::session_host::dispatch_fire_and_forget(
+                    session,
+                    daemon_proto::Control::LaunchTab {
+                        section_id: request.key.section_id.store_key(),
+                        tab_id: request.key.tab_id.clone(),
+                    },
+                    move |result| {
+                        if let Err(err) = result {
+                            log::warn!(
+                                "daemon-side LaunchTab for {key_for_callback:?} failed: {err}"
+                            );
+                        }
+                    },
+                );
             }
-            spawn_terminal_launch(
-                self.terminal_launch_sender.clone(),
-                request.key,
-                Some(request.cwd),
-                request.launch_config,
-                request.agent_launch_args,
-                request.size,
-            );
         }
     }
 
@@ -6265,7 +6255,7 @@ impl AnotherOneApp {
         // that got output, drain the whole queue, then rebuild snapshots
         // once at the end. At 60 Hz drain frequency this caps snapshot
         // work at 60 rebuilds/sec even under sustained output storms.
-        let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
+        let output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
         // Bounded per-tick output budget. See
         // [`DRAIN_OUTPUT_BYTE_CAP`] for the why; once we've parsed
         // this many `Output` bytes we break out of the greedy
@@ -6318,46 +6308,14 @@ impl AnotherOneApp {
                     // path renders. Best-effort; see
                     // `try_send_bytes_to_term_task`.
                     self.try_send_bytes_to_term_task(&key, &bytes);
-                    // Phase 5c (design 01 / #158): with the
-                    // daemon-spawn flag on, the daemon-canonical
-                    // path is the source of truth for grid +
-                    // bell + title. Skip the GPUI-thread VT parse
-                    // entirely — the whole reason this design
-                    // exists is to keep `Processor::advance` off
-                    // the render thread on busy harnesses.
-                    if daemon::terminal::daemon_spawn_enabled() {
-                        // Still record bytes for MCP `tab_output`
-                        // and for the `recent_output` ring buffer
-                        // used in error-detail surfaces.
-                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
-                        updated = true;
-                        if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                            break;
-                        }
-                        continue;
-                    }
-                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        let terminal_update = runtime.apply_output(&bytes);
-                        output_dirty_keys.insert(key.clone());
-                        if terminal_update.bell {
-                            self.terminal_bell_at.insert(key.clone(), Instant::now());
-                        }
-                        // Daemon-authoritative title: in-process write
-                        // to `terminal_sections` (no Control::Persist
-                        // round-trip). See `apply_pty_title_update`.
-                        self.apply_pty_title_update(&key, &terminal_update);
-                        // Mirror the chunk to MCP subscribers. Each
-                        // session has its own broadcast::Receiver so
-                        // a slow consumer doesn't stall the daemon's
-                        // own output processing. `maybe_emit_tab_output`
-                        // short-circuits when no one's listening — the
-                        // common case — to avoid a per-chunk clone on
-                        // the GPUI thread. See #127.
-                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
-                        updated = true;
-                    } else if self.maybe_retry_claude_restore(&key, cx) {
-                        updated = true;
-                    }
+                    // Phase 5d-v (design 01 / #158): VT parse runs
+                    // daemon-side; the GPUI drain only mirrors
+                    // bytes to MCP subscribers + checks the
+                    // claude-restore retry hook for tabs whose
+                    // legacy runtime is gone.
+                    self.maybe_emit_tab_output(&key.tab_id, &bytes);
+                    let _ = self.maybe_retry_claude_restore(&key, cx);
+                    updated = true;
                     if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
                         // Yield back to the GPUI run loop. Remaining
                         // replies stay in the bounded channel and
@@ -6560,43 +6518,17 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         self.append_terminal_recent_output(&key, &bytes);
-                        // Phase 5b dual-write (warm-launch path):
-                        // see the cold-launch arm above for context.
+                        // Phase 5b dual-write (warm-launch path).
                         self.try_send_bytes_to_term_task(&key, &bytes);
-                        // Phase 5c: skip the GPUI-thread parse
-                        // when the daemon-spawn flag is on. See
-                        // the cold-launch arm for rationale.
-                        if daemon::terminal::daemon_spawn_enabled() {
-                            self.maybe_emit_tab_output(&key.tab_id, &bytes);
-                            updated = true;
-                            if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                                break;
-                            }
-                            continue;
-                        }
-                        if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                            let terminal_update = runtime.apply_output(&bytes);
-                            self.terminal_surface_snapshots
-                                .insert(key.clone(), runtime.snapshot());
-                            if terminal_update.bell {
-                                self.terminal_bell_at.insert(key.clone(), Instant::now());
-                            }
-                            // Daemon-authoritative title via
-                            // `apply_pty_title_update` (no
-                            // SetSectionState round-trip per
-                            // PTY echo).
-                            self.apply_pty_title_update(&key, &terminal_update);
-                            // Same Output broadcast as the cold-path
-                            // drain — warm-prewarm tabs (MCP spawn,
-                            // GUI new-task fast path) also surface
-                            // their bytes to MCP subscribers. Guarded
-                            // on receiver_count so the no-subscriber
-                            // case skips the per-chunk clone.
-                            self.maybe_emit_tab_output(&key.tab_id, &bytes);
-                            updated = true;
-                        } else if self.maybe_retry_claude_restore(&key, cx) {
-                            updated = true;
-                        }
+                        // Phase 5d-v (design 01 / #158): GPUI parse
+                        // is gone for the post-attach warm path; the
+                        // daemon-canonical Term task owns grid +
+                        // bell + title. Mirror to MCP subscribers,
+                        // retry claude-restore for known-stale
+                        // runtimes, and bump the byte-cap.
+                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
+                        let _ = self.maybe_retry_claude_restore(&key, cx);
+                        updated = true;
                         if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
                             break;
                         }

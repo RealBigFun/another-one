@@ -40,32 +40,19 @@ use portable_pty::{native_pty_system, ChildKiller, MasterPty};
 
 use super::task::{spawn_terminal_task, TerminalCommand, TerminalTaskHandle};
 
-/// Env var that controls the daemon-side spawn path. **Default: on**
-/// (Phase 5d-iv of design 01 / #158). Set to `0` (or `false` /
-/// `off` / `no`) to opt back out and use the legacy GPUI spawn
-/// path; any other value (including unset) keeps the daemon-side
-/// path active. The opt-out exists for rollback during the
-/// finalization window; it goes away in the deletion slice that
-/// follows tester sign-off.
+/// Env var name preserved for backwards-compatible logging /
+/// settings inspection. The daemon-side spawn path is now
+/// unconditional (Phase 5d-v of design 01 / #158); previous
+/// opt-out values are ignored. The constant + this doc-comment
+/// will be removed in a follow-up sweep.
 pub const DAEMON_SPAWN_ENV: &str = "ANOTHER_ONE_DAEMON_SPAWN";
 
-/// Whether the daemon-side spawn path is enabled at process start.
-/// Cached: env reads happen once on first call so toggling at
-/// runtime doesn't surprise the dispatch arm mid-session.
+/// Whether the daemon-side spawn path is enabled. Always `true`
+/// post-Phase 5d-v; kept as a function so call sites don't have
+/// to be touched in lock-step with this slice. Subsequent
+/// deletions inline the `true` and drop the function.
 pub fn daemon_spawn_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| {
-        match std::env::var(DAEMON_SPAWN_ENV) {
-            // Explicit opt-out tokens. Any other value (including
-            // unset / empty / `1`) keeps the daemon-side path on.
-            Ok(v) => !matches!(
-                v.as_str(),
-                "0" | "false" | "FALSE" | "off" | "OFF" | "no" | "NO"
-            ),
-            Err(_) => true,
-        }
-    })
+    true
 }
 
 /// Outcome of a successful daemon-side spawn. The caller (the
