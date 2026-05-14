@@ -6069,10 +6069,60 @@ impl AnotherOneApp {
                             updated = true;
                         }
                         other => {
-                            log::debug!(
-                                "session pushed unsolicited reply: {:?}",
-                                std::mem::discriminant(&other)
-                            );
+                            // Phase 5c (design 01 / #158): the
+                            // daemon-canonical Term task surfaces
+                            // bell / title via `WorkerReply::Push`
+                            // — these are the side-channel events
+                            // that legacy `apply_output` produced
+                            // through `TerminalRuntimeUpdate`. With
+                            // the flag on, `apply_output` is
+                            // skipped, so these pushes are the
+                            // only path. Without the flag the
+                            // legacy path also fires; the GPUI
+                            // state is idempotent (same bell time,
+                            // same title), so the dual-write
+                            // overlap is harmless.
+                            match other {
+                                daemon_proto::WorkerReply::TerminalTitle {
+                                    section_id,
+                                    tab_id,
+                                    title,
+                                } => {
+                                    self.apply_proto_terminal_title(
+                                        &section_id,
+                                        &tab_id,
+                                        Some(title),
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalResetTitle {
+                                    section_id,
+                                    tab_id,
+                                } => {
+                                    self.apply_proto_terminal_title(
+                                        &section_id,
+                                        &tab_id,
+                                        None,
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalBell {
+                                    section_id,
+                                    tab_id,
+                                } => {
+                                    self.apply_proto_terminal_bell(
+                                        &section_id,
+                                        &tab_id,
+                                    );
+                                    updated = true;
+                                }
+                                other => {
+                                    log::debug!(
+                                        "session pushed unsolicited reply: {:?}",
+                                        std::mem::discriminant(&other)
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -6203,6 +6253,24 @@ impl AnotherOneApp {
                     // path renders. Best-effort; see
                     // `try_send_bytes_to_term_task`.
                     self.try_send_bytes_to_term_task(&key, &bytes);
+                    // Phase 5c (design 01 / #158): with the
+                    // daemon-spawn flag on, the daemon-canonical
+                    // path is the source of truth for grid +
+                    // bell + title. Skip the GPUI-thread VT parse
+                    // entirely — the whole reason this design
+                    // exists is to keep `Processor::advance` off
+                    // the render thread on busy harnesses.
+                    if daemon::terminal::daemon_spawn_enabled() {
+                        // Still record bytes for MCP `tab_output`
+                        // and for the `recent_output` ring buffer
+                        // used in error-detail surfaces.
+                        self.maybe_emit_tab_output(&key.tab_id, &bytes);
+                        updated = true;
+                        if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
+                            break;
+                        }
+                        continue;
+                    }
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                         let terminal_update = runtime.apply_output(&bytes);
                         output_dirty_keys.insert(key.clone());
@@ -6430,6 +6498,17 @@ impl AnotherOneApp {
                         // Phase 5b dual-write (warm-launch path):
                         // see the cold-launch arm above for context.
                         self.try_send_bytes_to_term_task(&key, &bytes);
+                        // Phase 5c: skip the GPUI-thread parse
+                        // when the daemon-spawn flag is on. See
+                        // the cold-launch arm for rationale.
+                        if daemon::terminal::daemon_spawn_enabled() {
+                            self.maybe_emit_tab_output(&key.tab_id, &bytes);
+                            updated = true;
+                            if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
+                                break;
+                            }
+                            continue;
+                        }
                         if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
                             let terminal_update = runtime.apply_output(&bytes);
                             self.terminal_surface_snapshots
@@ -6653,6 +6732,50 @@ impl AnotherOneApp {
     /// flag check is the only thing that gates this work — with the
     /// flag off, every call is a `daemon_spawn_enabled() == false`
     /// short-circuit and nothing else runs.
+    /// Phase 5c of design 01 (#158): apply a daemon-pushed
+    /// `WorkerReply::TerminalTitle` to GPUI-side state. Mirrors
+    /// what the legacy `apply_pty_title_update` does for the
+    /// alacritty-driven path; routed here from
+    /// `drain_session_events`'s Push arm so that a flag-on viewer
+    /// (with `apply_output` skipped) still gets title updates.
+    fn apply_proto_terminal_title(&mut self, section_id: &str, tab_id: &str, title: Option<String>) {
+        let Some(section_id) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalTitle push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id,
+            tab_id: tab_id.to_string(),
+        };
+        let update = match title {
+            Some(title) => crate::terminal_runtime::TerminalRuntimeUpdate {
+                title: Some(title),
+                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
+            },
+            None => crate::terminal_runtime::TerminalRuntimeUpdate {
+                reset_title: true,
+                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
+            },
+        };
+        self.apply_pty_title_update(&key, &update);
+    }
+
+    /// Phase 5c: handle a daemon-pushed `WorkerReply::TerminalBell`.
+    /// Same purpose as the bell branch in the legacy
+    /// `apply_output` drain — record the bell timestamp so the
+    /// renderer flashes the pane.
+    fn apply_proto_terminal_bell(&mut self, section_id: &str, tab_id: &str) {
+        let Some(section_id) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalBell push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id,
+            tab_id: tab_id.to_string(),
+        };
+        self.terminal_bell_at.insert(key, Instant::now());
+    }
+
     fn update_terminal_subscription(&mut self, focused: &TerminalRuntimeKey) {
         if !daemon::terminal::daemon_spawn_enabled() {
             return;
