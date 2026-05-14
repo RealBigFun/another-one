@@ -1859,6 +1859,7 @@ version = "0.2.0"
 dependencies = [
  "daemon-proto",
  "futures-core",
+ "futures-util",
  "serde",
  "serde_json",
  "tempfile",

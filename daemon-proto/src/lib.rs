@@ -783,6 +783,58 @@ pub enum Control {
     /// boot-time result also delivers Recheck results. Reply:
     /// [`WorkerReply::RecheckGhAuthAck`]. See #156.
     RecheckGhAuth,
+    // ── Daemon-canonical Term (design 01) ─────────────────────
+    //
+    // Phase 1 declares these verbs; the daemon dispatch arms reply
+    // with [`WorkerReply::Err`] [`ErrKind::Internal`] until the
+    // Term-task implementation lands
+    // (`docs/designs/01-daemon-canonical-terminal.md` Phase 2+).
+    /// Subscribe this viewer to grid frames for `(section_id,
+    /// tab_id)`. The daemon emits a `TerminalFrame::Full` immediately
+    /// (or on Term-task ready) and then steady-state frames paced at
+    /// or below `max_fps` per viewer. `since_seq = None` means "first
+    /// subscription"; passing a stale seq forces a fresh `Full` if
+    /// the daemon no longer holds the diff history. Replaces the
+    /// `AttachTab` byte-stream attachment for snapshot-aware
+    /// viewers; the byte path stays available in-process for MCP.
+    /// Reply: [`WorkerReply::TerminalSubscribeAck`].
+    TerminalSubscribe {
+        section_id: String,
+        tab_id: String,
+        max_fps: u8,
+        #[serde(default)]
+        since_seq: Option<u64>,
+    },
+    /// Stop pacing frames for `(section_id, tab_id)` to this viewer.
+    /// Idempotent. Reply: [`WorkerReply::TerminalUnsubscribeAck`].
+    TerminalUnsubscribe { section_id: String, tab_id: String },
+    /// Fetch a slice of the daemon's scrollback history for
+    /// `(section_id, tab_id)`. Snapshots ship only a small backbuffer
+    /// (2× viewport); the rest is on-demand to keep frame size
+    /// bounded. Reply: [`WorkerReply::TerminalScrollback`].
+    TerminalReadScrollback {
+        section_id: String,
+        tab_id: String,
+        range: ScrollbackRange,
+    },
+    /// Run a literal-or-regex match across the full grid (viewport +
+    /// scrollback) of `(section_id, tab_id)`. Replaces the
+    /// client-side grid walk in today's `terminal_runtime.rs`. Reply:
+    /// [`WorkerReply::TerminalSearch`].
+    TerminalSearch {
+        section_id: String,
+        tab_id: String,
+        request: TerminalSearchRequest,
+    },
+    /// Forward keystrokes / paste payloads / mouse-protocol bytes to
+    /// the PTY backing `(section_id, tab_id)`. Replaces
+    /// `Session::push_data` for snapshot-mode viewers. Reply:
+    /// [`WorkerReply::TerminalInputAck`].
+    TerminalInput {
+        section_id: String,
+        tab_id: String,
+        bytes: Vec<u8>,
+    },
 }
 
 // ── Push vs pull contract for state mutations ────────────────────
@@ -1200,6 +1252,60 @@ pub enum WorkerReply {
     McpToggleAck,
     /// Reply to [`Control::McpRemove`].
     McpRemoveAck,
+    // ── Daemon-canonical Term (design 01) ─────────────────────
+    /// Reply to [`Control::TerminalSubscribe`]. The first
+    /// `TerminalFrame` push for this `(section_id, tab_id)` may
+    /// arrive before, after, or interleaved with this ack — viewers
+    /// must not assume an ordering between the call reply and the
+    /// initial pushed frame.
+    TerminalSubscribeAck,
+    /// Reply to [`Control::TerminalUnsubscribe`]. After this ack the
+    /// daemon emits no further frames for the `(viewer, section_id,
+    /// tab_id)` triple, but a frame already in flight may arrive
+    /// after the ack — viewers should drop frames whose
+    /// `(section_id, tab_id)` they no longer hold a subscription
+    /// for.
+    TerminalUnsubscribeAck,
+    /// Reply to [`Control::TerminalReadScrollback`].
+    TerminalScrollback {
+        section_id: String,
+        tab_id: String,
+        reply: TerminalScrollbackReply,
+    },
+    /// Reply to [`Control::TerminalSearch`].
+    TerminalSearch {
+        section_id: String,
+        tab_id: String,
+        reply: TerminalSearchReply,
+    },
+    /// Reply to [`Control::TerminalInput`]. Empty ack — effects flow
+    /// through the next pushed frame for the tab.
+    TerminalInputAck,
+    /// **Daemon-pushed** (request_id == 0). One grid frame for a
+    /// subscribed viewer. The transport layer demuxes this into
+    /// `daemon_transport::SessionEvent::TerminalFrame` so consumers
+    /// don't pattern-match `WorkerReply` variants on the hot path.
+    TerminalFrame {
+        section_id: String,
+        tab_id: String,
+        frame: TerminalFrame,
+    },
+    /// **Daemon-pushed**. Title bar text changed for `(section_id,
+    /// tab_id)`. Independent of the frame stream so viewers can
+    /// react regardless of frame cadence (or whether they're even
+    /// subscribed for frames — unfocused tabs still want title
+    /// updates in the sidebar).
+    TerminalTitle {
+        section_id: String,
+        tab_id: String,
+        title: String,
+    },
+    /// **Daemon-pushed**. Title was reset to the default for
+    /// `(section_id, tab_id)`.
+    TerminalResetTitle { section_id: String, tab_id: String },
+    /// **Daemon-pushed**. Bell rang for `(section_id, tab_id)`.
+    /// Renderer surfaces it (visual flash, dock badge).
+    TerminalBell { section_id: String, tab_id: String },
 }
 
 /// Wire mirror of the active git-state view and the underlying
@@ -2109,6 +2215,271 @@ pub enum TerminalRestoreStatus {
     Failed,
 }
 
+// ── Terminal frames (daemon-canonical Term, design 01) ──────────
+//
+// Wire types backing the move of `alacritty_terminal::Term` ownership
+// into the daemon. Phase 1 declares these types and their serde
+// shape; no daemon code produces them yet (see
+// `docs/designs/01-daemon-canonical-terminal.md` Phase 2+ for the
+// emission path). Round-trip tests at the bottom of this module
+// guarantee the wire shape stays stable while the producer is built.
+//
+// JSON is the only encoding the wire carries today; encoding a full
+// grid as JSON is verbose but acceptable while no producer exists.
+// Phase 8 of the design swaps `TerminalFrame::Full` to a packed
+// encoding once iroh bandwidth or `Full` allocator pressure is
+// measured.
+
+/// One terminal cell. Mirrors the subset of
+/// `alacritty_terminal::term::cell::Cell` the renderer needs;
+/// purposely independent of alacritty's internal types so the wire
+/// shape doesn't track upstream refactors.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridCell {
+    /// The cell's primary character. Wide characters (CJK, etc.)
+    /// occupy a `GridCell` plus one trailing spacer neighbour with
+    /// `flags & WIDE_CHAR_SPACER` set; renderers skip spacers.
+    pub ch: char,
+    pub fg: GridColor,
+    pub bg: GridColor,
+    pub flags: GridCellFlags,
+}
+
+impl Default for GridCell {
+    fn default() -> Self {
+        Self {
+            ch: ' ',
+            fg: GridColor::Default,
+            bg: GridColor::Default,
+            flags: GridCellFlags::empty(),
+        }
+    }
+}
+
+/// Either a 24-bit RGB triple, an indexed palette entry, or the
+/// renderer's default. Named alacritty colors are resolved against
+/// the active palette daemon-side before serializing so the wire
+/// stays renderer-independent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GridColor {
+    /// Renderer's default foreground / background. Distinct from
+    /// indexed `0` because the renderer can theme it independently.
+    Default,
+    /// 24-bit truecolor.
+    Rgb { r: u8, g: u8, b: u8 },
+    /// Indexed palette colour; renderer maps to its active palette.
+    Indexed { index: u8 },
+}
+
+/// Per-cell rendering attributes. Bitfield kept dep-light (no
+/// `bitflags!` crate): callers use the associated `u16` constants
+/// with `contains` / `insert`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GridCellFlags(pub u16);
+
+impl GridCellFlags {
+    pub const INVERSE: u16 = 1 << 0;
+    pub const BOLD: u16 = 1 << 1;
+    pub const ITALIC: u16 = 1 << 2;
+    pub const UNDERLINE: u16 = 1 << 3;
+    pub const WRAPLINE: u16 = 1 << 4;
+    pub const WIDE_CHAR: u16 = 1 << 5;
+    pub const WIDE_CHAR_SPACER: u16 = 1 << 6;
+    pub const DIM: u16 = 1 << 7;
+    pub const HIDDEN: u16 = 1 << 8;
+    pub const STRIKEOUT: u16 = 1 << 9;
+    pub const LEADING_WIDE_CHAR_SPACER: u16 = 1 << 10;
+    pub const DOUBLE_UNDERLINE: u16 = 1 << 11;
+    pub const UNDERCURL: u16 = 1 << 12;
+    pub const DOTTED_UNDERLINE: u16 = 1 << 13;
+    pub const DASHED_UNDERLINE: u16 = 1 << 14;
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn contains(self, bits: u16) -> bool {
+        (self.0 & bits) == bits
+    }
+
+    pub fn insert(&mut self, bits: u16) {
+        self.0 |= bits;
+    }
+}
+
+/// One grid row. Producers may emit fewer cells than the snapshot's
+/// `cols` (trailing default cells trimmed); renderers pad to `cols`
+/// with `GridCell::default()`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridRow {
+    pub cells: Vec<GridCell>,
+}
+
+/// A full visible-viewport snapshot plus a small backbuffer. Pushed
+/// inside `TerminalFrame::Full`, used on subscription start and on
+/// `seq`-gap recovery.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridSnapshot {
+    pub cols: u16,
+    pub rows: u16,
+    /// Visible rows, top-to-bottom. Length equals `rows`.
+    pub viewport: Vec<GridRow>,
+    /// Recent scrollback rows, oldest-first, bounded by
+    /// `2 × viewport_rows` to give momentum-scroll headroom without
+    /// shipping full history (older rows ride
+    /// `Control::TerminalReadScrollback`).
+    pub backbuffer: Vec<GridRow>,
+    pub cursor: CursorState,
+    pub mode: ModeFlags,
+    /// `0` means "viewing the live screen". Non-zero values are how
+    /// many lines above the bottom the viewer is scrolled.
+    pub scroll_offset: u32,
+}
+
+/// One row's contents replacement, addressed by line number from the
+/// top of the viewport. Used inside `TerminalFrame::Diff` so a
+/// steady-state frame ships only the rows that changed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowDelta {
+    /// Viewport-relative line index, 0 = top.
+    pub line: u16,
+    pub cells: Vec<GridCell>,
+}
+
+/// Cursor position + presentation. Reported in viewport-relative
+/// coordinates so the renderer doesn't need the scroll offset to
+/// draw the caret.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorState {
+    pub line: u16,
+    pub col: u16,
+    pub shape: CursorShape,
+    pub visible: bool,
+}
+
+/// Caret presentation. Blinking variants signal the renderer to
+/// drive a blink animation; non-blinking variants stay solid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorShape {
+    #[default]
+    Block,
+    Underline,
+    Beam,
+    BlockBlinking,
+    UnderlineBlinking,
+    BeamBlinking,
+}
+
+/// Terminal mode flags the renderer cares about. Mouse mode bits
+/// drive whether the input layer forwards mouse events to the PTY
+/// (mouse-protocol) or treats them as native (selection, link
+/// click).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeFlags {
+    pub alt_screen: bool,
+    pub bracketed_paste: bool,
+    pub mouse_motion: bool,
+    pub mouse_drag: bool,
+    pub mouse_click: bool,
+    pub sgr_mouse: bool,
+    pub utf8_mouse: bool,
+}
+
+/// One frame the daemon pushes to a subscribed viewer. `Full` carries
+/// a complete snapshot; `Diff` carries only the rows that changed
+/// since the previous frame's `seq`. Wire-additive: today's daemon
+/// emits only `Full`; `Diff` is reserved for Phase 8 of design 01
+/// (deferred until measurement justifies it). Viewers must accept
+/// both and request a fresh `Full` on any `seq` gap they observe.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TerminalFrame {
+    Full {
+        /// Monotonic per `(section_id, tab_id)` over the daemon's
+        /// uptime. Resets when the Term task is recreated
+        /// (PTY relaunch).
+        seq: u64,
+        /// `Arc` so the daemon's in-memory transport can fan out to
+        /// multiple viewers without cloning the grid; iroh / UDS
+        /// transports serialize the inner value as if it were owned.
+        snapshot: std::sync::Arc<GridSnapshot>,
+    },
+    Diff {
+        /// Must equal `previous_seq + 1`. Any other value (including
+        /// a `Full` gap) requires the viewer to re-request a `Full`.
+        seq: u64,
+        rows_changed: Vec<RowDelta>,
+        cursor: Option<CursorState>,
+        mode: Option<ModeFlags>,
+        scroll_offset: Option<u32>,
+        /// Bell rang during this diff window. Renderer surfaces it
+        /// (visual flash, dock badge), then the next diff resets to
+        /// `false` if untriggered.
+        bell: bool,
+    },
+}
+
+/// Range of historical rows to fetch via
+/// `Control::TerminalReadScrollback`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScrollbackRange {
+    /// Lines above the live screen. `0` = the topmost line of the
+    /// live screen, increasing into the past.
+    pub start: u32,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalScrollbackReply {
+    /// Returned rows oldest-first. May be shorter than
+    /// `requested.count` when the request runs off the end of the
+    /// daemon's history.
+    pub rows: Vec<GridRow>,
+    /// What range was actually returned. Use this rather than the
+    /// requested range when laying out the rows.
+    pub range_actual: ScrollbackRange,
+}
+
+/// How a `TerminalSearch` request matches characters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalCaseFold {
+    /// `aB` matches `aB` only.
+    Sensitive,
+    /// `aB` matches `Ab`, `aB`, `AB`, `ab`.
+    #[default]
+    Insensitive,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalSearchRequest {
+    pub pattern: String,
+    /// `false` — `pattern` is a literal substring; `true` — regex
+    /// (the daemon picks the regex engine, today: the `regex`
+    /// crate).
+    pub regex: bool,
+    pub case_fold: TerminalCaseFold,
+}
+
+/// One match in a `TerminalSearch` reply. Coordinates are in the
+/// daemon's live grid frame: `line` is signed because matches in
+/// scrollback have negative line numbers (`-1` = first row above
+/// the live screen).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridMatch {
+    pub line: i64,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalSearchReply {
+    pub matches: Vec<GridMatch>,
+}
+
 /// ALPN advertised by the daemon and required by every client. Version-
 /// suffixed so future protocol breaks can be versioned cleanly
 /// (`/1`, `/2`, …).
@@ -2319,5 +2690,157 @@ mod wire_roundtrip_tests {
         // and the client-side router keys on it. Freezing the
         // value at the wire layer so nothing can drift it.
         assert_eq!(PUSH_REQUEST_ID, 0);
+    }
+
+    // ── Terminal frame wire (design 01) ─────────────────────
+
+    fn small_grid_snapshot() -> GridSnapshot {
+        GridSnapshot {
+            cols: 3,
+            rows: 1,
+            viewport: vec![GridRow {
+                cells: vec![
+                    GridCell {
+                        ch: 'h',
+                        fg: GridColor::Default,
+                        bg: GridColor::Default,
+                        flags: GridCellFlags::empty(),
+                    },
+                    GridCell {
+                        ch: 'i',
+                        fg: GridColor::Rgb { r: 255, g: 0, b: 0 },
+                        bg: GridColor::Indexed { index: 17 },
+                        flags: GridCellFlags(GridCellFlags::BOLD | GridCellFlags::UNDERLINE),
+                    },
+                    GridCell::default(),
+                ],
+            }],
+            backbuffer: Vec::new(),
+            cursor: CursorState {
+                line: 0,
+                col: 2,
+                shape: CursorShape::Block,
+                visible: true,
+            },
+            mode: ModeFlags {
+                bracketed_paste: true,
+                ..ModeFlags::default()
+            },
+            scroll_offset: 0,
+        }
+    }
+
+    #[test]
+    fn terminal_frame_full_roundtrips() {
+        let frame = TerminalFrame::Full {
+            seq: 42,
+            snapshot: std::sync::Arc::new(small_grid_snapshot()),
+        };
+        assert_json_roundtrip(&frame);
+    }
+
+    #[test]
+    fn terminal_frame_diff_roundtrips_with_optional_fields() {
+        // Diff with all optional fields populated.
+        let diff = TerminalFrame::Diff {
+            seq: 43,
+            rows_changed: vec![RowDelta {
+                line: 0,
+                cells: vec![GridCell {
+                    ch: '!',
+                    fg: GridColor::Default,
+                    bg: GridColor::Default,
+                    flags: GridCellFlags::empty(),
+                }],
+            }],
+            cursor: Some(CursorState {
+                line: 0,
+                col: 1,
+                shape: CursorShape::BeamBlinking,
+                visible: true,
+            }),
+            mode: Some(ModeFlags::default()),
+            scroll_offset: Some(0),
+            bell: true,
+        };
+        assert_json_roundtrip(&diff);
+
+        // And with every optional field omitted (steady-state
+        // bytes-only update with no cursor / mode change).
+        let bare = TerminalFrame::Diff {
+            seq: 44,
+            rows_changed: Vec::new(),
+            cursor: None,
+            mode: None,
+            scroll_offset: None,
+            bell: false,
+        };
+        assert_json_roundtrip(&bare);
+    }
+
+    #[test]
+    fn terminal_subscribe_omits_since_seq_when_none() {
+        let verb = Control::TerminalSubscribe {
+            section_id: "proj-a:section-1".into(),
+            tab_id: "7".into(),
+            max_fps: 60,
+            since_seq: None,
+        };
+        let json = serde_json::to_string(&verb).expect("serialize");
+        // `since_seq: None` is `#[serde(default)]` on the field;
+        // the round-trip must succeed both with and without the
+        // key on the wire so older daemons that emit it as
+        // `null` and newer ones that omit it both decode.
+        let with_explicit_null =
+            r#"{"type":"terminal_subscribe","section_id":"proj-a:section-1","tab_id":"7","max_fps":60,"since_seq":null}"#;
+        let _: Control = serde_json::from_str(with_explicit_null).expect("explicit-null decode");
+        let _: Control = serde_json::from_str(&json).expect("omit-default decode");
+    }
+
+    #[test]
+    fn terminal_search_request_roundtrip_covers_case_fold() {
+        for case in [TerminalCaseFold::Sensitive, TerminalCaseFold::Insensitive] {
+            let req = TerminalSearchRequest {
+                pattern: "^claude".into(),
+                regex: true,
+                case_fold: case,
+            };
+            assert_json_roundtrip(&req);
+        }
+    }
+
+    #[test]
+    fn worker_reply_terminal_frame_push_roundtrips() {
+        let push = WorkerReply::TerminalFrame {
+            section_id: "proj-a:section-1".into(),
+            tab_id: "7".into(),
+            frame: TerminalFrame::Full {
+                seq: 1,
+                snapshot: std::sync::Arc::new(GridSnapshot::default()),
+            },
+        };
+        assert_json_roundtrip(&push);
+    }
+
+    #[test]
+    fn grid_color_variants_serialize_with_kind_tag() {
+        let value = GridColor::Rgb { r: 1, g: 2, b: 3 };
+        let json = serde_json::to_value(value).expect("serialize");
+        // Catch drift in the `#[serde(tag = "kind")]` shape — the
+        // renderer reads `kind` to pick a branch.
+        assert_eq!(json["kind"], "rgb");
+        assert_eq!(json["r"], 1);
+    }
+
+    #[test]
+    fn grid_cell_flags_are_transparent_u16() {
+        // `#[serde(transparent)]` on `GridCellFlags` means the wire
+        // is a bare number, not `{"0": N}`. Locks the shape so
+        // future additions don't accidentally break older clients.
+        let flags = GridCellFlags(GridCellFlags::BOLD | GridCellFlags::ITALIC);
+        let json = serde_json::to_string(&flags).expect("serialize");
+        assert_eq!(json, "6");
+        let back: GridCellFlags = serde_json::from_str("6").expect("decode");
+        assert_eq!(back, flags);
     }
 }

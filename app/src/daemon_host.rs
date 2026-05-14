@@ -2250,8 +2250,16 @@ pub(crate) fn spawn(
     // needs a tokio context (it `tokio::spawn`s the recv router) — use
     // the shared session-host runtime which is also what drives every
     // GUI-issued `session.call(...)`.
-    let (server_session, client_session) = crate::session_host::runtime_handle()
-        .block_on(async { daemon_transport::in_memory::pair("gui:desktop") });
+    let (server_session, client_session) = crate::session_host::runtime_handle().block_on(async {
+        // `daemon_transport::in_memory` is deprecated
+        // (see docs/designs/01-daemon-canonical-terminal.md);
+        // the desktop in-process daemon seam still uses it until
+        // the migration lands.
+        #[allow(deprecated)]
+        {
+            daemon_transport::in_memory::pair("gui:desktop")
+        }
+    });
     let session: Arc<dyn daemon_transport::Session> = Arc::from(client_session);
     let server_session: Arc<dyn daemon_transport::ServerSession> = Arc::from(server_session);
     thread::Builder::new()

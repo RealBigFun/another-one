@@ -16,6 +16,11 @@ pub trait Session: Send + Sync {
 
 pub enum SessionEvent {
     PtyBytes { section_id: String, tab_id: String, bytes: Vec<u8> },
+    /// Daemon-canonical terminal frame for a subscribed tab.
+    /// Wire-form is `WorkerReply::TerminalFrame`; the transport
+    /// demuxes it into this variant. See
+    /// [[../designs/01-daemon-canonical-terminal]].
+    TerminalFrame { section_id: String, tab_id: String, frame: daemon_proto::TerminalFrame },
     Push(daemon_proto::WorkerReply),
     Lagged { skipped: u64 },
     Closed { reason: Option<String> },

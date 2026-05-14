@@ -231,7 +231,23 @@ async fn client_reader_loop(
                 if let Some(tx) = routed {
                     let _ = tx.send(envelope.reply);
                 } else if envelope.request_id == PUSH_REQUEST_ID {
-                    let _ = events_tx.send(SessionEvent::Push(envelope.reply));
+                    // Demux daemon-canonical terminal frame pushes
+                    // into the typed `SessionEvent::TerminalFrame`
+                    // variant. Other pushes stay in `Push(...)`.
+                    // See docs/designs/01-daemon-canonical-terminal.md.
+                    let event = match envelope.reply {
+                        daemon_proto::WorkerReply::TerminalFrame {
+                            section_id,
+                            tab_id,
+                            frame,
+                        } => SessionEvent::TerminalFrame {
+                            section_id,
+                            tab_id,
+                            frame,
+                        },
+                        other => SessionEvent::Push(other),
+                    };
+                    let _ = events_tx.send(event);
                 } else {
                     debug!(
                         request_id = envelope.request_id,

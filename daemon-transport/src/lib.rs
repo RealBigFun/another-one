@@ -128,6 +128,18 @@ pub enum SessionEvent {
         tab_id: String,
         bytes: Vec<u8>,
     },
+    /// Demuxed daemon-canonical terminal frame for a subscribed
+    /// tab. The wire carries this as a `WorkerReply::TerminalFrame`
+    /// push (request_id == 0); transports lift it into this variant
+    /// so consumers can match `SessionEvent::TerminalFrame` directly
+    /// rather than peeking inside `Push(WorkerReply::TerminalFrame)`
+    /// on the hot path. See
+    /// `docs/designs/01-daemon-canonical-terminal.md`.
+    TerminalFrame {
+        section_id: String,
+        tab_id: String,
+        frame: daemon_proto::TerminalFrame,
+    },
     /// A daemon-pushed worker reply that wasn't requested (today
     /// reserved for future broadcast verbs — `ProjectListChanged`,
     /// etc.). Mirrors what `request_id == 0` carries today.

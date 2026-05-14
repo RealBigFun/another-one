@@ -915,6 +915,25 @@ async fn dispatch_call(
             Some(WorkerReply::RecheckGhAuthAck)
         }
 
+        // ── Daemon-canonical Term (design 01) ──────────────────
+        //
+        // Phase 1 stubs. Verb shapes are frozen on the wire (see
+        // `daemon-proto::Control`); the daemon-side Term task and
+        // pacer that fulfill them ship in Phase 2 and 3 of
+        // `docs/designs/01-daemon-canonical-terminal.md`. Until
+        // then every call returns `WorkerReply::Err {
+        // ErrKind::Internal }` so a viewer that races ahead of the
+        // implementation gets a deterministic failure rather than a
+        // timeout. Tracking: #158.
+        Control::TerminalSubscribe { .. }
+        | Control::TerminalUnsubscribe { .. }
+        | Control::TerminalReadScrollback { .. }
+        | Control::TerminalSearch { .. }
+        | Control::TerminalInput { .. } => Some(WorkerReply::Err {
+            message: "terminal frame protocol not yet implemented; see docs/designs/01-daemon-canonical-terminal.md".into(),
+            kind: daemon_proto::ErrKind::Internal,
+        }),
+
         // ── Legacy / no-reply / pre-handled ──────────────────────────
         Control::Hello { .. } => {
             // Hello is the dial-time pairing handshake — concrete
@@ -1109,6 +1128,10 @@ fn classify_shortcut_action(message: &str) -> ErrKind {
 mod tests {
     use super::*;
     use daemon_proto::ProjectSummary;
+    // `daemon_transport::in_memory` is deprecated
+    // (see docs/designs/01-daemon-canonical-terminal.md); this
+    // dispatch test still uses it until the migration lands.
+    #[allow(deprecated)]
     use daemon_transport::in_memory::pair;
     #[allow(unused_imports)]
     use daemon_transport::Session as _;
