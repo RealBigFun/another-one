@@ -14,6 +14,14 @@ use gpui::rgb;
 use gpui::{font, px, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
 use portable_pty::MasterPty;
 
+// Phase 5a (design 01 / #158): daemon-canonical TerminalFrame is
+// the snapshot the GPUI renderer is migrating to. Imported here so
+// `LiveTerminalRuntime::ingest_frame` can ingest a `Full` frame
+// into the existing surface-snapshot cache.
+use daemon_proto::{
+    GridCellFlags as ProtoGridCellFlags, GridSnapshot as ProtoGridSnapshot, TerminalFrame,
+};
+
 // Shared with `core/src/terminal_types.rs` — the launcher side also
 // produces `PreparedTerminalRuntime` / `TerminalGridSize` /
 // `TerminalRuntimeKey`, and both sides need the clamp constants and
@@ -402,6 +410,35 @@ impl LiveTerminalRuntime {
         self.write_input(b"\x0c")
     }
 
+    /// Ingest a daemon-canonical [`TerminalFrame`] into the cached
+    /// surface snapshot. Phase 5a of design 01 (#158): the snapshot
+    /// path lands alongside the legacy `apply_output` so the
+    /// renderer can switch over in Phase 5b–5c without disturbing
+    /// shipped builds.
+    ///
+    /// `Full` frames replace the cache wholesale. `Diff` is
+    /// reserved for Phase 8 of the design (deferred); receiving
+    /// one here logs and discards — the daemon doesn't emit `Diff`
+    /// in Phase 2/3, so reaching that arm in production indicates
+    /// a viewer racing ahead of the implementation.
+    pub fn ingest_frame(&mut self, frame: &TerminalFrame) {
+        match frame {
+            TerminalFrame::Full { snapshot, .. } => {
+                self.cached_snapshot = build_surface_snapshot_from_proto(snapshot);
+                // The cache is now authoritative for snapshot reads.
+                // Clear `dirty` so a subsequent `snapshot()` call
+                // doesn't immediately overwrite us with a stale
+                // alacritty rebuild during the dual-write window.
+                self.dirty = false;
+            }
+            TerminalFrame::Diff { seq, .. } => {
+                log::debug!(
+                    "LiveTerminalRuntime::ingest_frame: Diff seq={seq} not yet supported (Phase 8)"
+                );
+            }
+        }
+    }
+
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
         if self.dirty {
             self.cached_snapshot = build_surface_snapshot(&self.term, self.size);
@@ -610,6 +647,118 @@ pub(crate) fn search_scrollback_in_term<T: EventListener>(
         }
     }
     matches
+}
+
+/// Build a [`TerminalSurfaceSnapshot`] from a daemon-canonical
+/// [`ProtoGridSnapshot`]. Mirrors the alacritty-driven
+/// [`build_surface_snapshot`] but reads from the wire types.
+///
+/// Phase 5a parity scope (design 01 / #158): produce a snapshot
+/// whose `text`, per-line `text`, `columns`, and basic `cells`
+/// match the alacritty path for equivalent grid contents.
+/// Positioned runs (ligature handling), background spans, and
+/// hyperlink resolution are deferred — they cost a renderer
+/// round-trip the wire frame doesn't carry today and the
+/// renderer falls back gracefully when those slices are empty.
+fn build_surface_snapshot_from_proto(snapshot: &ProtoGridSnapshot) -> TerminalSurfaceSnapshot {
+    let columns = snapshot.cols as usize;
+    let rows = snapshot.rows as usize;
+    let mut surface_text = String::new();
+    let mut lines = Vec::with_capacity(rows);
+
+    for row_idx in 0..rows {
+        let row = snapshot.viewport.get(row_idx);
+        let cells_in_row = row.map(|r| r.cells.len()).unwrap_or(0);
+        let mut line_text = String::new();
+        let mut cells = Vec::with_capacity(columns);
+
+        for col in 0..columns {
+            let cell = row
+                .and_then(|r| r.cells.get(col))
+                .cloned()
+                .unwrap_or_default();
+            // Skip wide-char spacers when constructing text —
+            // they're a hidden second cell that pairs with the
+            // preceding wide character. The cell is still emitted
+            // into `cells` with width 0 so column indexing stays
+            // consistent with the grid frame.
+            let is_spacer = cell
+                .flags
+                .contains(ProtoGridCellFlags::WIDE_CHAR_SPACER)
+                || cell
+                    .flags
+                    .contains(ProtoGridCellFlags::LEADING_WIDE_CHAR_SPACER);
+            let ch = if is_spacer || cell.ch == '\0' {
+                ' '
+            } else {
+                cell.ch
+            };
+            let width = if cell.flags.contains(ProtoGridCellFlags::WIDE_CHAR) {
+                2
+            } else if is_spacer {
+                0
+            } else {
+                1
+            };
+            let text_str = if is_spacer {
+                String::new()
+            } else {
+                ch.to_string()
+            };
+            line_text.push_str(&text_str);
+            cells.push(TerminalCellSnapshot {
+                column: col,
+                width,
+                text: text_str.clone(),
+                copy_text: text_str,
+                hyperlink: None,
+            });
+            // Below the trimmed-cells boundary we treat missing
+            // entries as default cells (renderer pads with
+            // GridCell::default()).
+            let _ = cells_in_row;
+        }
+
+        if row_idx + 1 < rows {
+            line_text.push('\n');
+        }
+        surface_text.push_str(&line_text);
+        lines.push(TerminalLineSnapshot {
+            text: line_text,
+            cells,
+            runs: Vec::new(),
+            background_spans: Vec::new(),
+        });
+    }
+
+    let cursor = snapshot.cursor.visible.then(|| TerminalCursorSnapshot {
+        line: snapshot.cursor.line as usize,
+        column: snapshot.cursor.col as usize,
+        width: 1,
+        kind: match snapshot.cursor.shape {
+            daemon_proto::CursorShape::Underline
+            | daemon_proto::CursorShape::UnderlineBlinking => TerminalCursorKind::Underline,
+            daemon_proto::CursorShape::Beam | daemon_proto::CursorShape::BeamBlinking => {
+                TerminalCursorKind::Beam
+            }
+            _ => TerminalCursorKind::Block,
+        },
+        color: default_foreground_color(),
+        blinking: matches!(
+            snapshot.cursor.shape,
+            daemon_proto::CursorShape::BlockBlinking
+                | daemon_proto::CursorShape::UnderlineBlinking
+                | daemon_proto::CursorShape::BeamBlinking
+        ),
+    });
+
+    TerminalSurfaceSnapshot {
+        text: surface_text,
+        columns,
+        lines,
+        positioned_runs: Vec::new(),
+        cursor,
+    }
 }
 
 fn build_surface_snapshot<T: EventListener>(
@@ -1449,6 +1598,111 @@ mod tests {
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
         build_surface_snapshot(&term, size)
+    }
+
+    /// Phase 5a parity helper. Builds a synthetic
+    /// `daemon_proto::GridSnapshot` whose viewport mirrors the
+    /// alacritty grid at the same dims, with the supplied per-row
+    /// text. Wide chars / colored cells are out of scope for the
+    /// parity test; this is the simplest input shape that
+    /// exercises the path.
+    fn proto_snapshot_from_lines(cols: u16, rows: u16, lines: &[&str]) -> ProtoGridSnapshot {
+        use daemon_proto::{CursorState, CursorShape, GridCell, GridRow, ModeFlags};
+        let viewport: Vec<GridRow> = (0..rows as usize)
+            .map(|i| {
+                let line = lines.get(i).copied().unwrap_or("");
+                let cells: Vec<GridCell> = line
+                    .chars()
+                    .take(cols as usize)
+                    .map(|c| GridCell {
+                        ch: c,
+                        ..GridCell::default()
+                    })
+                    .collect();
+                GridRow { cells }
+            })
+            .collect();
+        ProtoGridSnapshot {
+            cols,
+            rows,
+            viewport,
+            backbuffer: Vec::new(),
+            cursor: CursorState {
+                line: 0,
+                col: lines.get(0).map(|s| s.len() as u16).unwrap_or(0),
+                shape: CursorShape::Block,
+                visible: true,
+            },
+            mode: ModeFlags::default(),
+            scroll_offset: 0,
+        }
+    }
+
+    #[test]
+    fn ingest_full_frame_matches_apply_output_text() {
+        // Phase 5a (design 01 / #158): assert text-level parity
+        // between the daemon-canonical ingest path and the
+        // legacy alacritty-driven `apply_output`. Per-line text
+        // and column count must match for the same logical input.
+        let alacritty_surface = snapshot_from_ansi(b"hello\r\nworld");
+        let proto_snapshot = proto_snapshot_from_lines(32, 4, &["hello", "world", "", ""]);
+        let proto_surface = build_surface_snapshot_from_proto(&proto_snapshot);
+
+        assert_eq!(proto_surface.columns, alacritty_surface.columns);
+        assert_eq!(
+            proto_surface.lines.len(),
+            alacritty_surface.lines.len(),
+            "row counts match"
+        );
+        // Strip trailing whitespace from each line for comparison
+        // — the alacritty path right-pads with default cells, the
+        // proto path mirrors that since cells are length-cols.
+        for (i, (proto_line, ala_line)) in proto_surface
+            .lines
+            .iter()
+            .zip(alacritty_surface.lines.iter())
+            .enumerate()
+        {
+            let proto_trimmed = proto_line.text.trim_end();
+            let ala_trimmed = ala_line.text.trim_end();
+            assert_eq!(
+                proto_trimmed, ala_trimmed,
+                "line {i} content differs: proto={proto_trimmed:?} alacritty={ala_trimmed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ingest_full_frame_updates_cached_snapshot() {
+        // Stand up a viewer-only LiveTerminalRuntime; ingest a
+        // synthetic Full frame; assert the cached snapshot now
+        // reflects the proto contents.
+        let size = TerminalGridSize {
+            cols: 16,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let proto = proto_snapshot_from_lines(16, 2, &["hi", "there"]);
+        let frame = TerminalFrame::Full {
+            seq: 1,
+            snapshot: std::sync::Arc::new(proto),
+        };
+        runtime.ingest_frame(&frame);
+        let surface = runtime.snapshot();
+        assert_eq!(surface.columns, 16);
+        assert_eq!(surface.lines.len(), 2);
+        assert!(
+            surface.lines[0].text.starts_with("hi"),
+            "row 0 starts with 'hi', got {:?}",
+            surface.lines[0].text
+        );
+        assert!(
+            surface.lines[1].text.starts_with("there"),
+            "row 1 starts with 'there', got {:?}",
+            surface.lines[1].text
+        );
     }
 
     #[test]

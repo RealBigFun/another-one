@@ -6053,20 +6053,29 @@ impl AnotherOneApp {
                 daemon_transport::SessionEvent::TerminalFrame {
                     section_id,
                     tab_id,
-                    frame: _,
+                    frame,
                 } => {
-                    // Daemon-canonical Term frames
-                    // (docs/designs/01-daemon-canonical-terminal.md
-                    // §Phase 5). Phase 1 wires the variant; the
-                    // ingestion path lands in Phase 5a alongside
-                    // `LiveTerminalRuntime::ingest_frame`. Until then
-                    // no daemon code emits these, so reaching this
-                    // arm in production indicates a viewer raced
-                    // ahead of the implementation.
-                    log::trace!(
-                        "drain_session_events TerminalFrame section={section_id} tab={tab_id} \
-                         (Phase 5 ingestion not yet wired; dropping)"
-                    );
+                    // Daemon-canonical Term frame ingest. Phase 5a
+                    // (docs/designs/01-daemon-canonical-terminal.md):
+                    // dual-write — the alacritty path still owns
+                    // rendering today; this arm just keeps the
+                    // proto-driven snapshot cache in sync so Phase
+                    // 5b–5c can flip the read source without churn.
+                    let Some(section_id) = SectionId::from_store_key(&section_id) else {
+                        log::warn!("session event TerminalFrame with malformed section_id");
+                        continue;
+                    };
+                    let key = TerminalRuntimeKey { section_id, tab_id };
+                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                        runtime.ingest_frame(&frame);
+                        output_dirty_keys.insert(key);
+                        updated = true;
+                    } else {
+                        log::trace!(
+                            "TerminalFrame for unknown runtime key {:?}; dropping",
+                            key
+                        );
+                    }
                 }
                 daemon_transport::SessionEvent::Closed { reason } => {
                     log::info!("session events stream closed (reason: {reason:?})");
