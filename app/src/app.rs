@@ -1968,6 +1968,13 @@ pub struct AnotherOneApp {
     /// in flight. Prevents duplicate fetches for the same window when
     /// the user keeps scrolling before the previous reply lands.
     scrollback_in_flight: HashSet<TerminalRuntimeKey>,
+    /// Per-tab viewer-input queue. Each entry is a long-lived task
+    /// that owns one clone of `Session::push_data`; the GPUI thread
+    /// pushes keystroke bytes via `try_send` instead of spawning a
+    /// fresh tokio task per keystroke (the legacy path would `spawn`
+    /// + `await` a `push_data` call on every key, paying the runtime
+    /// task overhead before any input reached the daemon).
+    viewer_input_senders: HashMap<TerminalRuntimeKey, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -4897,6 +4904,7 @@ impl AnotherOneApp {
             terminal_scrollback_reply_tx,
             terminal_scrollback_reply_rx,
             scrollback_in_flight: HashSet::new(),
+            viewer_input_senders: HashMap::new(),
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
@@ -6392,6 +6400,7 @@ impl AnotherOneApp {
                     if self.maybe_retry_claude_restore(&key, cx) {
                         self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
+                        self.forget_viewer_input_sender(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         self.unregister_tab_from_registry(&key);
                         updated = true;
@@ -6409,6 +6418,7 @@ impl AnotherOneApp {
                         .mark_launch_failed(key.clone(), details);
                     self.clear_terminal_recent_output(&key);
                     self.live_terminal_runtimes.remove(&key);
+                    self.forget_viewer_input_sender(&key);
                     self.unregister_tab_from_registry(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
                         tab.restore_status = TerminalRestoreStatus::Failed;
@@ -6423,6 +6433,7 @@ impl AnotherOneApp {
                     self.terminal_manager
                         .mark_launch_failed(key.clone(), details.clone());
                     self.live_terminal_runtimes.remove(&key);
+                    self.forget_viewer_input_sender(&key);
                     self.terminal_surface_snapshots.remove(&key);
                     self.unregister_tab_from_registry(&key);
                     self.clear_terminal_recent_output(&key);
@@ -6637,6 +6648,7 @@ impl AnotherOneApp {
                         if self.maybe_retry_claude_restore(&key, cx) {
                             self.terminal_manager.processes.remove(&key);
                             self.live_terminal_runtimes.remove(&key);
+                            self.forget_viewer_input_sender(&key);
                             self.terminal_surface_snapshots.remove(&key);
                             self.unregister_tab_from_registry(&key);
                             updated = true;
@@ -6655,6 +6667,7 @@ impl AnotherOneApp {
                         self.terminal_manager.errors.insert(key.clone(), details);
                         self.clear_terminal_recent_output(&key);
                         self.live_terminal_runtimes.remove(&key);
+                        self.forget_viewer_input_sender(&key);
                         self.unregister_tab_from_registry(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
                             tab.restore_status = TerminalRestoreStatus::Failed;
@@ -6683,6 +6696,7 @@ impl AnotherOneApp {
                         self.terminal_manager.pending_launches.remove(&key);
                         self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
+                        self.forget_viewer_input_sender(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         self.unregister_tab_from_registry(&key);
                         self.terminal_manager
@@ -6883,6 +6897,7 @@ impl AnotherOneApp {
             tab_id: tab_id.to_string(),
         };
         self.live_terminal_runtimes.remove(&key);
+        self.forget_viewer_input_sender(&key);
         self.terminal_surface_snapshots.remove(&key);
         self.in_flight_remote_launches.remove(&key);
     }
@@ -8526,15 +8541,8 @@ impl AnotherOneApp {
         // `Session::push_data` instead so the daemon's writer feeds
         // the real shell.
         if !runtime.has_local_pty() {
-            let session = self.session_handle();
-            let section_id = key.section_id.store_key();
-            let tab_id = key.tab_id.clone();
-            let payload = bytes.to_vec();
-            crate::session_host::runtime_handle().spawn(async move {
-                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
-                    log::warn!("session push_data failed: {err}");
-                }
-            });
+            let sender = self.viewer_input_sender(&key);
+            let _ = sender.send(bytes.to_vec());
             self.last_terminal_activity = Instant::now();
             return true;
         }
@@ -8543,6 +8551,49 @@ impl AnotherOneApp {
             self.last_terminal_activity = Instant::now();
         }
         wrote
+    }
+
+    /// Per-tab queue used by viewer-only runtimes to forward input
+    /// bytes over `Session::push_data`. Returns a cheap clone of the
+    /// tab's queue sender; lazily spawns the long-lived drain task
+    /// the first time a tab needs it. The drain task exits when the
+    /// sender is dropped (tab close or `forget_viewer_input_sender`).
+    fn viewer_input_sender(
+        &mut self,
+        key: &TerminalRuntimeKey,
+    ) -> tokio::sync::mpsc::UnboundedSender<Vec<u8>> {
+        if let Some(existing) = self.viewer_input_senders.get(key) {
+            return existing.clone();
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let session = self.session_handle();
+        let section_id = key.section_id.store_key();
+        let tab_id = key.tab_id.clone();
+        crate::session_host::runtime_handle().spawn(async move {
+            // Coalesce queued chunks into one push_data call when
+            // multiple keystrokes fire before the task wakes up
+            // (paste, repeat-key, mouse drag bursts). Cuts the
+            // per-byte session round-trip count when input is
+            // hotter than the daemon's drain cadence.
+            while let Some(mut buf) = rx.recv().await {
+                while let Ok(more) = rx.try_recv() {
+                    buf.extend_from_slice(&more);
+                }
+                if let Err(err) = session.push_data(&section_id, &tab_id, &buf).await {
+                    log::warn!("viewer input push_data failed: {err}");
+                }
+            }
+        });
+        self.viewer_input_senders.insert(key.clone(), tx.clone());
+        tx
+    }
+
+    /// Tear down the viewer input queue for a tab. Called from the
+    /// runtime-removal paths (tab exited / failed / unregistered) so
+    /// the long-lived drain task wakes up on `recv()` returning
+    /// `None` and shuts down.
+    fn forget_viewer_input_sender(&mut self, key: &TerminalRuntimeKey) {
+        self.viewer_input_senders.remove(key);
     }
 
     fn send_pending_post_launch_input(&mut self, key: &TerminalRuntimeKey) -> bool {
@@ -8559,15 +8610,8 @@ impl AnotherOneApp {
         // bytes on the master-PTY writer the registry stored in
         // `state.writers` during daemon_spawn_terminal.
         if !runtime.has_local_pty() {
-            let session = self.session_handle();
-            let section_id = key.section_id.store_key();
-            let tab_id = key.tab_id.clone();
-            let payload = bytes.clone();
-            crate::session_host::runtime_handle().spawn(async move {
-                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
-                    log::warn!("post-launch session push_data failed: {err}");
-                }
-            });
+            let sender = self.viewer_input_sender(key);
+            let _ = sender.send(bytes.clone());
             self.last_terminal_activity = Instant::now();
             return true;
         }
@@ -9267,14 +9311,8 @@ impl AnotherOneApp {
         // Session::push_data too so the daemon's tab_input lands
         // it on the master-PTY writer.
         if !runtime.has_local_pty() {
-            let session = self.session_handle();
-            let section_id = key.section_id.store_key();
-            let tab_id = key.tab_id.clone();
-            crate::session_host::runtime_handle().spawn(async move {
-                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
-                    log::warn!("mouse-event session push_data failed: {err}");
-                }
-            });
+            let sender = self.viewer_input_sender(key);
+            let _ = sender.send(payload);
         }
         true
     }
@@ -10972,6 +11010,11 @@ impl AnotherOneApp {
             if let Some(runtime) = self.live_terminal_runtimes.remove(&old_key) {
                 self.live_terminal_runtimes.insert(new_key.clone(), runtime);
             }
+            // Drop the viewer-input drain task: its captured
+            // section_id/tab_id are now stale after the rename. The
+            // next `write_active_terminal_input` for `new_key`
+            // re-spawns one keyed on the new identifiers.
+            self.viewer_input_senders.remove(&old_key);
             if let Some(snapshot) = self.terminal_surface_snapshots.remove(&old_key) {
                 self.terminal_surface_snapshots
                     .insert(new_key.clone(), snapshot);
