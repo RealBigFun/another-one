@@ -6033,6 +6033,24 @@ impl AnotherOneApp {
                 daemon_transport::SessionEvent::Lagged { skipped } => {
                     log::warn!("session events lagged — skipped {skipped} events");
                 }
+                daemon_transport::SessionEvent::TerminalFrame {
+                    section_id,
+                    tab_id,
+                    frame: _,
+                } => {
+                    // Daemon-canonical Term frames
+                    // (docs/designs/01-daemon-canonical-terminal.md
+                    // §Phase 5). Phase 1 wires the variant; the
+                    // ingestion path lands in Phase 5a alongside
+                    // `LiveTerminalRuntime::ingest_frame`. Until then
+                    // no daemon code emits these, so reaching this
+                    // arm in production indicates a viewer raced
+                    // ahead of the implementation.
+                    log::trace!(
+                        "drain_session_events TerminalFrame section={section_id} tab={tab_id} \
+                         (Phase 5 ingestion not yet wired; dropping)"
+                    );
+                }
                 daemon_transport::SessionEvent::Closed { reason } => {
                     log::info!("session events stream closed (reason: {reason:?})");
                     // Don't drop the receiver — the next

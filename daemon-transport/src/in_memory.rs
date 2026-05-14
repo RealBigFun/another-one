@@ -149,23 +149,45 @@ pub fn pair(peer_id: impl Into<String>) -> (Box<dyn ServerSession>, Box<dyn Sess
                     if let Some(tx) = routed {
                         let _ = tx.send(reply);
                     } else {
-                        // Reply with no awaiter — surface as a Push
-                        // so the events stream sees it. Matches the
-                        // spirit of the iroh impl's
-                        // request_id-fallthrough behaviour.
-                        push_event(
-                            &event_buf_clone,
-                            &event_waker_clone,
-                            SessionEvent::Push(reply),
-                        );
+                        // Reply with no awaiter — surface through the
+                        // events stream. Same demux as `PushReply`
+                        // above so a stray `WorkerReply::TerminalFrame`
+                        // (request_id mismatched) still lands as a
+                        // typed `SessionEvent::TerminalFrame`.
+                        let event = match reply {
+                            WorkerReply::TerminalFrame {
+                                section_id,
+                                tab_id,
+                                frame,
+                            } => SessionEvent::TerminalFrame {
+                                section_id,
+                                tab_id,
+                                frame,
+                            },
+                            other => SessionEvent::Push(other),
+                        };
+                        push_event(&event_buf_clone, &event_waker_clone, event);
                     }
                 }
                 ServerFrame::PushReply(reply) => {
-                    push_event(
-                        &event_buf_clone,
-                        &event_waker_clone,
-                        SessionEvent::Push(reply),
-                    );
+                    // Demux a daemon-canonical terminal frame push
+                    // into the dedicated `SessionEvent::TerminalFrame`
+                    // variant so consumers don't have to peek inside
+                    // `Push(WorkerReply::TerminalFrame)` on the hot
+                    // path. Other push replies stay in `Push(...)`.
+                    let event = match reply {
+                        WorkerReply::TerminalFrame {
+                            section_id,
+                            tab_id,
+                            frame,
+                        } => SessionEvent::TerminalFrame {
+                            section_id,
+                            tab_id,
+                            frame,
+                        },
+                        other => SessionEvent::Push(other),
+                    };
+                    push_event(&event_buf_clone, &event_waker_clone, event);
                 }
                 ServerFrame::PtyBytes {
                     section_id,
@@ -736,5 +758,70 @@ mod tests {
             "c2 should receive the project list keyed to its id"
         );
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pair_demuxes_terminal_frame_pushes_into_typed_event() {
+        // Server pushes a `WorkerReply::TerminalFrame` (the wire
+        // form of a daemon-canonical Term snapshot, design 01).
+        // The in-memory transport's recv router lifts it into
+        // `SessionEvent::TerminalFrame` so consumers don't have to
+        // peek inside `Push(...)` on the hot path.
+        use daemon_proto::{GridSnapshot, TerminalFrame};
+        use futures_util::StreamExt;
+        use std::sync::Arc;
+
+        let (server, client) = pair("test-peer");
+        let mut events = client.events();
+
+        let push = WorkerReply::TerminalFrame {
+            section_id: "proj-a:section-1".into(),
+            tab_id: "7".into(),
+            frame: TerminalFrame::Full {
+                seq: 1,
+                snapshot: Arc::new(GridSnapshot::default()),
+            },
+        };
+        server.push_reply(push).await.expect("push reply");
+
+        let next = events.next().await.expect("event arrives");
+        match next {
+            SessionEvent::TerminalFrame {
+                section_id,
+                tab_id,
+                frame,
+            } => {
+                assert_eq!(section_id, "proj-a:section-1");
+                assert_eq!(tab_id, "7");
+                assert!(matches!(frame, TerminalFrame::Full { seq: 1, .. }));
+            }
+            other => panic!("expected TerminalFrame event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pair_routes_other_pushes_through_session_event_push() {
+        // Sanity: non-TerminalFrame pushes still flow through
+        // `SessionEvent::Push(...)` so the demux above is targeted,
+        // not catch-all.
+        use futures_util::StreamExt;
+
+        let (server, client) = pair("test-peer");
+        let mut events = client.events();
+
+        server
+            .push_reply(WorkerReply::AttachDropped {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+                reason: "lagged".into(),
+            })
+            .await
+            .expect("push reply");
+
+        let next = events.next().await.expect("event arrives");
+        assert!(
+            matches!(next, SessionEvent::Push(WorkerReply::AttachDropped { .. })),
+            "non-TerminalFrame pushes ride SessionEvent::Push"
+        );
     }
 }

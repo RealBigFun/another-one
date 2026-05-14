@@ -94,6 +94,16 @@ impl TransportFactory for IrohTransportFactory {
 /// so callers must not also drain that channel themselves. Worker
 /// replies (`next_worker_reply`) are a separate channel and stay
 /// available for legacy polling consumers.
+///
+/// **Daemon-canonical terminal frames (design 01).** This bridge
+/// does not yet demux `WorkerReply::TerminalFrame` pushes into
+/// `SessionEvent::TerminalFrame`; today they ride the existing
+/// `next_worker_reply` channel that
+/// `app/src/iroh_client.rs::drain_worker_replies` polls. Wiring the
+/// demux into the abstract events stream lands in Phase 5b of
+/// `docs/designs/01-daemon-canonical-terminal.md` (the desktop
+/// viewer cutover), at which point the global drain becomes
+/// redundant and is removed.
 pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession> {
     let attached = Arc::new(AsyncMutex::new(None::<(String, String)>));
     let (events_tx, events_rx) = mpsc::unbounded_channel::<SessionEvent>();
