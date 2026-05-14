@@ -26,7 +26,7 @@ use daemon_proto::{
 /// frame. Caller supplies the monotonic `seq`. The returned `Arc`
 /// is the same one the per-tab `watch::Sender<Arc<TerminalFrame>>`
 /// will hold so viewers receive a zero-copy frame in-process.
-pub(super) fn serialize_full_frame<E: EventListener>(
+pub fn serialize_full_frame<E: EventListener>(
     term: &Term<E>,
     seq: u64,
 ) -> Arc<TerminalFrame> {
@@ -36,7 +36,11 @@ pub(super) fn serialize_full_frame<E: EventListener>(
     })
 }
 
-fn serialize_snapshot<E: EventListener>(term: &Term<E>) -> GridSnapshot {
+/// Serialize the Term's current visible viewport into a
+/// [`GridSnapshot`]. Public so renderer-side tests can drive the
+/// canonical alacritty→proto pipeline without reaching into the
+/// per-tab task plumbing.
+pub fn serialize_snapshot<E: EventListener>(term: &Term<E>) -> GridSnapshot {
     let grid = term.grid();
     let cols = grid.columns();
     let rows = grid.screen_lines();
