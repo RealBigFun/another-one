@@ -1958,6 +1958,16 @@ pub struct AnotherOneApp {
     /// query the user already changed gets ignored.
     terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
+    /// `Control::TerminalReadScrollback` reply channel. The session
+    /// call callback pushes `(key, reply)` so the renderer's drain
+    /// loop can merge cached rows back into the runtime that asked
+    /// for them. See `App::dispatch_terminal_scrollback_fetch`.
+    terminal_scrollback_reply_tx: tokio::sync::mpsc::UnboundedSender<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
+    terminal_scrollback_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
+    /// Tabs with a `Control::TerminalReadScrollback` request currently
+    /// in flight. Prevents duplicate fetches for the same window when
+    /// the user keeps scrolling before the previous reply lands.
+    scrollback_in_flight: HashSet<TerminalRuntimeKey>,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -4736,6 +4746,11 @@ impl AnotherOneApp {
                 TerminalRuntimeKey,
                 daemon_proto::TerminalSearchReply,
             )>();
+        let (terminal_scrollback_reply_tx, terminal_scrollback_reply_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(
+                TerminalRuntimeKey,
+                daemon_proto::TerminalScrollbackReply,
+            )>();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -4879,6 +4894,9 @@ impl AnotherOneApp {
             terminal_search: None,
             terminal_search_reply_tx,
             terminal_search_reply_rx,
+            terminal_scrollback_reply_tx,
+            terminal_scrollback_reply_rx,
+            scrollback_in_flight: HashSet::new(),
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
@@ -8826,6 +8844,91 @@ impl AnotherOneApp {
         updated
     }
 
+    /// Step 5 of rc/terminal-hardening: dispatch a
+    /// `Control::TerminalReadScrollback` for the viewer-scroll
+    /// window currently missing from the runtime's cache. Idempotent
+    /// across overlapping scroll bursts — a single in-flight request
+    /// per tab is enough; the next viewer scroll observes the merged
+    /// cache and only requests rows still missing.
+    pub(crate) fn maybe_dispatch_scrollback_fetch(
+        &mut self,
+        key: &TerminalRuntimeKey,
+    ) -> bool {
+        if self.scrollback_in_flight.contains(key) {
+            return false;
+        }
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            return false;
+        };
+        let Some(range) = runtime.missing_scrollback_window() else {
+            return false;
+        };
+        self.scrollback_in_flight.insert(key.clone());
+        let session = self.session_handle();
+        let reply_tx = self.terminal_scrollback_reply_tx.clone();
+        let key_for_callback = key.clone();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::TerminalReadScrollback {
+                section_id: key.section_id.store_key(),
+                tab_id: key.tab_id.clone(),
+                range,
+            },
+            move |result| match result {
+                Ok(daemon_proto::WorkerReply::TerminalScrollback { reply, .. }) => {
+                    let _ = reply_tx.send((key_for_callback, reply));
+                }
+                Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
+                    log::warn!("TerminalReadScrollback err: {message}");
+                }
+                Ok(other) => {
+                    log::warn!(
+                        "TerminalReadScrollback unexpected reply: {:?}",
+                        std::mem::discriminant(&other)
+                    );
+                }
+                Err(err) => {
+                    log::warn!("TerminalReadScrollback session call failed: {err}");
+                }
+            },
+        );
+        true
+    }
+
+    /// Drain replies from `Control::TerminalReadScrollback` and merge
+    /// them into the corresponding runtime's scrollback cache. The
+    /// runtime recomposes its cached surface snapshot if the new
+    /// rows fall inside the active scroll window, so the next render
+    /// tick paints them.
+    fn drain_terminal_scrollback_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+        loop {
+            match self.terminal_scrollback_reply_rx.try_recv() {
+                Ok((key, reply)) => {
+                    self.scrollback_in_flight.remove(&key);
+                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                        runtime.apply_scrollback_reply(&reply);
+                        let snapshot = runtime.snapshot();
+                        self.terminal_surface_snapshots
+                            .insert(key.clone(), snapshot);
+                        // The window the reply filled may not have
+                        // covered every visible scrollback row
+                        // (`range_actual.count` clamps against
+                        // history-size). Re-issue a fetch for the
+                        // remainder so a viewer scrolled deep enough
+                        // to span two requests doesn't stop halfway.
+                        self.maybe_dispatch_scrollback_fetch(&key);
+                        cx.notify();
+                        updated = true;
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+        updated
+    }
+
     fn scroll_to_current_search_match(&mut self, _cx: &mut Context<Self>) {
         let Some(state) = self.terminal_search.as_ref() else {
             return;
@@ -9497,6 +9600,7 @@ impl AnotherOneApp {
         let snapshot = runtime.snapshot();
         self.terminal_surface_snapshots
             .insert(key.clone(), snapshot);
+        self.maybe_dispatch_scrollback_fetch(&key);
 
         if let Some(selection) = self.terminal_selection.as_mut() {
             // Same content shifts +1 viewport row when we scroll up
@@ -9578,6 +9682,7 @@ impl AnotherOneApp {
 
         self.terminal_surface_snapshots
             .insert(key.clone(), runtime.snapshot());
+        self.maybe_dispatch_scrollback_fetch(key);
         if self
             .terminal_selection
             .as_ref()
@@ -17307,6 +17412,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
                             should_notify |= this.drain_terminal_search_replies(cx);
+                            should_notify |= this.drain_terminal_scrollback_replies(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{Config, Term};
@@ -209,7 +209,30 @@ pub(crate) struct LiveTerminalRuntime {
     event_queue: Arc<Mutex<VecDeque<Event>>>,
     size: TerminalGridSize,
     dirty: bool,
+    /// Live (un-scrolled) surface composed from the latest
+    /// `ingest_frame`. Renderer reads this when `viewer_scroll_offset`
+    /// is 0; non-zero offsets compose a fresh `TerminalSurfaceSnapshot`
+    /// on the fly using `scrollback_cache`.
     cached_snapshot: TerminalSurfaceSnapshot,
+    /// Latest live `GridSnapshot` retained from `ingest_frame` so
+    /// the viewer can recompose the visible rows on the fly when
+    /// `viewer_scroll_offset > 0`. `None` until the first frame is
+    /// ingested.
+    live_snapshot: Option<Arc<ProtoGridSnapshot>>,
+    /// Lines of scrollback the daemon currently retains. Read from
+    /// the most recent `ingest_frame`'s `history_lines` so the viewer
+    /// can clamp scroll requests without an extra round-trip.
+    history_lines: u32,
+    /// Lines the viewer has scrolled up from the live screen. `0`
+    /// means "viewing the live screen". Bounded by `history_lines`.
+    viewer_scroll_offset: u32,
+    /// Cached scrollback rows fetched via `Control::TerminalReadScrollback`.
+    /// Keyed by the `start` value the daemon's `read_scrollback` uses
+    /// (`1` = `Line(-1)` = one row above the live screen, increasing
+    /// into the past). `start = 0` is the topmost live row and lives
+    /// in `live_snapshot.viewport[0]`, so the cache stores entries for
+    /// `start >= 1` only.
+    scrollback_cache: std::collections::BTreeMap<u32, daemon_proto::GridRow>,
 }
 
 impl LiveTerminalRuntime {
@@ -232,6 +255,10 @@ impl LiveTerminalRuntime {
             size: prepared.size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
+            live_snapshot: None,
+            history_lines: 0,
+            viewer_scroll_offset: 0,
+            scrollback_cache: std::collections::BTreeMap::new(),
         }
     }
 
@@ -256,6 +283,10 @@ impl LiveTerminalRuntime {
             size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
+            live_snapshot: None,
+            history_lines: 0,
+            viewer_scroll_offset: 0,
+            scrollback_cache: std::collections::BTreeMap::new(),
         }
     }
 
@@ -365,11 +396,13 @@ impl LiveTerminalRuntime {
         self.write_input(payload.as_bytes())
     }
 
-    /// Current scrollback offset (`0` = bottom / live screen). Lifted
-    /// to the host so the search overlay can map grid-coord matches
-    /// onto the visible viewport.
+    /// Lines the viewer has scrolled up from the live screen. `0` =
+    /// viewing the live bottom; positive values walk into history.
+    /// Drives the search-overlay's grid-coord → viewport-row mapping
+    /// (formerly read from `self.term.grid().display_offset()` before
+    /// the daemon-canonical cutover).
     pub fn display_offset(&self) -> usize {
-        self.term.grid().display_offset()
+        self.viewer_scroll_offset as usize
     }
 
     /// Current grid dimensions. Phase 5b uses this when spawning a
@@ -380,7 +413,21 @@ impl LiveTerminalRuntime {
     }
 
     pub fn screen_lines(&self) -> usize {
-        self.term.grid().screen_lines()
+        // Authoritative source post-cutover is the latest ingested
+        // snapshot; fall back to the runtime's announced size when
+        // no frame has landed yet.
+        self.live_snapshot
+            .as_ref()
+            .map(|s| s.rows as usize)
+            .unwrap_or(self.size.rows as usize)
+    }
+
+    /// Total scrollback lines the daemon currently retains. Sourced
+    /// from the most recent `ingest_frame`; viewers use it to clamp
+    /// `viewer_scroll_lines` without an extra round-trip.
+    #[allow(dead_code)]
+    pub fn history_lines(&self) -> u32 {
+        self.history_lines
     }
 
     pub fn is_alternate_screen(&self) -> bool {
@@ -418,24 +465,27 @@ impl LiveTerminalRuntime {
     }
 
     /// Ingest a daemon-canonical [`TerminalFrame`] into the cached
-    /// surface snapshot. Phase 5a of design 01 (#158): the snapshot
-    /// path lands alongside the legacy `apply_output` so the
-    /// renderer can switch over in Phase 5b–5c without disturbing
-    /// shipped builds.
+    /// surface snapshot. `Full` frames replace the cache wholesale.
+    /// `Diff` is reserved for Phase 8 of the design (deferred);
+    /// receiving one here logs and discards.
     ///
-    /// `Full` frames replace the cache wholesale. `Diff` is
-    /// reserved for Phase 8 of the design (deferred); receiving
-    /// one here logs and discards — the daemon doesn't emit `Diff`
-    /// in Phase 2/3, so reaching that arm in production indicates
-    /// a viewer racing ahead of the implementation.
+    /// On `Full` ingest the runtime also refreshes its `history_lines`
+    /// hint and (when `viewer_scroll_offset > 0`) recomposes the
+    /// visible surface so any newly-arrived live rows or cleared
+    /// scrollback land before the next `snapshot()` call.
     pub fn ingest_frame(&mut self, frame: &TerminalFrame) {
         match frame {
             TerminalFrame::Full { snapshot, .. } => {
-                self.cached_snapshot = build_surface_snapshot(snapshot);
-                // The cache is now authoritative for snapshot reads.
-                // Clear `dirty` so a subsequent `snapshot()` call
-                // doesn't immediately overwrite us with a stale
-                // alacritty rebuild during the dual-write window.
+                self.live_snapshot = Some(Arc::clone(snapshot));
+                self.history_lines = snapshot.history_lines;
+                // Clamp the viewer's scroll offset against the new
+                // history hint so a daemon-side `clear` (which
+                // collapses scrollback) doesn't strand the viewer at
+                // an offset that has no rows behind it.
+                if self.viewer_scroll_offset > self.history_lines {
+                    self.viewer_scroll_offset = self.history_lines;
+                }
+                self.recompute_cached_snapshot();
                 self.dirty = false;
             }
             TerminalFrame::Diff { seq, .. } => {
@@ -448,12 +498,187 @@ impl LiveTerminalRuntime {
 
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
         // Daemon-canonical (design 01 / #158, Phase 5b): the cached
-        // snapshot is authoritative. `ingest_frame` populates it
-        // from a `daemon_proto::TerminalFrame::Full`; `dirty` is
-        // now a pure invalidation hint that the next ingest should
-        // refresh consumers — there is no local rebuild path.
+        // snapshot is authoritative. `ingest_frame` and viewer
+        // scroll changes both refresh it via `recompute_cached_snapshot`;
+        // `dirty` becomes a pure invalidation hint here.
         self.dirty = false;
         self.cached_snapshot.clone()
+    }
+
+    /// Recompose `cached_snapshot` from `live_snapshot` overlaid with
+    /// any cached scrollback rows in view at the current
+    /// `viewer_scroll_offset`.
+    fn recompute_cached_snapshot(&mut self) {
+        let Some(live) = self.live_snapshot.as_ref() else {
+            self.cached_snapshot = TerminalSurfaceSnapshot::default();
+            return;
+        };
+        if self.viewer_scroll_offset == 0 {
+            self.cached_snapshot = build_surface_snapshot(live);
+            return;
+        }
+        let composed = self.compose_scrolled_snapshot(live);
+        self.cached_snapshot = build_surface_snapshot(&composed);
+    }
+
+    /// Build a `ProtoGridSnapshot` whose `viewport` is the visible
+    /// rows for the current `viewer_scroll_offset`. Missing
+    /// scrollback rows are filled with `GridRow::default()` (blank
+    /// rows) until the corresponding `Control::TerminalReadScrollback`
+    /// reply lands and `apply_scrollback_reply` extends the cache.
+    ///
+    /// Row mapping (with viewer offset `N`, live screen `rows` tall):
+    /// viewer row `k` corresponds to grid line `k - N`. Non-negative
+    /// lines come from `live.viewport[line]`; negative lines
+    /// (`-1`, `-2`, …) come from the scrollback cache at daemon
+    /// offsets `1`, `2`, … respectively. Top of viewer = oldest row
+    /// in window; bottom of viewer = `rows - 1 - N` lines above the
+    /// live bottom.
+    fn compose_scrolled_snapshot(&self, live: &ProtoGridSnapshot) -> ProtoGridSnapshot {
+        let rows = live.rows as usize;
+        let offset = self.viewer_scroll_offset as i64;
+        let mut viewport = Vec::with_capacity(rows);
+        for k in 0..rows {
+            let line = k as i64 - offset;
+            let row = if line >= 0 {
+                live
+                    .viewport
+                    .get(line as usize)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                let daemon_offset = (-line) as u32;
+                self.scrollback_cache
+                    .get(&daemon_offset)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            viewport.push(row);
+        }
+        // Hide the cursor when the viewer is scrolled off the live
+        // bottom — typical terminal UX (xterm, kitty, alacritty all
+        // do this), and avoids painting a stale caret position over
+        // historical content.
+        let mut cursor = live.cursor;
+        cursor.visible = false;
+        ProtoGridSnapshot {
+            cols: live.cols,
+            rows: live.rows,
+            viewport,
+            backbuffer: Vec::new(),
+            cursor,
+            mode: live.mode,
+            scroll_offset: self.viewer_scroll_offset,
+            history_lines: live.history_lines,
+        }
+    }
+
+    /// The current viewer scrollback offset. `0` = viewing the live
+    /// screen.
+    #[allow(dead_code)]
+    pub fn viewer_scroll_offset(&self) -> u32 {
+        self.viewer_scroll_offset
+    }
+
+    /// Adjust the viewer scroll offset by `delta` lines (positive =
+    /// scroll up into history, negative = scroll back down toward the
+    /// live bottom). Clamps to `[0, history_lines]`. Returns `true`
+    /// when the offset moved.
+    pub fn viewer_scroll_lines(&mut self, delta: i32) -> bool {
+        if delta == 0 {
+            return false;
+        }
+        let current = self.viewer_scroll_offset as i64;
+        let max = self.history_lines as i64;
+        let next = (current + delta as i64).clamp(0, max) as u32;
+        if next == self.viewer_scroll_offset {
+            return false;
+        }
+        self.viewer_scroll_offset = next;
+        self.recompute_cached_snapshot();
+        true
+    }
+
+    /// Scroll the viewer to a specific absolute offset (clamped).
+    /// Returns `true` when the offset moved.
+    pub fn viewer_set_scroll_offset(&mut self, offset: u32) -> bool {
+        let next = offset.min(self.history_lines);
+        if next == self.viewer_scroll_offset {
+            return false;
+        }
+        self.viewer_scroll_offset = next;
+        self.recompute_cached_snapshot();
+        true
+    }
+
+    /// Compute the smallest contiguous scrollback range the viewer is
+    /// missing for the current scroll offset, or `None` when no fetch
+    /// is needed (cache covers the visible window, or viewer is on
+    /// the live bottom). Caller dispatches
+    /// `Control::TerminalReadScrollback` with the returned range and
+    /// feeds the reply through `apply_scrollback_reply`.
+    pub fn missing_scrollback_window(&self) -> Option<daemon_proto::ScrollbackRange> {
+        if self.viewer_scroll_offset == 0 {
+            return None;
+        }
+        let rows = self
+            .live_snapshot
+            .as_ref()
+            .map(|s| s.rows as u32)
+            .unwrap_or(self.size.rows as u32);
+        if rows == 0 {
+            return None;
+        }
+        // Scrollback rows visible at the current offset have daemon
+        // offsets `[1..=offset]` when offset < rows (top portion is
+        // the rest of live). When offset >= rows, they're
+        // `[offset - rows + 1 ..= offset]`. Deduplicate by walking
+        // the closed range and finding the first/last missing entry.
+        let lo = if self.viewer_scroll_offset >= rows {
+            self.viewer_scroll_offset - (rows - 1)
+        } else {
+            1
+        };
+        let hi = self.viewer_scroll_offset;
+        if lo > hi {
+            return None;
+        }
+        let mut first_missing: Option<u32> = None;
+        let mut last_missing: Option<u32> = None;
+        for s in lo..=hi {
+            if !self.scrollback_cache.contains_key(&s) {
+                first_missing.get_or_insert(s);
+                last_missing = Some(s);
+            }
+        }
+        let (start, end) = (first_missing?, last_missing?);
+        Some(daemon_proto::ScrollbackRange {
+            start,
+            count: end - start + 1,
+        })
+    }
+
+    /// Merge a `Control::TerminalReadScrollback` reply into the
+    /// viewer-side cache and re-compose the visible surface if the
+    /// new rows fall inside the current scroll window.
+    pub fn apply_scrollback_reply(&mut self, reply: &daemon_proto::TerminalScrollbackReply) {
+        let actual = reply.range_actual;
+        // The reply is oldest-first relative to the requested range:
+        // index 0 -> daemon offset `actual.start`, index 1 -> `start + 1`, …
+        for (i, row) in reply.rows.iter().enumerate() {
+            let key = actual.start + i as u32;
+            // Skip start=0 — that's the topmost live row (already in
+            // `live_snapshot.viewport[0]`). Caching it would just
+            // duplicate live state and risk drifting out of sync
+            // when the next frame ingests.
+            if key == 0 {
+                continue;
+            }
+            self.scrollback_cache.insert(key, row.clone());
+        }
+        if self.viewer_scroll_offset > 0 {
+            self.recompute_cached_snapshot();
+        }
     }
 
     /// Force the next snapshot to rebuild even if the terminal grid has not
@@ -488,47 +713,39 @@ impl LiveTerminalRuntime {
         search_scrollback_in_term(&self.term, query)
     }
 
-    /// Adjust `display_offset` so the given match lies near the vertical
-    /// middle of the viewport. No-op if the match is already visible
-    /// without scrolling.
+    /// Adjust the viewer scroll offset so the given match lies near
+    /// the vertical middle of the viewport. No-op if the match is
+    /// already visible without scrolling. Returns `true` when the
+    /// offset changed.
     pub fn scroll_to_match(&mut self, target: &TerminalScrollbackMatch) -> bool {
-        let grid = self.term.grid();
-        let screen_lines = grid.screen_lines() as i32;
-        let history_size = grid.history_size() as i32;
-        let current = grid.display_offset() as i32;
-        // Viewport with offset D shows grid lines [-D - screen_lines + 1 ..= -D].
-        // The match at row R inside the viewport satisfies:
-        //   R = target.line + screen_lines - 1 + D
-        // so to land R = screen_lines / 2 (vertical middle):
-        //   D = screen_lines/2 - target.line - screen_lines + 1
-        let top = -current - screen_lines + 1;
-        let bot = -current;
+        let screen_lines = self.screen_lines() as i32;
+        if screen_lines == 0 {
+            return false;
+        }
+        let history = self.history_lines as i32;
+        let current = self.viewer_scroll_offset as i32;
+        // Visible lines at offset `current` span `[-current, rows - 1 - current]`
+        // (matches the alacritty `display_offset` math the legacy
+        // implementation used). Skip the scroll if the match is
+        // already on screen.
+        let top = -current;
+        let bot = (screen_lines - 1) - current;
         if target.line >= top && target.line <= bot {
             return false;
         }
-        let centered = (screen_lines / 2) - target.line - screen_lines + 1;
-        let target_offset = centered.clamp(0, history_size);
-        let delta = target_offset - current;
-        if delta == 0 {
-            return false;
-        }
-        self.term.scroll_display(Scroll::Delta(delta));
-        self.dirty = true;
-        true
+        // Land the match at viewer row `screen_lines / 2`. Solving
+        // `target.line = (screen_lines / 2) - offset` gives:
+        let centered = (screen_lines / 2) - target.line;
+        let target_offset = centered.clamp(0, history);
+        self.viewer_set_scroll_offset(target_offset as u32)
     }
 
+    /// Move the viewer's scroll offset by `lines` (positive = scroll
+    /// up into history). Daemon-canonical replacement for the
+    /// legacy `term.scroll_display(Scroll::Delta)`. Returns `true`
+    /// when the offset moved.
     pub fn scroll_display(&mut self, lines: i32) -> bool {
-        if lines == 0 {
-            return false;
-        }
-
-        let old_display_offset = self.term.grid().display_offset();
-        self.term.scroll_display(Scroll::Delta(lines));
-        let changed = self.term.grid().display_offset() != old_display_offset;
-        if changed {
-            self.dirty = true;
-        }
-        changed
+        self.viewer_scroll_lines(lines)
     }
 
     pub fn kill(&mut self) {
@@ -1554,6 +1771,181 @@ mod tests {
             "row 1 starts with 'there', got {:?}",
             surface.lines[1].text
         );
+    }
+
+    /// Helper: ingest a `Full` frame for a tiny viewer-only runtime.
+    fn ingest_lines(
+        runtime: &mut LiveTerminalRuntime,
+        cols: u16,
+        rows: u16,
+        lines: &[&str],
+        history_lines: u32,
+    ) {
+        let mut snapshot = proto_snapshot_from_lines(cols, rows, lines);
+        snapshot.history_lines = history_lines;
+        let frame = TerminalFrame::Full {
+            seq: 1,
+            snapshot: std::sync::Arc::new(snapshot),
+        };
+        runtime.ingest_frame(&frame);
+    }
+
+    fn proto_row_from_text(text: &str, cols: u16) -> daemon_proto::GridRow {
+        use daemon_proto::{GridCell, GridRow};
+        let cells: Vec<GridCell> = text
+            .chars()
+            .take(cols as usize)
+            .map(|c| GridCell {
+                ch: c,
+                ..GridCell::default()
+            })
+            .collect();
+        GridRow { cells }
+    }
+
+    #[test]
+    fn viewer_scroll_lines_clamps_to_history() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        // No frame yet — nothing to scroll.
+        assert!(!runtime.viewer_scroll_lines(5));
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
+
+        ingest_lines(&mut runtime, 8, 2, &["top", "bot"], 3);
+
+        // Scroll up two lines is allowed (history is 3).
+        assert!(runtime.viewer_scroll_lines(2));
+        assert_eq!(runtime.viewer_scroll_offset(), 2);
+
+        // A third "up" is allowed (still <= 3); a fourth gets clamped.
+        assert!(runtime.viewer_scroll_lines(1));
+        assert_eq!(runtime.viewer_scroll_offset(), 3);
+        assert!(!runtime.viewer_scroll_lines(1));
+        assert_eq!(runtime.viewer_scroll_offset(), 3);
+
+        // Scroll back down past zero clamps at zero.
+        assert!(runtime.viewer_scroll_lines(-10));
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
+    }
+
+    #[test]
+    fn missing_scrollback_window_reports_visible_uncached_rows() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["top", "bot"], 5);
+
+        // No scroll — nothing missing.
+        assert!(runtime.missing_scrollback_window().is_none());
+
+        // Scroll up 1: only daemon-offset 1 is visible (the rest of
+        // the viewport stays in live).
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime.missing_scrollback_window().expect("window");
+        assert_eq!(win.start, 1);
+        assert_eq!(win.count, 1);
+
+        // Scroll up 4 (offset = 5 = history_lines): visible scrollback
+        // covers offsets [4, 5] (rows=2 viewport, top row at line=-5,
+        // bottom row at line=-4). lo = offset - rows + 1 = 4, hi = 5.
+        assert!(runtime.viewer_scroll_lines(4));
+        let win = runtime.missing_scrollback_window().expect("window");
+        assert_eq!(win.start, 4);
+        assert_eq!(win.count, 2);
+    }
+
+    #[test]
+    fn apply_scrollback_reply_composes_visible_rows() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 3,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 3, &["liveA", "liveB", "liveC"], 5);
+
+        // Scroll up 2: viewer rows top-to-bottom map to grid lines
+        // [-2, -1, 0]. So the top two rows come from scrollback at
+        // daemon offsets 2 and 1; the bottom row is liveA.
+        assert!(runtime.viewer_scroll_lines(2));
+
+        // Before the reply lands, the scrollback rows render blank
+        // (cache empty) but the live row anchored at the bottom still
+        // shows.
+        let surface = runtime.snapshot();
+        assert_eq!(surface.lines.len(), 3);
+        // surface.lines[2] is the bottom row — liveA (line index 0
+        // in live.viewport, the topmost live row).
+        assert!(
+            surface.lines[2].text.starts_with("liveA"),
+            "bottom row from live: got {:?}",
+            surface.lines[2].text
+        );
+
+        // Reply with rows for daemon offsets [1, 2]: "hist1" and "hist2".
+        let reply = TerminalScrollbackReply {
+            rows: vec![
+                proto_row_from_text("hist1", 8),
+                proto_row_from_text("hist2", 8),
+            ],
+            range_actual: ScrollbackRange { start: 1, count: 2 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        let surface = runtime.snapshot();
+        // viewer row 0 = line -2 = scrollback offset 2 = "hist2".
+        assert!(
+            surface.lines[0].text.starts_with("hist2"),
+            "top row from oldest scrollback: got {:?}",
+            surface.lines[0].text
+        );
+        // viewer row 1 = line -1 = scrollback offset 1 = "hist1".
+        assert!(
+            surface.lines[1].text.starts_with("hist1"),
+            "middle row from newer scrollback: got {:?}",
+            surface.lines[1].text
+        );
+        // viewer row 2 still = liveA.
+        assert!(
+            surface.lines[2].text.starts_with("liveA"),
+            "bottom row stays on live top: got {:?}",
+            surface.lines[2].text
+        );
+        // Cursor hidden when scrolled off the live bottom.
+        assert!(
+            surface.cursor.is_none(),
+            "cursor hidden during scrollback view"
+        );
+    }
+
+    #[test]
+    fn ingest_clamps_viewer_offset_when_history_shrinks() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 10);
+        assert!(runtime.viewer_scroll_lines(7));
+        assert_eq!(runtime.viewer_scroll_offset(), 7);
+
+        // Daemon clears scrollback (e.g. `clear` command). New
+        // history_lines = 0; viewer offset must clamp.
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 0);
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
     }
 
     #[test]
