@@ -1223,12 +1223,20 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                 Err(error) => return Err(error),
             };
             let process_id = outcome.process_id;
+            let writer = outcome.writer.clone();
 
             // Install the task. If the registry has dropped (app
             // is shutting down), drop the outcome on the floor;
             // its Drop will tear down the spawned child.
             with_registry_state(&inner, |state| {
-                state.term_tasks.insert(key, outcome.task);
+                state.term_tasks.insert(key.clone(), outcome.task);
+                // Phase 5d-iii: route input via the existing
+                // `tab_input` path which reads from
+                // `state.writers`. Storing the master-PTY writer
+                // here lets typed bytes / paste / mouse-protocol
+                // reports reach the daemon-spawned PTY without
+                // a Term-task command round-trip.
+                state.writers.insert(key, writer);
                 // Hold the SpawnedChild + masterPty etc. by
                 // leaking from the outcome — PTY lifetime is now
                 // tied to forget_tab dropping the Term task. The

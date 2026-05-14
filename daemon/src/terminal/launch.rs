@@ -65,6 +65,13 @@ pub struct DaemonSpawnedTerminal {
     pub task: TerminalTaskHandle,
     pub child: SpawnedChild,
     pub process_id: Option<u32>,
+    /// Master-PTY writer. The desktop registry stores this in
+    /// `RegistryState::writers` so the existing `tab_input` path
+    /// (registry.writers + block_in_place + write_all) routes
+    /// keystrokes / pastes / mouse-protocol bytes to the
+    /// daemon-spawned PTY without a Term-task command round-trip.
+    /// Phase 5d-iii of design 01 (#158).
+    pub writer: std::sync::Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>>,
 }
 
 /// Owns the child's lifecycle. Drop the [`SpawnedChild`] to abort
@@ -118,11 +125,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
         .master
         .try_clone_reader()
         .context("daemon spawn: clone pty reader")?;
-    // The writer is owned by the master (Phase 6 wires it for
-    // `TerminalCommand::Input` once that variant lands). Drop it on
-    // the floor for now; Term-task input arrives through the
-    // command channel instead.
-    let _writer = pair
+    let writer = pair
         .master
         .take_writer()
         .context("daemon spawn: pty writer")?;
@@ -161,6 +164,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
             killer: Some(killer),
         },
         process_id,
+        writer: std::sync::Arc::new(std::sync::Mutex::new(writer)),
     })
 }
 

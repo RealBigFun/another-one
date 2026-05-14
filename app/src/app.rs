@@ -8528,6 +8528,24 @@ impl AnotherOneApp {
             self.pending_post_launch_input.insert(key.clone(), bytes);
             return false;
         };
+        // Phase 5d-iii (design 01 / #158): viewer-only runtimes
+        // (daemon-spawned PTY) have no local writer; route input
+        // via Session::push_data — the daemon's tab_input lands
+        // bytes on the master-PTY writer the registry stored in
+        // `state.writers` during daemon_spawn_terminal.
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            let payload = bytes.clone();
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("post-launch session push_data failed: {err}");
+                }
+            });
+            self.last_terminal_activity = Instant::now();
+            return true;
+        }
         let wrote = runtime.write_input(&bytes).is_ok();
         if wrote {
             self.last_terminal_activity = Instant::now();
@@ -9073,6 +9091,21 @@ impl AnotherOneApp {
                 "failed to forward mouse event to terminal — falling back to local handling"
             );
             return false;
+        }
+        // Phase 5d-iii (design 01 / #158): viewer-only runtimes
+        // (daemon-spawned PTY) accept write_input but it's a
+        // no-op. Route the mouse-protocol payload through
+        // Session::push_data too so the daemon's tab_input lands
+        // it on the master-PTY writer.
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("mouse-event session push_data failed: {err}");
+                }
+            });
         }
         true
     }
