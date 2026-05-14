@@ -13,5 +13,7 @@
 
 pub mod task;
 pub mod frame;
+pub mod pacer;
 
+pub use pacer::{spawn_pacer, PacerConfig, PacerHandle};
 pub use task::{spawn_terminal_task, TerminalCommand, TerminalSideEffect, TerminalTaskHandle};
