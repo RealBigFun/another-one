@@ -24,7 +24,6 @@ futures-core = "0.3"
 # stays in lockstep — every `Control` / `WorkerReply` change must land
 # on both sides at once.
 iroh = "0.98.1"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `rt-multi-thread` is required: iroh's UDP sockets and internal
 # actors only run under tokio. `io-util` provides `AsyncWriteExt` /
