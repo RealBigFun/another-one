@@ -123,6 +123,16 @@ pub enum SessionEvent {
     /// stream with `(section_id, tab_id)` so a client attached to
     /// multiple tabs over one session can demultiplex without a
     /// separate channel per tab.
+    ///
+    /// **Deprecated:** snapshot-aware viewers consume
+    /// [`SessionEvent::TerminalFrame`] instead. The byte-stream
+    /// path stays load-bearing for in-process MCP `tab_output`
+    /// while the renderer cutover lands (Phase 5b–5d). See
+    /// `docs/designs/01-daemon-canonical-terminal.md`.
+    #[deprecated(
+        since = "0.2.2",
+        note = "use SessionEvent::TerminalFrame; design 01 / #158."
+    )]
     PtyBytes {
         section_id: String,
         tab_id: String,

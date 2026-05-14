@@ -82,6 +82,14 @@ pub enum WarmTerminalLaunchReply {
     },
 }
 
+/// **Deprecated** (design 01 / #158): PTY spawn moves to the daemon
+/// in Phase 4. `Control::LaunchTab` becomes the real spawn path;
+/// this function retires once the desktop snapshot cutover lands
+/// (Phase 5d).
+#[deprecated(
+    since = "0.2.2",
+    note = "PTY spawn moves to daemon::terminal::launch in Phase 4 (design 01 / #158)."
+)]
 pub fn spawn_terminal_launch(
     sender: mpsc::SyncSender<TerminalLaunchReply>,
     key: TerminalRuntimeKey,
@@ -110,6 +118,12 @@ pub fn spawn_terminal_launch(
     });
 }
 
+/// **Deprecated** (design 01 / #158): see [`spawn_terminal_launch`].
+/// Warm launch state machine moves to the daemon in Phase 6.
+#[deprecated(
+    since = "0.2.2",
+    note = "warm launch state machine moves to daemon in Phase 6 (design 01 / #158)."
+)]
 pub fn spawn_warm_terminal_launch(
     sender: mpsc::SyncSender<WarmTerminalLaunchReply>,
     launch_id: u64,

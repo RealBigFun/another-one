@@ -233,12 +233,38 @@ pub enum Control {
     /// [`TY_DATA`] frames until either the session closes or
     /// another `AttachTab` / `DetachTab` arrives — at most one
     /// attachment per session.
+    ///
+    /// **Deprecated:** snapshot-aware viewers should use
+    /// [`Control::TerminalSubscribe`] instead. The byte-stream
+    /// path stays load-bearing for in-process MCP `tab_output`
+    /// consumers; once that path is split off (post-Phase 5b),
+    /// this verb is removed. See
+    /// `docs/designs/01-daemon-canonical-terminal.md`.
+    #[deprecated(
+        since = "0.2.2",
+        note = "use Control::TerminalSubscribe; design 01 / #158. Removed in Phase 5b cutover."
+    )]
     AttachTab { section_id: String, tab_id: String },
     /// Stop forwarding PTY bytes for the currently-attached tab.
     /// Idempotent if nothing is attached.
+    ///
+    /// **Deprecated:** see [`Control::AttachTab`]; pair retired
+    /// together via [`Control::TerminalUnsubscribe`].
+    #[deprecated(
+        since = "0.2.2",
+        note = "use Control::TerminalUnsubscribe; design 01 / #158."
+    )]
     DetachTab,
     /// Resize the currently-attached tab's PTY. Silently no-ops
     /// when nothing is attached.
+    ///
+    /// **Deprecated:** snapshot-aware viewers express size hints
+    /// through their subscription; resize for the byte-stream
+    /// path retires alongside [`Control::AttachTab`].
+    #[deprecated(
+        since = "0.2.2",
+        note = "size hints belong on TerminalSubscribe; design 01 / #158. Removed in Phase 5b cutover."
+    )]
     TabResize { cols: u16, rows: u16 },
     /// Refresh the daemon's liveness tracking for this viewer.
     /// Clients send one periodically (every few seconds) while
@@ -943,8 +969,20 @@ pub enum WorkerReply {
     /// registry; `DetachTab`/`TabResize` — state updates the next
     /// pull observes). Each is a unit variant; clients await
     /// `Session::call` to avoid leaking a pending_calls entry.
+    #[deprecated(
+        since = "0.2.2",
+        note = "pair of Control::AttachTab; use TerminalSubscribeAck. Design 01 / #158."
+    )]
     AttachTabAck,
+    #[deprecated(
+        since = "0.2.2",
+        note = "pair of Control::DetachTab; use TerminalUnsubscribeAck. Design 01 / #158."
+    )]
     DetachTabAck,
+    #[deprecated(
+        since = "0.2.2",
+        note = "pair of Control::TabResize; subscriptions carry size hints. Design 01 / #158."
+    )]
     TabResizeAck,
     HeartbeatAck,
     LaunchTabAck,
@@ -1011,6 +1049,16 @@ pub enum WorkerReply {
     ///
     /// `reason` is a short human-readable string for logs/toast;
     /// clients should not parse it. See #53.
+    ///
+    /// **Deprecated:** AttachDropped fires on the byte-stream path
+    /// only. Snapshot-aware viewers recover from a `seq` gap by
+    /// requesting a fresh `Full`; nothing equivalent fires for
+    /// snapshot subscribers. Retired alongside
+    /// [`Control::AttachTab`].
+    #[deprecated(
+        since = "0.2.2",
+        note = "byte-stream-only signal; snapshot viewers recover via seq gap. Design 01 / #158."
+    )]
     AttachDropped {
         section_id: String,
         tab_id: String,
@@ -2655,6 +2703,7 @@ mod wire_roundtrip_tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn worker_reply_attach_dropped_roundtrips() {
         // Recently added (#53). Pin the on-wire shape so a future
         // rename of the fields doesn't silently break mobile

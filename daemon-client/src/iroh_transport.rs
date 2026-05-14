@@ -3,6 +3,16 @@
 //! programmed against the abstract API see a network-stack-agnostic
 //! surface.
 //!
+//! **Legacy bridge** (design 01 / #158): the bridge task forwards
+//! the legacy session's `next_incoming_bytes` channel into
+//! `SessionEvent::PtyBytes`. Phase 5b adds a parallel demux for
+//! `WorkerReply::TerminalFrame` pushes into
+//! `SessionEvent::TerminalFrame`; this module retires once the
+//! desktop cutover lands. Module-level `#![allow(deprecated)]`
+//! suppresses warnings on the byte-stream path it intentionally
+//! still serves.
+#![allow(deprecated)]
+//!
 //! ### Scope
 //!
 //! Concurrent calls are correlated by `request_id` (via the legacy

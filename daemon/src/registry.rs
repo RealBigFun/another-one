@@ -365,6 +365,42 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     /// can't launch (e.g. the sandbox binary's single-shell faker).
     fn launch_tab(&self, _section_id: &str, _tab_id: &str) {}
 
+    /// Subscribe to a per-tab `daemon_proto::TerminalFrame` watch
+    /// for `(section_id, tab_id)`. Returns `None` when no Term task
+    /// exists for that key (PTY not yet launched, tab unknown, or
+    /// the registry doesn't host Term tasks at all).
+    ///
+    /// Phase 3 of `docs/designs/01-daemon-canonical-terminal.md`:
+    /// the dispatch arm for `Control::TerminalSubscribe` calls this
+    /// to acquire a watch receiver, then spawns a per-viewer pacer
+    /// against it. Phase 4 wires the production registry; for now
+    /// the default impl returns `None` (no Term task).
+    fn subscribe_terminal_frames(
+        &self,
+        _section_id: &str,
+        _tab_id: &str,
+    ) -> Option<
+        tokio::sync::watch::Receiver<
+            Option<std::sync::Arc<daemon_proto::TerminalFrame>>,
+        >,
+    > {
+        None
+    }
+
+    /// Subscribe to a per-tab side-channel of bell / title /
+    /// reset-title events. Same `None`-when-absent semantics as
+    /// [`subscribe_terminal_frames`]. Phase 3c uses this to fan
+    /// out [`crate::terminal::TerminalSideEffect`] events as
+    /// daemon-pushed `WorkerReply` variants.
+    fn subscribe_terminal_side_effects(
+        &self,
+        _section_id: &str,
+        _tab_id: &str,
+    ) -> Option<tokio::sync::broadcast::Receiver<crate::terminal::TerminalSideEffect>>
+    {
+        None
+    }
+
     // ── Project mutation (another-one-ojm.2) ──────────────────────
 
     /// Add an on-disk project at `path` to the daemon's store.

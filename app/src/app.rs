@@ -64,6 +64,7 @@ use crate::project_store::{
     ProjectGitState, ProjectStore, Task, TaskKind, TaskWorktreeBranchMode,
 };
 use crate::task_launcher::{PendingTaskLaunch, TaskLaunchRequest};
+#[allow(deprecated)]
 use crate::terminal_launch::{
     spawn_terminal_launch, spawn_warm_terminal_launch, TerminalLaunchReply, WarmTerminalLaunchReply,
 };
@@ -5288,6 +5289,9 @@ impl AnotherOneApp {
         format!("{status}\n\nRecent terminal output:\n{recent_output}")
     }
 
+    /// Wrap `core::terminal_launch::spawn_terminal_launch` for the
+    /// retry-after-claude-restore path. Legacy: see Phase 4 (design 01).
+    #[allow(deprecated)]
     fn maybe_retry_claude_restore(
         &mut self,
         key: &TerminalRuntimeKey,
@@ -5411,6 +5415,9 @@ impl AnotherOneApp {
             })
     }
 
+    /// Pre-warmed terminal launch (warm launch state machine).
+    /// Legacy: moves to the daemon in Phase 6 (design 01 / #158).
+    #[allow(deprecated)]
     fn start_prewarmed_terminal_launch(
         &mut self,
         cwd: std::path::PathBuf,
@@ -5631,6 +5638,7 @@ impl AnotherOneApp {
         true
     }
 
+    #[allow(deprecated)] // Phase 4 (design 01 / #158): PTY spawn moves to daemon.
     fn ensure_active_terminal_runtime(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(request) = self.active_terminal_request(window, cx) else {
             return;
@@ -5906,6 +5914,15 @@ impl AnotherOneApp {
     /// claude-restore probe when the runtime hasn't materialised
     /// yet) but keyed by the wire `(section_id, tab_id)` strings the
     /// session emits rather than a local `TerminalRuntimeKey`.
+    ///
+    /// **Legacy** (design 01 / #158): the `PtyBytes` and
+    /// `AttachDropped` arms both ride the byte-stream path that
+    /// retires in Phase 5b. The `TerminalFrame` arm is the
+    /// snapshot replacement; ingestion (`LiveTerminalRuntime::ingest_frame`)
+    /// lands in Phase 5a. `#[allow(deprecated)]` here is scoped to
+    /// the function so new code added inside it still surfaces
+    /// fresh deprecations.
+    #[allow(deprecated)]
     fn drain_session_events(&mut self, cx: &mut Context<Self>) -> bool {
         let mut updated = false;
         let mut output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
@@ -6074,6 +6091,12 @@ impl AnotherOneApp {
         updated
     }
 
+    /// Drain `TerminalLaunchReply`s from the GPUI-side launch
+    /// fulfillment path.
+    ///
+    /// **Legacy** (design 01 / #158): retires in Phase 5d when the
+    /// daemon owns spawn + parsing. Module-scoped allow until then.
+    #[allow(deprecated)]
     fn drain_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
         // RAII guard: increments drain count, times the body, and
         // bumps the watchdog heartbeat on drop. See issue #125 —
@@ -6271,6 +6294,9 @@ impl AnotherOneApp {
         updated
     }
 
+    /// Warm-launch fulfillment drain. Legacy: Phase 6 retires this
+    /// alongside `spawn_warm_terminal_launch` (design 01 / #158).
+    #[allow(deprecated)]
     fn drain_warm_terminal_launch_replies(&mut self, cx: &mut Context<Self>) -> bool {
         // Same guard as the hot drain above — warm-launch traffic
         // lands in its own bounded channel but shares the GPUI main
@@ -7444,6 +7470,9 @@ impl AnotherOneApp {
     /// mobile clients connecting in via iroh; in principle MCP
     /// could also call this to "wake" a persisted-but-cold tab,
     /// though MCP today expects to drive its own tabs.
+    /// Client-side AttachTab handler. Legacy: byte-stream path,
+    /// Phase 5b cutover replaces with `Control::TerminalSubscribe`.
+    #[allow(deprecated)]
     pub(crate) fn client_attach_tab(
         &mut self,
         req: AttachTabRequest,
@@ -8140,6 +8169,9 @@ impl AnotherOneApp {
         }
     }
 
+    /// Spawn a project action's terminal. Legacy: PTY spawn moves
+    /// to the daemon in Phase 4 (design 01 / #158).
+    #[allow(deprecated)]
     fn run_project_action_in_section(
         &mut self,
         section_id: &SectionId,
@@ -16673,6 +16705,12 @@ impl AnotherOneApp {
     /// `project_store` snapshot wholesale; the existing sidebar
     /// renderer picks the data up via the same code path desktop
     /// uses, so there is no separate "remote" component.
+    /// Drain unsolicited `WorkerReply` pushes from the legacy iroh
+    /// session bridge.
+    ///
+    /// **Legacy** (design 01 / #158): the abstract `SessionEvent`
+    /// stream replaces this in Phase 5b.
+    #[allow(deprecated)]
     pub fn drain_remote_worker_replies(&mut self, cx: &mut Context<Self>) -> bool {
         let replies = crate::iroh_client::drain_worker_replies();
         if replies.is_empty() {

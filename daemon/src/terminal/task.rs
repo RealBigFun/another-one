@@ -606,7 +606,7 @@ mod tests {
     #[tokio::test]
     async fn watch_receiver_observes_frame_emission() {
         let handle = spawn_terminal_task(small_size());
-        let mut rx = handle.subscribe();
+        let rx = handle.subscribe();
 
         // Initial value is `None` (no frames yet).
         assert!(rx.borrow().is_none());

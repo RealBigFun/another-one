@@ -3,6 +3,14 @@
 //! with `Control` and `WorkerReply` JSON-encoded as the payload of
 //! `TY_CONTROL` / `TY_WORKER_REPLY` frames respectively.
 //!
+//! **Legacy byte-stream events** (design 01 / #158): this module
+//! still emits `SessionEvent::PtyBytes` for tagged TY_DATA frames
+//! — the path renderers consume today. Phase 5b adds the snapshot
+//! event lift; this module follows once the renderer cutover
+//! retires the byte-stream subscription. Module-level
+//! `#![allow(deprecated)]` keeps the build warning-free until then.
+#![allow(deprecated)]
+//!
 //! ## Why UDS
 //!
 //! Desktop ↔ MCP shim today is bespoke wiring under

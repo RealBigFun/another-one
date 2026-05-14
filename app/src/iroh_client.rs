@@ -30,6 +30,16 @@ fn worker_reply_queue() -> &'static Mutex<Vec<daemon_proto::WorkerReply>> {
 
 /// Take all queued worker replies. Called by `AnotherOneApp` on the
 /// render tick; the GPUI side never blocks waiting for replies.
+///
+/// **Deprecated** (design 01 / #158): unsolicited push replies
+/// (today: `WorkerReply::TerminalFrame`, `ProjectList`, etc.) move
+/// onto the abstract `SessionEvent` stream in Phase 5b. This
+/// global queue retires alongside `app::iroh_client`'s legacy
+/// session bridge.
+#[deprecated(
+    since = "0.2.2",
+    note = "push replies ride SessionEvent in Phase 5b; design 01 / #158."
+)]
 pub fn drain_worker_replies() -> Vec<daemon_proto::WorkerReply> {
     worker_reply_queue()
         .lock()

@@ -29,6 +29,7 @@
 //! the race where `AbortHandle::abort()` returns before the spawned
 //! task has actually been cancelled.
 
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
@@ -37,6 +38,8 @@ use std::sync::{
 use daemon_proto::{Control, ErrKind, WorkerReply};
 use daemon_transport::{ServerSession, TransportError};
 use tokio::sync::broadcast;
+
+use crate::terminal::{spawn_pacer, PacerConfig, PacerHandle};
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
@@ -107,6 +110,56 @@ impl AttachState {
     }
 }
 
+/// Per-session bookkeeping for active `Control::TerminalSubscribe`
+/// pacers. One [`PacerHandle`] per `(section_id, tab_id)` the viewer
+/// is watching; dropping the struct (session disconnect) drops every
+/// pacer, which aborts each task. Phase 3b of design 01 (#158).
+///
+/// Deliberately separate from [`AttachState`]: `AttachState` is
+/// limited to one byte-stream attach per session, while a
+/// snapshot-aware viewer can subscribe to several tabs at once
+/// (sidebar previews, split panes, etc.).
+#[derive(Default)]
+pub struct TerminalSubscriptions {
+    inner: Mutex<HashMap<(String, String), PacerHandle>>,
+}
+
+impl TerminalSubscriptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Install a pacer for `(section_id, tab_id)`. If a subscription
+    /// already exists for that key on this session, the existing
+    /// pacer is aborted and replaced.
+    fn insert(&self, section_id: String, tab_id: String, pacer: PacerHandle) {
+        let mut inner = self.inner.lock().expect("terminal subs poisoned");
+        // Old handle drops here — PacerHandle::Drop aborts the task,
+        // so a duplicate subscribe replaces atomically.
+        inner.insert((section_id, tab_id), pacer);
+    }
+
+    /// Remove the pacer for `(section_id, tab_id)` if any. Returns
+    /// `true` when a subscription was present (idempotent for
+    /// already-unsubscribed keys).
+    fn remove(&self, section_id: &str, tab_id: &str) -> bool {
+        let mut inner = self.inner.lock().expect("terminal subs poisoned");
+        inner
+            .remove(&(section_id.to_string(), tab_id.to_string()))
+            .is_some()
+    }
+
+    /// Number of active subscriptions on this session. Tests use it
+    /// to assert teardown.
+    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.inner
+            .lock()
+            .map(|inner| inner.len())
+            .unwrap_or(0)
+    }
+}
+
 /// Drive `session` against `registry` until the peer closes. Pulls
 /// verbs via [`ServerSession::next_call`], dispatches by variant,
 /// emits the matching reply via [`ServerSession::reply`].
@@ -133,6 +186,8 @@ pub async fn serve_session_with_attach(
 ) -> Result<(), TransportError> {
     let viewer_id = session.peer_id().to_string();
     let attach_for_loop = Arc::clone(&attach);
+    let subs = Arc::new(TerminalSubscriptions::new());
+    let subs_for_loop = Arc::clone(&subs);
 
     // Initial-projection push: fresh sessions need the current
     // registry state immediately, without waiting for a mutation
@@ -262,6 +317,7 @@ pub async fn serve_session_with_attach(
             session.clone(),
             attach_for_loop.as_ref(),
             attach_for_loop.clone(),
+            subs_for_loop.as_ref(),
             &viewer_id,
         )
         .await;
@@ -282,6 +338,10 @@ pub async fn serve_session_with_attach(
             registry.note_tab_output_observed(&viewer_id, &section_id, &tab_id);
         }
     }
+    // Drop the subscriptions struct: every PacerHandle inside aborts
+    // its task on drop, so the daemon never leaks a pacer past a
+    // disconnected viewer.
+    drop(subs);
     registry.viewer_disconnected(&viewer_id);
     result
 }
@@ -290,7 +350,14 @@ pub async fn serve_session_with_attach(
 /// the rare verbs that don't elicit a reply (`LaunchTab`,
 /// `Resize`/`TabResize`, `DetachTab`) — the
 /// caller skips `session.reply` for those.
+// `dispatch_call` and `handle_attach` route the legacy byte-stream
+// AttachTab/DetachTab/TabResize lifecycle. Those Control variants are
+// `#[deprecated]` per design 01 (#158); the byte-stream path stays
+// load-bearing for in-process MCP `tab_output` until the renderer
+// cutover lands (Phase 5b–5d), so dispatch keeps handling them
+// without the per-call deprecation noise.
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 async fn dispatch_call(
     ctrl: Control,
     registry: &dyn DaemonRegistry,
@@ -298,6 +365,7 @@ async fn dispatch_call(
     session_arc: Arc<dyn ServerSession>,
     attach: &AttachState,
     attach_arc: Arc<AttachState>,
+    subs: &TerminalSubscriptions,
     viewer_id: &str,
 ) -> Option<WorkerReply> {
     // The iroh transport gates every non-Hello verb on a
@@ -917,21 +985,59 @@ async fn dispatch_call(
 
         // ── Daemon-canonical Term (design 01) ──────────────────
         //
-        // Phase 1 stubs. Verb shapes are frozen on the wire (see
-        // `daemon-proto::Control`); the daemon-side Term task and
-        // pacer that fulfill them ship in Phase 2 and 3 of
-        // `docs/designs/01-daemon-canonical-terminal.md`. Until
-        // then every call returns `WorkerReply::Err {
-        // ErrKind::Internal }` so a viewer that races ahead of the
-        // implementation gets a deterministic failure rather than a
-        // timeout. Tracking: #158.
-        Control::TerminalSubscribe { .. }
-        | Control::TerminalUnsubscribe { .. }
-        | Control::TerminalReadScrollback { .. }
+        // ── Daemon-canonical Term: Phase 3b/3c ────────────────
+        Control::TerminalSubscribe {
+            section_id,
+            tab_id,
+            max_fps,
+            since_seq,
+        } => {
+            let frame_watch = match registry.subscribe_terminal_frames(&section_id, &tab_id) {
+                Some(rx) => rx,
+                None => {
+                    return Some(WorkerReply::Err {
+                        message: format!(
+                            "no terminal task for section_id={section_id} tab_id={tab_id} \
+                             (PTY may not be running yet; design 01 / #158)"
+                        ),
+                        kind: ErrKind::Internal,
+                    });
+                }
+            };
+            // Side-effect subscription is best-effort: a registry
+            // that hosts frames but not side-channels (or where
+            // the per-tab broadcast hasn't been wired yet) returns
+            // None and the pacer simply doesn't push bell/title.
+            let side_effects = registry.subscribe_terminal_side_effects(&section_id, &tab_id);
+            let pacer = spawn_pacer(
+                PacerConfig {
+                    viewer_id: viewer_id.to_string(),
+                    section_id: section_id.clone(),
+                    tab_id: tab_id.clone(),
+                    max_fps,
+                    since_seq,
+                },
+                frame_watch,
+                side_effects,
+                Arc::clone(&session_arc),
+            );
+            subs.insert(section_id, tab_id, pacer);
+            Some(WorkerReply::TerminalSubscribeAck)
+        }
+        Control::TerminalUnsubscribe {
+            section_id,
+            tab_id,
+        } => {
+            // Idempotent on the wire: an unknown (section, tab) is
+            // not an error — the viewer may have raced a tab close.
+            let _was_present = subs.remove(&section_id, &tab_id);
+            Some(WorkerReply::TerminalUnsubscribeAck)
+        }
+        Control::TerminalReadScrollback { .. }
         | Control::TerminalSearch { .. }
         | Control::TerminalInput { .. } => Some(WorkerReply::Err {
-            message: "terminal frame protocol not yet implemented; see docs/designs/01-daemon-canonical-terminal.md".into(),
-            kind: daemon_proto::ErrKind::Internal,
+            message: "terminal scrollback/search/input not yet implemented; see docs/designs/01-daemon-canonical-terminal.md (Phase 3+).".into(),
+            kind: ErrKind::Internal,
         }),
 
         // ── Legacy / no-reply / pre-handled ──────────────────────────
@@ -967,7 +1073,12 @@ async fn dispatch_call(
 /// got a receiver + replay buffer; `None` means the tab is launching
 /// (or doesn't exist) — we record the attach intent but defer
 /// installing a forwarder until the client retries.
+///
+/// **Legacy** (design 01 / #158): retired in Phase 5b once the
+/// desktop snapshot cutover lands. AttachTab/DetachTab keep working
+/// for the in-process MCP byte-stream consumer.
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 fn handle_attach(
     section_id: String,
     tab_id: String,
@@ -1125,13 +1236,13 @@ fn classify_shortcut_action(message: &str) -> ErrKind {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use daemon_proto::ProjectSummary;
     // `daemon_transport::in_memory` is deprecated
     // (see docs/designs/01-daemon-canonical-terminal.md); this
     // dispatch test still uses it until the migration lands.
-    #[allow(deprecated)]
     use daemon_transport::in_memory::pair;
     #[allow(unused_imports)]
     use daemon_transport::Session as _;
@@ -1262,6 +1373,337 @@ mod tests {
                 assert_eq!(message, "registry unavailable");
                 assert!(matches!(kind, ErrKind::Internal));
             }
+            other => panic!("expected Err, got {other:?}"),
+        }
+    }
+
+    /// Stub registry that owns Term task handles, mapping
+    /// `(section_id, tab_id)` -> task handle. Tests inject Term
+    /// tasks before subscribing so the dispatch arm can resolve
+    /// them through `subscribe_terminal_frames`. Phase 4 replaces
+    /// this with the production registry that hosts Term tasks
+    /// alongside the PTY itself.
+    struct TermRegistry {
+        tasks: Mutex<HashMap<(String, String), crate::terminal::TerminalTaskHandle>>,
+    }
+
+    impl TermRegistry {
+        fn new() -> Self {
+            Self {
+                tasks: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn install(
+            &self,
+            section_id: &str,
+            tab_id: &str,
+            handle: crate::terminal::TerminalTaskHandle,
+        ) {
+            self.tasks
+                .lock()
+                .unwrap()
+                .insert((section_id.to_string(), tab_id.to_string()), handle);
+        }
+
+        fn send(&self, section_id: &str, tab_id: &str, command: crate::terminal::TerminalCommand) {
+            let tasks = self.tasks.lock().unwrap();
+            let handle = tasks
+                .get(&(section_id.to_string(), tab_id.to_string()))
+                .expect("term task installed");
+            handle
+                .try_send(command)
+                .expect("inbox accepts command");
+        }
+    }
+
+    impl DaemonRegistry for TermRegistry {
+        fn health(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn list_projects(&self) -> Vec<ProjectSummary> {
+            Vec::new()
+        }
+        fn attach_tab(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Option<tokio::sync::broadcast::Receiver<Vec<u8>>> {
+            None
+        }
+        fn tab_input(&self, _: &str, _: &str, _: &[u8]) {}
+        fn tab_resize(&self, _: &str, _: &str, _: &str, _: u16, _: u16) {}
+        fn subscribe_terminal_frames(
+            &self,
+            section_id: &str,
+            tab_id: &str,
+        ) -> Option<
+            tokio::sync::watch::Receiver<
+                Option<Arc<daemon_proto::TerminalFrame>>,
+            >,
+        > {
+            self.tasks
+                .lock()
+                .unwrap()
+                .get(&(section_id.to_string(), tab_id.to_string()))
+                .map(|h| h.subscribe())
+        }
+        fn subscribe_terminal_side_effects(
+            &self,
+            section_id: &str,
+            tab_id: &str,
+        ) -> Option<tokio::sync::broadcast::Receiver<crate::terminal::TerminalSideEffect>>
+        {
+            self.tasks
+                .lock()
+                .unwrap()
+                .get(&(section_id.to_string(), tab_id.to_string()))
+                .map(|h| h.subscribe_side_effects())
+        }
+    }
+
+    /// Drain events on the client side until we observe a
+    /// `TerminalFrame` for the given (section, tab) or the
+    /// timeout elapses.
+    async fn await_terminal_frame(
+        client: &dyn daemon_transport::Session,
+        section_id: &str,
+        tab_id: &str,
+        deadline: std::time::Duration,
+    ) -> Option<daemon_proto::TerminalFrame> {
+        use futures_util::StreamExt;
+        let mut events = client.events();
+        let want_section = section_id.to_string();
+        let want_tab = tab_id.to_string();
+        let waiter = async move {
+            while let Some(event) = events.next().await {
+                if let daemon_transport::SessionEvent::TerminalFrame {
+                    section_id,
+                    tab_id,
+                    frame,
+                } = event
+                {
+                    if section_id == want_section && tab_id == want_tab {
+                        return Some(frame);
+                    }
+                }
+            }
+            None
+        };
+        tokio::time::timeout(deadline, waiter)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    #[tokio::test]
+    async fn terminal_subscribe_routes_frames_through_pacer() {
+        // Inject a Term task into a TermRegistry; subscribe via
+        // dispatch; observe frames on the client side after
+        // sending bytes through the Term task.
+        let registry = Arc::new(TermRegistry::new());
+        let term = crate::terminal::spawn_terminal_task(
+            another_one_core::terminal_types::TerminalGridSize {
+                cols: 10,
+                rows: 3,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+        );
+        registry.install("proj-a:section-1", "7", term);
+
+        let (server, client) = pair("test-viewer");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        tokio::spawn(serve_session(server_arc(server), registry_dyn));
+
+        let ack = client
+            .call(Control::TerminalSubscribe {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+                max_fps: 60,
+                since_seq: None,
+            })
+            .await
+            .expect("call");
+        assert!(matches!(ack, WorkerReply::TerminalSubscribeAck));
+
+        // Push some bytes through the installed Term task.
+        registry.send(
+            "proj-a:section-1",
+            "7",
+            crate::terminal::TerminalCommand::Bytes(b"hi".to_vec()),
+        );
+
+        let frame = await_terminal_frame(
+            &*client,
+            "proj-a:section-1",
+            "7",
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .expect("frame arrives");
+        match frame {
+            daemon_proto::TerminalFrame::Full { snapshot, .. } => {
+                assert_eq!(snapshot.viewport[0].cells[0].ch, 'h');
+                assert_eq!(snapshot.viewport[0].cells[1].ch, 'i');
+            }
+            _ => panic!("expected Full"),
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_unsubscribe_stops_pacer() {
+        let registry = Arc::new(TermRegistry::new());
+        let term = crate::terminal::spawn_terminal_task(
+            another_one_core::terminal_types::TerminalGridSize {
+                cols: 10,
+                rows: 3,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+        );
+        registry.install("proj-a:section-1", "7", term);
+
+        let (server, client) = pair("test-viewer");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        tokio::spawn(serve_session(server_arc(server), registry_dyn));
+
+        let ack = client
+            .call(Control::TerminalSubscribe {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+                max_fps: 60,
+                since_seq: None,
+            })
+            .await
+            .expect("call");
+        assert!(matches!(ack, WorkerReply::TerminalSubscribeAck));
+
+        // Drain the initial frame so the events stream is at a
+        // known offset.
+        registry.send(
+            "proj-a:section-1",
+            "7",
+            crate::terminal::TerminalCommand::Bytes(b"a".to_vec()),
+        );
+        let _initial = await_terminal_frame(
+            &*client,
+            "proj-a:section-1",
+            "7",
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .expect("initial frame");
+
+        let ack = client
+            .call(Control::TerminalUnsubscribe {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+            })
+            .await
+            .expect("call");
+        assert!(matches!(ack, WorkerReply::TerminalUnsubscribeAck));
+
+        // Push more bytes and confirm no frame arrives within a
+        // short window.
+        registry.send(
+            "proj-a:section-1",
+            "7",
+            crate::terminal::TerminalCommand::Bytes(b"b".to_vec()),
+        );
+        let nothing = await_terminal_frame(
+            &*client,
+            "proj-a:section-1",
+            "7",
+            std::time::Duration::from_millis(150),
+        )
+        .await;
+        assert!(
+            nothing.is_none(),
+            "no frame after unsubscribe; got {:?}",
+            nothing
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_subscribe_fans_bell_through_push_reply() {
+        // Bell on the Term task arrives as Push(TerminalBell) on
+        // every subscribed viewer.
+        use futures_util::StreamExt;
+        let registry = Arc::new(TermRegistry::new());
+        let term = crate::terminal::spawn_terminal_task(
+            another_one_core::terminal_types::TerminalGridSize {
+                cols: 10,
+                rows: 3,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+        );
+        registry.install("proj-a:section-1", "7", term);
+
+        let (server, client) = pair("test-viewer");
+        let registry_dyn: Arc<dyn DaemonRegistry> = registry.clone();
+        tokio::spawn(serve_session(server_arc(server), registry_dyn));
+
+        let ack = client
+            .call(Control::TerminalSubscribe {
+                section_id: "proj-a:section-1".into(),
+                tab_id: "7".into(),
+                max_fps: 60,
+                since_seq: None,
+            })
+            .await
+            .expect("call");
+        assert!(matches!(ack, WorkerReply::TerminalSubscribeAck));
+
+        // Send a BEL byte through the installed term task.
+        registry.send(
+            "proj-a:section-1",
+            "7",
+            crate::terminal::TerminalCommand::Bytes(vec![0x07]),
+        );
+
+        let mut events = client.events();
+        let waiter = async {
+            while let Some(event) = events.next().await {
+                if let daemon_transport::SessionEvent::Push(
+                    WorkerReply::TerminalBell {
+                        section_id, tab_id,
+                    },
+                ) = event
+                {
+                    return Some((section_id, tab_id));
+                }
+            }
+            None
+        };
+        let (section_id, tab_id) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+                .await
+                .expect("timeout")
+                .expect("bell push arrives");
+        assert_eq!(section_id, "proj-a:section-1");
+        assert_eq!(tab_id, "7");
+    }
+
+    #[tokio::test]
+    async fn terminal_subscribe_returns_err_when_no_term_task() {
+        // StubRegistry has no Term task; subscribing should yield
+        // a deterministic Err rather than hang or panic.
+        let registry: Arc<dyn DaemonRegistry> = Arc::new(StubRegistry::new());
+        let (server, client) = pair("test-viewer");
+        tokio::spawn(serve_session(server_arc(server), registry));
+        let reply = client
+            .call(Control::TerminalSubscribe {
+                section_id: "unknown".into(),
+                tab_id: "0".into(),
+                max_fps: 60,
+                since_seq: None,
+            })
+            .await
+            .expect("call");
+        match reply {
+            WorkerReply::Err { kind, .. } => assert!(matches!(kind, ErrKind::Internal)),
             other => panic!("expected Err, got {other:?}"),
         }
     }

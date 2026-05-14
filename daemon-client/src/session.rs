@@ -4,6 +4,15 @@
 //! caller via `tokio::sync::mpsc` channels; UI layers adapt those
 //! channels to their own event loops.
 //!
+//! **Legacy** (design 01 / #158): this module wraps the byte-stream
+//! `Control::AttachTab` / `DetachTab` / `TabResize` lifecycle. It
+//! retires alongside the desktop snapshot cutover (Phase 5b–5d) and
+//! the in-process MCP byte-stream split. The module-level
+//! `#![allow(deprecated)]` keeps the build warning-free while the
+//! migration is in flight; new code should not reach for these
+//! verbs (use `Control::TerminalSubscribe` instead).
+#![allow(deprecated)]
+//!
 //! UI code drains incoming bytes / worker replies via the polling
 //! [`Session::next_incoming_bytes`] / [`Session::next_worker_reply`]
 //! methods. Persistent secret keys are deliberately omitted — every
