@@ -753,7 +753,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
 
     // ── Custom actions + Open In + agents (another-one-ojm.7) ─────
 
-    /// Project + global custom actions for `project_id`, in the same
+    /// Repo-scoped + global custom actions for `project_id`, in the same
     /// dropdown order GPUI's titlebar split-button renders. Empty
     /// list when the project is unknown. Default impl returns empty
     /// (the sandbox binary has no project store).
@@ -884,7 +884,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         Err("unsupported on this daemon".to_string())
     }
 
-    /// Upsert one custom action. Default impl returns `Err("unsupported")`.
+    /// Upsert one custom action. Non-global actions are repo-scoped.
+    /// Default impl returns `Err("unsupported")`.
     fn save_project_action(
         &self,
         _project_id: &str,
@@ -894,7 +895,8 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         Err("unsupported on this daemon".to_string())
     }
 
-    /// Delete one custom action by id. Default impl returns `false`.
+    /// Delete one repo-scoped or global custom action by id.
+    /// Default impl returns `false`.
     fn delete_project_action(&self, _project_id: &str, _action_id: &str) -> bool {
         false
     }

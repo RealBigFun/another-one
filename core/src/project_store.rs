@@ -2383,12 +2383,12 @@ impl ProjectStore {
             return false;
         }
         let project_actions = std::mem::take(&mut project.actions);
-        if let Some(existing_project_id) = self
-            .projects_by_id
-            .iter()
-            .find_map(|(project_id, existing)| {
-                (existing.path == project.path && existing.archived).then(|| project_id.clone())
-            })
+        if let Some(existing_project_id) =
+            self.projects_by_id
+                .iter()
+                .find_map(|(project_id, existing)| {
+                    (existing.path == project.path && existing.archived).then(|| project_id.clone())
+                })
         {
             let repo_id = {
                 let existing = self
@@ -3174,7 +3174,10 @@ impl ProjectStore {
                 continue;
             }
 
-            legacy_actions.push((project.repo_id.clone(), std::mem::take(&mut project.actions)));
+            legacy_actions.push((
+                project.repo_id.clone(),
+                std::mem::take(&mut project.actions),
+            ));
         }
 
         for (repo_id, actions) in legacy_actions {
@@ -6893,7 +6896,10 @@ mod tests {
         assert!(restored_project.actions.is_empty());
         assert_eq!(store.repos["repo"].actions.len(), 1);
         assert_eq!(store.repos["repo"].actions[0].id, "action-ok");
-        assert_eq!(store.repos["repo"].actions[0].scope, ProjectActionScope::Project);
+        assert_eq!(
+            store.repos["repo"].actions[0].scope,
+            ProjectActionScope::Project
+        );
     }
 
     #[test]
