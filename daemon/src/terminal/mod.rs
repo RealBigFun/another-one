@@ -14,4 +14,4 @@
 pub mod task;
 pub mod frame;
 
-pub use task::{spawn_terminal_task, TerminalCommand, TerminalTaskHandle};
+pub use task::{spawn_terminal_task, TerminalCommand, TerminalSideEffect, TerminalTaskHandle};
