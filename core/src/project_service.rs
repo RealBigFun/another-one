@@ -138,6 +138,7 @@ pub fn spawn_task_creation(
                     repo: RepoRecord {
                         id: uuid::Uuid::new_v4().to_string(),
                         common_dir: None,
+                        actions: Vec::new(),
                         branch_order: Vec::new(),
                         branches_by_name: HashMap::new(),
                     },
@@ -203,6 +204,7 @@ pub fn spawn_branch_creation(
                                 repo: RepoRecord {
                                     id: uuid::Uuid::new_v4().to_string(),
                                     common_dir: None,
+                                    actions: Vec::new(),
                                     branch_order: Vec::new(),
                                     branches_by_name: HashMap::new(),
                                 },
@@ -274,6 +276,7 @@ pub fn spawn_review_task_creation(
                     repo: RepoRecord {
                         id: uuid::Uuid::new_v4().to_string(),
                         common_dir: None,
+                        actions: Vec::new(),
                         branch_order: Vec::new(),
                         branches_by_name: HashMap::new(),
                     },

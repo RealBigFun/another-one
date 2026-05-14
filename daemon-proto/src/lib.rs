@@ -277,7 +277,7 @@ pub enum Control {
     /// [`WorkerReply::DeleteProjectAck`] echoing the id so the issuer
     /// can drop any stale UI rows.
     DeleteProject { project_id: String },
-    /// List the merged project + global custom actions for `project_id`,
+    /// List the merged repo-scoped + global custom actions for `project_id`,
     /// in the same order the desktop's titlebar split-button dropdown
     /// renders. Empty list when the project is unknown — matches
     /// `ProjectStore::project_actions` behaviour. Reply:
@@ -371,14 +371,14 @@ pub enum Control {
         action_id: String,
     },
     /// Upsert one custom action for `project_id`, optionally saving a
-    /// global copy instead of a project-local one. Reply:
+    /// global copy instead of a repo-scoped one. Reply:
     /// [`WorkerReply::SetProjectActionAck`].
     SetProjectAction {
         project_id: String,
         action: ProjectActionWire,
         save_global_copy: bool,
     },
-    /// Delete one custom action by id from the project or global
+    /// Delete one custom action by id from the repo-scoped or global
     /// registry. Reply: [`WorkerReply::DeleteProjectActionAck`].
     DeleteProjectAction {
         project_id: String,
@@ -1427,10 +1427,9 @@ pub struct ProjectSummary {
     /// Same opaque-pass-through pattern as `checkout`.
     #[serde(default)]
     pub branch_settings: Option<serde_json::Value>,
-    /// Opaque JSON-serialised `Vec<core::project_store::ProjectAction>`.
-    /// Per-project custom actions defined by the user. Carried
-    /// opaquely so daemon-proto doesn't need wire mirrors for
-    /// `ProjectActionIcon` / `ProjectActionScope` / etc.
+    /// Compatibility fallback for older projections that carried
+    /// non-global custom actions on the project row. New daemons
+    /// store repo-scoped actions on [`RepoSummary::actions`].
     #[serde(default)]
     pub actions: serde_json::Value,
 }
@@ -1456,6 +1455,10 @@ pub struct RepoSummary {
     /// git inspection run).
     #[serde(default)]
     pub common_dir: Option<String>,
+    /// Opaque JSON-serialised `Vec<core::project_store::ProjectAction>`.
+    /// Non-global custom actions scoped to this resolved local git repo.
+    #[serde(default)]
+    pub actions: serde_json::Value,
     /// Branch names in the user-visible sort order the desktop
     /// sidebar already computed. Clients render in this exact order
     /// so the same repo looks identical on both sides.
@@ -2249,6 +2252,16 @@ mod wire_roundtrip_tests {
         let repo = RepoSummary {
             id: "repo-a".into(),
             common_dir: Some("/tmp/checkouts/repo-a/.git".into()),
+            actions: serde_json::json!([
+                {
+                    "id": "test",
+                    "name": "Test",
+                    "icon": "test",
+                    "run_on_worktree_create": false,
+                    "scope": "project",
+                    "kind": { "kind": "shell", "command": "cargo test" }
+                }
+            ]),
             branch_order: vec!["main".into(), "feat/x".into()],
             branches: vec![
                 RepoBranchSummary {

@@ -57,6 +57,8 @@ pub struct RepoRecord {
     #[serde(default)]
     pub common_dir: Option<PathBuf>,
     #[serde(default)]
+    pub actions: Vec<ProjectAction>,
+    #[serde(default)]
     pub branch_order: Vec<String>,
     #[serde(default)]
     pub branches_by_name: HashMap<String, RepoBranchRecord>,
@@ -123,6 +125,7 @@ fn repos_from_summaries(summaries: Vec<daemon_proto::RepoSummary>) -> HashMap<St
                 RepoRecord {
                     id: summary.id,
                     common_dir: summary.common_dir.map(PathBuf::from),
+                    actions: serde_json::from_value(summary.actions).unwrap_or_default(),
                     branch_order: summary.branch_order,
                     branches_by_name,
                 },
@@ -1042,6 +1045,22 @@ fn upsert_action(actions: &mut Vec<ProjectAction>, action: ProjectAction) {
     }
 }
 
+fn append_missing_repo_actions(
+    actions: &mut Vec<ProjectAction>,
+    incoming: impl IntoIterator<Item = ProjectAction>,
+) {
+    let mut existing_ids = actions
+        .iter()
+        .map(|action| action.id.clone())
+        .collect::<HashSet<_>>();
+    for mut action in incoming {
+        if existing_ids.insert(action.id.clone()) {
+            action.scope = ProjectActionScope::Project;
+            actions.push(action);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoreFile {
     version: u8,
@@ -1082,6 +1101,8 @@ struct PersistedRepoV4 {
     #[serde(default)]
     pub common_dir: Option<PathBuf>,
     #[serde(default)]
+    pub actions: Vec<ProjectAction>,
+    #[serde(default)]
     pub branches: Vec<RepoBranchRecord>,
 }
 
@@ -1100,6 +1121,7 @@ impl From<PersistedRepoV4> for RepoRecord {
         Self {
             id: repo.id,
             common_dir: repo.common_dir,
+            actions: repo.actions,
             branch_order,
             branches_by_name,
         }
@@ -1129,6 +1151,7 @@ impl From<&RepoRecord> for PersistedRepoV4 {
         Self {
             id: repo.id.clone(),
             common_dir: repo.common_dir.clone(),
+            actions: repo.actions.clone(),
             branches,
         }
     }
@@ -1479,6 +1502,7 @@ impl ProjectStore {
                 .or_insert_with(|| RepoRecord {
                     id: project.repo_id.clone(),
                     common_dir: None,
+                    actions: Vec::new(),
                     branch_order: Vec::new(),
                     branches_by_name: HashMap::new(),
                 });
@@ -1749,6 +1773,17 @@ impl ProjectStore {
             })
     }
 
+    fn repo_id_for_workspace(&self, project_id: &str) -> Option<String> {
+        self.project(project_id)
+            .map(|project| project.repo_id.clone())
+            .or_else(|| {
+                self.task_for_worktree(project_id)
+                    .and_then(|task| task.worktree.as_ref())
+                    .map(|worktree| worktree.repo_id.clone())
+            })
+            .filter(|repo_id| self.repos.contains_key(repo_id))
+    }
+
     fn automatic_primary_branch_name(
         &self,
         project_id: &str,
@@ -1996,7 +2031,7 @@ impl ProjectStore {
     }
 
     pub fn project_actions(&self, project_id: &str) -> Vec<ProjectAction> {
-        let Some(root_project_id) = self.root_project_id_for_project(project_id) else {
+        let Some(repo_id) = self.repo_id_for_workspace(project_id) else {
             return self.ui.global_actions.clone();
         };
 
@@ -2007,8 +2042,8 @@ impl ProjectStore {
             .map(|action| action.id.as_str())
             .collect();
         let mut actions = self
-            .project(&root_project_id)
-            .map(|project| project.actions.clone())
+            .repo(&repo_id)
+            .map(|repo| repo.actions.clone())
             .unwrap_or_default();
         actions.retain(|action| !global_action_ids.contains(action.id.as_str()));
         actions.extend(self.ui.global_actions.clone());
@@ -2021,14 +2056,14 @@ impl ProjectStore {
         mut action: ProjectAction,
         save_global_copy: bool,
     ) -> Result<(), String> {
-        let root_project_id = self
-            .root_project_id_for_project(project_id)
+        let repo_id = self
+            .repo_id_for_workspace(project_id)
             .ok_or_else(|| "Could not find the project group for this repository.".to_string())?;
         if save_global_copy {
-            if let Some(project) = self.project_mut(&root_project_id) {
-                project.actions.retain(|existing| existing.id != action.id);
+            if let Some(repo) = self.repo_mut(&repo_id) {
+                repo.actions.retain(|existing| existing.id != action.id);
             } else {
-                return Err("Could not find the root project for this repository.".to_string());
+                return Err("Could not find the repository for this project.".to_string());
             }
 
             action.scope = ProjectActionScope::Global;
@@ -2039,10 +2074,10 @@ impl ProjectStore {
                 .retain(|existing| existing.id != action.id);
 
             action.scope = ProjectActionScope::Project;
-            let Some(project) = self.project_mut(&root_project_id) else {
-                return Err("Could not find the root project for this repository.".to_string());
+            let Some(repo) = self.repo_mut(&repo_id) else {
+                return Err("Could not find the repository for this project.".to_string());
             };
-            upsert_action(&mut project.actions, action);
+            upsert_action(&mut repo.actions, action);
         }
         self.refresh_runtime_views();
         self.save();
@@ -2050,14 +2085,14 @@ impl ProjectStore {
     }
 
     pub fn delete_project_action(&mut self, project_id: &str, action_id: &str) -> bool {
-        let Some(root_project_id) = self.root_project_id_for_project(project_id) else {
+        let Some(repo_id) = self.repo_id_for_workspace(project_id) else {
             return false;
         };
         let mut removed = false;
-        if let Some(project) = self.project_mut(&root_project_id) {
-            let before = project.actions.len();
-            project.actions.retain(|action| action.id != action_id);
-            removed = project.actions.len() != before;
+        if let Some(repo) = self.repo_mut(&repo_id) {
+            let before = repo.actions.len();
+            repo.actions.retain(|action| action.id != action_id);
+            removed = repo.actions.len() != before;
         }
         let before_global = self.ui.global_actions.len();
         self.ui
@@ -2340,20 +2375,39 @@ impl ProjectStore {
     }
 
     pub fn insert_prepared_project(&mut self, prepared: PreparedProject) -> bool {
-        if prepared.project.kind == ProjectKind::Worktree {
+        let PreparedProject {
+            mut project,
+            repo: mut incoming_repo,
+        } = prepared;
+        if project.kind == ProjectKind::Worktree {
             return false;
         }
-        if let Some(existing) = self
+        let project_actions = std::mem::take(&mut project.actions);
+        if let Some(existing_project_id) = self
             .projects_by_id
-            .values_mut()
-            .find(|existing| existing.path == prepared.project.path && existing.archived)
+            .iter()
+            .find_map(|(project_id, existing)| {
+                (existing.path == project.path && existing.archived).then(|| project_id.clone())
+            })
         {
-            existing.archived = false;
-            existing.checkout = prepared.project.checkout;
-            existing.branch_settings = prepared.project.branch_settings;
-            if existing.actions.is_empty() {
-                existing.actions = prepared.project.actions;
+            let repo_id = {
+                let existing = self
+                    .projects_by_id
+                    .get_mut(&existing_project_id)
+                    .expect("project id came from projects_by_id");
+                existing.archived = false;
+                existing.checkout = project.checkout;
+                existing.branch_settings = project.branch_settings;
+                existing.repo_id.clone()
+            };
+            incoming_repo.id = repo_id.clone();
+            append_missing_repo_actions(&mut incoming_repo.actions, project_actions);
+            if let Some(repo) = self.repos.get_mut(&repo_id) {
+                *repo = merge_repo(repo.clone(), incoming_repo);
+            } else {
+                self.repos.insert(repo_id, incoming_repo);
             }
+            self.migrate_legacy_project_actions_into_repos();
             self.rebuild_runtime_views();
             self.save();
             return true;
@@ -2361,13 +2415,13 @@ impl ProjectStore {
         if self
             .projects_by_id
             .values()
-            .any(|existing| existing.path == prepared.project.path)
+            .any(|existing| existing.path == project.path)
         {
             return false;
         }
 
-        let repo_id = prepared
-            .repo
+        append_missing_repo_actions(&mut incoming_repo.actions, project_actions);
+        let repo_id = incoming_repo
             .common_dir
             .as_ref()
             .and_then(|common_dir| {
@@ -2375,17 +2429,15 @@ impl ProjectStore {
                     (repo.common_dir.as_ref() == Some(common_dir)).then(|| repo_id.clone())
                 })
             })
-            .unwrap_or_else(|| prepared.repo.id.clone());
+            .unwrap_or_else(|| incoming_repo.id.clone());
 
         if let Some(repo) = self.repos.get_mut(&repo_id) {
-            *repo = merge_repo(repo.clone(), prepared.repo);
+            *repo = merge_repo(repo.clone(), incoming_repo);
         } else {
-            let mut repo = prepared.repo;
-            repo.id = repo_id.clone();
-            self.repos.insert(repo_id.clone(), repo);
+            incoming_repo.id = repo_id.clone();
+            self.repos.insert(repo_id.clone(), incoming_repo);
         }
 
-        let mut project = prepared.project;
         project.repo_id = repo_id;
         project.archived = false;
         self.project_order.push(project.id.clone());
@@ -3039,6 +3091,7 @@ impl ProjectStore {
             .retain(|_, project| self.repos.contains_key(&project.repo_id));
         self.project_order
             .retain(|project_id| self.projects_by_id.contains_key(project_id));
+        self.migrate_legacy_project_actions_into_repos();
         self.ui
             .repo_default_commit_actions
             .retain(|repo_id, _| self.repos.contains_key(repo_id));
@@ -3112,6 +3165,24 @@ impl ProjectStore {
                     .is_some_and(|task| task.target_project_id == project_id)
             }
         });
+    }
+
+    fn migrate_legacy_project_actions_into_repos(&mut self) {
+        let mut legacy_actions = Vec::new();
+        for project in self.projects_by_id.values_mut() {
+            if project.kind != ProjectKind::Root || project.actions.is_empty() {
+                continue;
+            }
+
+            legacy_actions.push((project.repo_id.clone(), std::mem::take(&mut project.actions)));
+        }
+
+        for (repo_id, actions) in legacy_actions {
+            let Some(repo) = self.repos.get_mut(&repo_id) else {
+                continue;
+            };
+            append_missing_repo_actions(&mut repo.actions, actions);
+        }
     }
 
     pub fn project_runtime_views(&self) -> ProjectRuntimeViews {
@@ -3204,6 +3275,7 @@ impl ProjectStore {
                         .common_dir
                         .as_ref()
                         .map(|p| p.to_string_lossy().into_owned()),
+                    actions: serde_json::to_value(&repo.actions).unwrap_or_default(),
                     branch_order: repo.branch_order.clone(),
                     branches,
                 }
@@ -3584,6 +3656,7 @@ pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
         repo: RepoRecord {
             id: uuid::Uuid::new_v4().to_string(),
             common_dir,
+            actions: Vec::new(),
             branch_order,
             branches_by_name,
         },
@@ -4216,6 +4289,7 @@ fn merge_repo(mut existing: RepoRecord, incoming: RepoRecord) -> RepoRecord {
     if existing.common_dir.is_none() {
         existing.common_dir = incoming.common_dir;
     }
+    append_missing_repo_actions(&mut existing.actions, incoming.actions);
     if !incoming.branch_order.is_empty() {
         existing.branch_order = incoming.branch_order;
     }
@@ -5483,6 +5557,7 @@ mod tests {
             repos: vec![super::PersistedRepoV4::from(&RepoRecord {
                 id: project.repo_id.clone(),
                 common_dir: None,
+                actions: Vec::new(),
                 branch_order: Vec::new(),
                 branches_by_name: HashMap::new(),
             })],
@@ -5611,6 +5686,7 @@ mod tests {
             RepoRecord {
                 id: "repo".to_string(),
                 common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                actions: Vec::new(),
                 branch_order: vec!["main".to_string()],
                 branches_by_name: [(
                     "main".to_string(),
@@ -5654,6 +5730,87 @@ mod tests {
         assert_eq!(task_view.tabs[0].title, "Shell");
         assert_eq!(task_view.active_tab_id, "1");
         assert_eq!(repo_summary.branches[0].last_commit_relative, "2h");
+    }
+
+    #[test]
+    fn repo_summaries_roundtrip_actions_through_projection() {
+        let project = sample_project("root", None);
+        let mut store = super::ProjectStore::from_projects_for_test(vec![project], Vec::new());
+        store
+            .upsert_project_action(
+                "root",
+                sample_shell_action("action-ok", ProjectActionScope::Project),
+                false,
+            )
+            .expect("project action save should succeed");
+        let repo_summaries = store.repo_summaries();
+        let action_values = repo_summaries[0]
+            .actions
+            .as_array()
+            .expect("repo actions should serialize as array");
+        assert_eq!(action_values.len(), 1);
+
+        let summaries = vec![daemon_proto::ProjectSummary {
+            id: "root".to_string(),
+            name: "Project root".to_string(),
+            path: "/tmp/root".to_string(),
+            kind: daemon_proto::ProjectKind::Root,
+            current_branch: None,
+            tasks: Vec::new(),
+            repo_id: "repo".to_string(),
+            worktree_name: None,
+            checkout: None,
+            branch_settings: None,
+            actions: serde_json::Value::Null,
+        }];
+        let mut projected = super::ProjectStore::from_projects_for_test(Vec::new(), Vec::new());
+        projected.absorb_projection(
+            summaries,
+            repo_summaries,
+            daemon_proto::UiSnapshot::default(),
+        );
+
+        assert_eq!(projected.repos["repo"].actions.len(), 1);
+        assert_eq!(projected.project_actions("root")[0].id, "action-ok");
+    }
+
+    #[test]
+    fn project_summary_actions_remain_projection_fallback() {
+        let summaries = vec![daemon_proto::ProjectSummary {
+            id: "root".to_string(),
+            name: "Project root".to_string(),
+            path: "/tmp/root".to_string(),
+            kind: daemon_proto::ProjectKind::Root,
+            current_branch: None,
+            tasks: Vec::new(),
+            repo_id: "repo".to_string(),
+            worktree_name: None,
+            checkout: None,
+            branch_settings: None,
+            actions: serde_json::to_value(vec![sample_shell_action(
+                "fallback-action",
+                ProjectActionScope::Project,
+            )])
+            .unwrap(),
+        }];
+        let repo_summaries = vec![daemon_proto::RepoSummary {
+            id: "repo".to_string(),
+            common_dir: None,
+            actions: serde_json::Value::Null,
+            branch_order: Vec::new(),
+            branches: Vec::new(),
+        }];
+        let mut projected = super::ProjectStore::from_projects_for_test(Vec::new(), Vec::new());
+
+        projected.absorb_projection(
+            summaries,
+            repo_summaries,
+            daemon_proto::UiSnapshot::default(),
+        );
+
+        assert!(projected.projects_by_id["root"].actions.is_empty());
+        assert_eq!(projected.repos["repo"].actions.len(), 1);
+        assert_eq!(projected.repos["repo"].actions[0].id, "fallback-action");
     }
 
     fn sample_project(id: &str, worktree_name: Option<&str>) -> Project {
@@ -5737,9 +5894,19 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         let project_id = root_project.id.clone();
+        let repo_id = root_project.repo_id.clone();
 
         let mut store = super::ProjectStore {
-            repos: HashMap::new(),
+            repos: HashMap::from([(
+                repo_id.clone(),
+                RepoRecord {
+                    id: repo_id,
+                    common_dir: None,
+                    actions: Vec::new(),
+                    branch_order: Vec::new(),
+                    branches_by_name: HashMap::new(),
+                },
+            )]),
             projects_by_id: HashMap::from([(project_id.clone(), root_project)]),
             projects: Vec::new(),
             project_order: vec![project_id],
@@ -5750,7 +5917,8 @@ mod tests {
             ui: super::UiState::default(),
             persistence: Arc::new(NoopPersistence::new(file_path)),
         };
-        store.refresh_runtime_views();
+        store.sanitize();
+        store.rebuild_runtime_views();
         store
     }
 
@@ -6516,6 +6684,7 @@ mod tests {
             .expect("global action save should succeed");
 
         assert!(store.projects_by_id["root"].actions.is_empty());
+        assert!(store.repos["repo"].actions.is_empty());
         assert_eq!(store.ui.global_actions.len(), 1);
         assert_eq!(store.ui.global_actions[0].scope, ProjectActionScope::Global);
 
@@ -6546,6 +6715,45 @@ mod tests {
     }
 
     #[test]
+    fn legacy_project_actions_migrate_into_repo_actions() {
+        let mut project = sample_project("root", None);
+        project.actions.push(sample_shell_action(
+            "legacy-action",
+            ProjectActionScope::Project,
+        ));
+
+        let store = sample_project_store(project);
+
+        assert!(store.projects_by_id["root"].actions.is_empty());
+        assert_eq!(store.repos["repo"].actions.len(), 1);
+        assert_eq!(store.repos["repo"].actions[0].id, "legacy-action");
+    }
+
+    #[test]
+    fn legacy_project_actions_do_not_replace_existing_repo_actions() {
+        let mut project = sample_project("root", None);
+        project.actions.push(sample_shell_action(
+            "action-ok",
+            ProjectActionScope::Project,
+        ));
+        let mut store = sample_project_store(project);
+        store.repos.get_mut("repo").unwrap().actions = vec![ProjectAction {
+            name: "Repo wins".to_string(),
+            ..sample_shell_action("action-ok", ProjectActionScope::Project)
+        }];
+        store.projects_by_id.get_mut("root").unwrap().actions = vec![ProjectAction {
+            name: "Legacy loses".to_string(),
+            ..sample_shell_action("action-ok", ProjectActionScope::Project)
+        }];
+
+        store.sanitize();
+
+        assert!(store.projects_by_id["root"].actions.is_empty());
+        assert_eq!(store.repos["repo"].actions.len(), 1);
+        assert_eq!(store.repos["repo"].actions[0].name, "Repo wins");
+    }
+
+    #[test]
     fn upserting_project_action_removes_global_scoped_copy() {
         let project = sample_project("root", None);
         let mut store = sample_project_store(project);
@@ -6563,9 +6771,10 @@ mod tests {
             .expect("project action save should succeed");
 
         assert!(store.ui.global_actions.is_empty());
-        assert_eq!(store.projects_by_id["root"].actions.len(), 1);
+        assert!(store.projects_by_id["root"].actions.is_empty());
+        assert_eq!(store.repos["repo"].actions.len(), 1);
         assert_eq!(
-            store.projects_by_id["root"].actions[0].scope,
+            store.repos["repo"].actions[0].scope,
             ProjectActionScope::Project
         );
 
@@ -6576,7 +6785,67 @@ mod tests {
     }
 
     #[test]
-    fn insert_prepared_project_unarchives_existing_project_actions_for_same_path() {
+    fn deleting_project_action_mutates_repo_actions() {
+        let project = sample_project("root", None);
+        let mut store = sample_project_store(project);
+        store
+            .upsert_project_action(
+                "root",
+                sample_shell_action("action-ok", ProjectActionScope::Project),
+                false,
+            )
+            .expect("project action save should succeed");
+
+        assert!(store.delete_project_action("root", "action-ok"));
+
+        assert!(store.projects_by_id["root"].actions.is_empty());
+        assert!(store.repos["repo"].actions.is_empty());
+        assert!(store.project_actions("root").is_empty());
+    }
+
+    #[test]
+    fn worktree_projects_share_repo_actions() {
+        let root_project = sample_project("root", None);
+        let mut store = sample_project_store(root_project);
+        let task = Task {
+            id: "task-1".to_string(),
+            name: "Task".to_string(),
+            kind: TaskKind::Direct,
+            root_project_id: "root".to_string(),
+            target_project_id: "worktree".to_string(),
+            branch_name: "feature/worktree".to_string(),
+            section_id: "worktree::feature/worktree::task-1".to_string(),
+            worktree: Some(TaskWorktree {
+                id: "worktree".to_string(),
+                repo_id: "repo".to_string(),
+                name: "worktree".to_string(),
+                path: PathBuf::from("/tmp/worktree"),
+                checkout: ProjectCheckoutState::default(),
+                worktree_name: Some("worktree".to_string()),
+            }),
+            worktree_project_id: Some("worktree".to_string()),
+            tabs: Vec::new(),
+            active_tab_id: String::new(),
+            next_tab_id: 0,
+            cwd: None,
+        };
+        store.insert_task(task);
+        store
+            .upsert_project_action(
+                "root",
+                sample_shell_action("action-ok", ProjectActionScope::Project),
+                false,
+            )
+            .expect("project action save should succeed");
+
+        let visible_actions = store.project_actions("worktree");
+
+        assert_eq!(visible_actions.len(), 1);
+        assert_eq!(visible_actions[0].id, "action-ok");
+    }
+
+    #[test]
+    fn insert_prepared_project_unarchives_existing_repo_actions_for_same_path() {
         let mut project = sample_project("root", None);
         project.actions.push(sample_shell_action(
             "action-ok",
@@ -6590,7 +6859,8 @@ mod tests {
             .project("root")
             .expect("archived project should remain available");
         assert!(archived_project.archived);
-        assert_eq!(archived_project.actions.len(), 1);
+        assert!(archived_project.actions.is_empty());
+        assert_eq!(store.repos["repo"].actions.len(), 1);
 
         let prepared_project = Project {
             id: "new-root".to_string(),
@@ -6610,6 +6880,7 @@ mod tests {
             repo: RepoRecord {
                 id: "new-repo".to_string(),
                 common_dir: None,
+                actions: Vec::new(),
                 branch_order: Vec::new(),
                 branches_by_name: HashMap::new(),
             },
@@ -6619,12 +6890,10 @@ mod tests {
         let restored_project = store
             .project("root")
             .expect("re-added project should exist");
-        assert_eq!(restored_project.actions.len(), 1);
-        assert_eq!(restored_project.actions[0].id, "action-ok");
-        assert_eq!(
-            restored_project.actions[0].scope,
-            ProjectActionScope::Project
-        );
+        assert!(restored_project.actions.is_empty());
+        assert_eq!(store.repos["repo"].actions.len(), 1);
+        assert_eq!(store.repos["repo"].actions[0].id, "action-ok");
+        assert_eq!(store.repos["repo"].actions[0].scope, ProjectActionScope::Project);
     }
 
     #[test]
@@ -6636,6 +6905,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                    actions: Vec::new(),
                     branch_order: vec![
                         "feature/persist-tasks".to_string(),
                         "feature/worktree".to_string(),
@@ -6890,6 +7160,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                    actions: Vec::new(),
                     branch_order: vec!["main".to_string(), "feature".to_string()],
                     branches_by_name: HashMap::from([
                         (
@@ -7024,6 +7295,7 @@ mod tests {
             RepoRecord {
                 id: "repo".to_string(),
                 common_dir: Some(PathBuf::from("/tmp/root/.git")),
+                actions: Vec::new(),
                 branch_order: vec!["main".to_string()],
                 branches_by_name: HashMap::from([(
                     "main".to_string(),
@@ -7108,6 +7380,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    actions: Vec::new(),
                     branch_order: vec!["main".to_string(), "feature".to_string()],
                     branches_by_name: HashMap::from([(
                         "main".to_string(),
@@ -7163,6 +7436,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    actions: Vec::new(),
                     branch_order: vec!["main".to_string()],
                     branches_by_name: HashMap::new(),
                 },
@@ -7205,6 +7479,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    actions: Vec::new(),
                     branch_order: vec!["main".to_string(), "feature/worktree".to_string()],
                     branches_by_name: HashMap::new(),
                 },
@@ -7366,6 +7641,7 @@ mod tests {
                     RepoRecord {
                         id: "repo".to_string(),
                         common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                        actions: Vec::new(),
                         branch_order: vec!["main".to_string(), "feature/worktree".to_string()],
                         branches_by_name: HashMap::from([(
                             "main".to_string(),
@@ -7384,6 +7660,7 @@ mod tests {
                     RepoRecord {
                         id: "other-repo".to_string(),
                         common_dir: Some(PathBuf::from("/tmp/other/.git")),
+                        actions: Vec::new(),
                         branch_order: vec!["main".to_string()],
                         branches_by_name: HashMap::new(),
                     },
@@ -7591,6 +7868,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: Some(PathBuf::from("/tmp/repo/.git")),
+                    actions: Vec::new(),
                     branch_order: vec!["main".to_string(), "feature".to_string()],
                     branches_by_name: HashMap::from([
                         (
@@ -7767,6 +8045,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: None,
+                    actions: Vec::new(),
                     branch_order: Vec::new(),
                     branches_by_name: HashMap::new(),
                 },
@@ -7842,6 +8121,7 @@ mod tests {
                 RepoRecord {
                     id: "repo".to_string(),
                     common_dir: None,
+                    actions: Vec::new(),
                     branch_order: Vec::new(),
                     branches_by_name: HashMap::new(),
                 },

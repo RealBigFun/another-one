@@ -1836,6 +1836,10 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 .into_iter()
                 .map(|task| task_to_summary(state, task))
                 .collect();
+            let actions = store
+                .repo_for_project(&project.id)
+                .map(|repo| &repo.actions)
+                .unwrap_or(&project.actions);
             ProjectSummary {
                 id: project.id.clone(),
                 name: project.name.clone(),
@@ -1847,7 +1851,7 @@ fn project_summaries(state: &RegistryState) -> Vec<ProjectSummary> {
                 worktree_name: project.worktree_name.clone(),
                 checkout: serde_json::to_value(&project.checkout).ok(),
                 branch_settings: serde_json::to_value(&project.branch_settings).ok(),
-                actions: serde_json::to_value(&project.actions).unwrap_or_default(),
+                actions: serde_json::to_value(actions).unwrap_or_default(),
             }
         })
         .collect()
