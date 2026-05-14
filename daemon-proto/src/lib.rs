@@ -1354,6 +1354,30 @@ pub enum WorkerReply {
     /// **Daemon-pushed**. Bell rang for `(section_id, tab_id)`.
     /// Renderer surfaces it (visual flash, dock badge).
     TerminalBell { section_id: String, tab_id: String },
+    /// **Daemon-pushed**. The daemon spawned a fresh PTY for
+    /// `(section_id, tab_id)`. Carries the OS process id so callers
+    /// (resource indicator, debugger attach) can reference it. Phase 4
+    /// of design 01 / #158.
+    TerminalLaunched {
+        section_id: String,
+        tab_id: String,
+        /// `None` when `portable_pty` couldn't read the child pid
+        /// (Windows shells, sub-shells we don't track). Renderers
+        /// treat None as "unknown pid" and skip resource
+        /// attribution rather than blocking the launch ack.
+        process_id: Option<u32>,
+    },
+    /// **Daemon-pushed**. The daemon-owned PTY for `(section_id,
+    /// tab_id)` exited. `success` mirrors `ExitStatus::success()`;
+    /// `code` mirrors `ExitStatus::code()` when the child exited via
+    /// a numeric code (None on signal-killed children, in which case
+    /// `success` is false). Renderers surface a closed-tab state.
+    TerminalExited {
+        section_id: String,
+        tab_id: String,
+        success: bool,
+        code: Option<i32>,
+    },
 }
 
 /// Wire mirror of the active git-state view and the underlying
