@@ -1922,6 +1922,18 @@ pub struct AnotherOneApp {
     /// Tracking the prior subscription lets `update_terminal_subscription`
     /// emit a clean Unsubscribe before the next Subscribe.
     subscribed_terminal_key: Option<TerminalRuntimeKey>,
+    /// Phase 5d-ii of design 01 (#158): tabs the desktop has
+    /// dispatched `Control::LaunchTab` for daemon-side spawn,
+    /// keyed by the runtime key with the requested initial size.
+    /// Removed when the matching `WorkerReply::TerminalLaunched`
+    /// push arrives (success) or the launch errors out (failure
+    /// reaches the dispatch_fire_and_forget callback). Prevents
+    /// duplicate `LaunchTab` calls across render ticks while a
+    /// spawn is in flight.
+    in_flight_remote_launches: HashMap<
+        TerminalRuntimeKey,
+        another_one_core::terminal_types::TerminalGridSize,
+    >,
     /// Last terminal mutation that needs low-latency drain/render ticks.
     last_terminal_activity: Instant,
     /// Input to send once a newly launched action terminal is ready.
@@ -4845,6 +4857,7 @@ impl AnotherOneApp {
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
             subscribed_terminal_key: None,
+            in_flight_remote_launches: HashMap::new(),
             last_terminal_activity: Instant::now(),
             pending_post_launch_input: HashMap::new(),
             terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
@@ -5905,6 +5918,35 @@ impl AnotherOneApp {
             // future unify-control-plane pass will collapse this
             // into a single always-dispatch-through-session path
             // that the host role handles via its loopback session.
+            //
+            // Phase 5d-ii (design 01 / #158): with the daemon-spawn
+            // flag on, the daemon owns the PTY. Send Control::LaunchTab
+            // and let the resulting WorkerReply::TerminalLaunched push
+            // install a viewer-only runtime. Without the flag, fall
+            // through to the legacy GPUI-thread spawn unchanged.
+            if daemon::terminal::daemon_spawn_enabled() {
+                if !self.in_flight_remote_launches.contains_key(&request.key) {
+                    self.in_flight_remote_launches
+                        .insert(request.key.clone(), request.size);
+                    let session = self.session_handle();
+                    let key_for_callback = request.key.clone();
+                    crate::session_host::dispatch_fire_and_forget(
+                        session,
+                        daemon_proto::Control::LaunchTab {
+                            section_id: request.key.section_id.store_key(),
+                            tab_id: request.key.tab_id.clone(),
+                        },
+                        move |result| {
+                            if let Err(err) = result {
+                                log::warn!(
+                                    "daemon-side LaunchTab for {key_for_callback:?} failed: {err}"
+                                );
+                            }
+                        },
+                    );
+                }
+                return;
+            }
             spawn_terminal_launch(
                 self.terminal_launch_sender.clone(),
                 request.key,
@@ -6111,6 +6153,29 @@ impl AnotherOneApp {
                                     tab_id,
                                 } => {
                                     self.apply_proto_terminal_bell(
+                                        &section_id,
+                                        &tab_id,
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalLaunched {
+                                    section_id,
+                                    tab_id,
+                                    process_id: _,
+                                } => {
+                                    self.apply_proto_terminal_launched(
+                                        &section_id,
+                                        &tab_id,
+                                    );
+                                    updated = true;
+                                }
+                                daemon_proto::WorkerReply::TerminalExited {
+                                    section_id,
+                                    tab_id,
+                                    success: _,
+                                    code: _,
+                                } => {
+                                    self.apply_proto_terminal_exited(
                                         &section_id,
                                         &tab_id,
                                     );
@@ -6774,6 +6839,70 @@ impl AnotherOneApp {
             tab_id: tab_id.to_string(),
         };
         self.terminal_bell_at.insert(key, Instant::now());
+    }
+
+    /// Phase 5d-ii of design 01 (#158): handle a daemon-pushed
+    /// `WorkerReply::TerminalLaunched` for a desktop-issued
+    /// `Control::LaunchTab`. Builds a viewer-only
+    /// `LiveTerminalRuntime::from_remote(size)` and inserts it into
+    /// `live_terminal_runtimes` so the next render tick's
+    /// `ensure_active_terminal_runtime` finds it and opens a
+    /// `TerminalSubscribe` (Phase 5b-iii).
+    ///
+    /// The size comes from `in_flight_remote_launches`, populated
+    /// when LaunchTab was dispatched. If the entry is missing
+    /// (push raced ahead of the dispatch callback or a stale
+    /// retry), fall back to the default 80x24 — the next focus
+    /// pass will reshape via the standard viewport-claim path.
+    fn apply_proto_terminal_launched(&mut self, section_id: &str, tab_id: &str) {
+        let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalLaunched push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id: section_id_parsed,
+            tab_id: tab_id.to_string(),
+        };
+        let size = self
+            .in_flight_remote_launches
+            .remove(&key)
+            .unwrap_or_default();
+        // Avoid double-installing if the runtime is already there
+        // (legacy spawn raced ahead, or a retry produced two pushes).
+        if self.live_terminal_runtimes.contains_key(&key) {
+            return;
+        }
+        // Mirror the bookkeeping the legacy
+        // `TerminalLaunchReply::Launched` arm does so the UI sees
+        // the launch-completed state. `tracked_process` is None
+        // here — the proto push doesn't carry the launch_config
+        // needed for resource attribution; the resource indicator
+        // simply won't have a row for daemon-spawned tabs until a
+        // follow-up tightens the push payload.
+        self.terminal_manager.mark_launch_succeeded(key.clone(), None);
+        self.clear_terminal_recent_output(&key);
+        let runtime = crate::terminal_runtime::LiveTerminalRuntime::from_remote(size);
+        self.terminal_surface_snapshots
+            .insert(key.clone(), Default::default());
+        self.live_terminal_runtimes.insert(key, runtime);
+    }
+
+    /// Phase 5d-ii of design 01 (#158): handle a daemon-pushed
+    /// `WorkerReply::TerminalExited`. Drops the viewer-only
+    /// runtime so the renderer surfaces the closed-tab state and
+    /// the next launch fork won't see a stale entry.
+    fn apply_proto_terminal_exited(&mut self, section_id: &str, tab_id: &str) {
+        let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
+            log::warn!("TerminalExited push with malformed section_id");
+            return;
+        };
+        let key = TerminalRuntimeKey {
+            section_id: section_id_parsed,
+            tab_id: tab_id.to_string(),
+        };
+        self.live_terminal_runtimes.remove(&key);
+        self.terminal_surface_snapshots.remove(&key);
+        self.in_flight_remote_launches.remove(&key);
     }
 
     fn update_terminal_subscription(&mut self, focused: &TerminalRuntimeKey) {
