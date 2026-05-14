@@ -65,6 +65,9 @@ pub struct DaemonSpawnedTerminal {
     pub task: TerminalTaskHandle,
     pub child: SpawnedChild,
     pub process_id: Option<u32>,
+    /// Master PTY handle kept by the registry so resize requests can
+    /// reach the OS PTY, not just the daemon-side Term grid.
+    pub master: std::sync::Arc<std::sync::Mutex<Box<dyn MasterPty + Send>>>,
     /// Master-PTY writer. The desktop registry stores this in
     /// `RegistryState::writers` so the existing `tab_input` path
     /// (registry.writers + block_in_place + write_all) routes
@@ -152,11 +155,10 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
 
     // Hold the master alive past the function return: the Term task
     // owns the reader through `try_clone_reader`, but the master
-    // itself must stay alive (closing it kills the slave/child).
-    // We leak the Box<dyn MasterPty + Send> intentionally — its
-    // lifetime tracks the PTY's, which the registry already tracks
-    // via the SpawnedChild.
-    leak_master(pair.master);
+    // itself must stay alive (closing it kills the slave/child). The
+    // registry keeps this handle so viewport changes can apply
+    // TIOCSWINSZ/SIGWINCH to the daemon-owned PTY.
+    let master = std::sync::Arc::new(std::sync::Mutex::new(pair.master));
 
     Ok(DaemonSpawnedTerminal {
         task,
@@ -164,6 +166,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
             killer: Some(killer),
         },
         process_id,
+        master,
         writer: std::sync::Arc::new(std::sync::Mutex::new(writer)),
     })
 }
@@ -198,18 +201,6 @@ fn pty_reader_loop(
             Err(_) => break,
         }
     }
-}
-
-/// `MasterPty` is `?Sized` and not `Clone`. We can't store it in a
-/// `'static` slot via `Arc` without a wrapper, and the spawn
-/// function returns before the PTY's lifetime ends. The simplest
-/// safe option is to leak the box; the OS reclaims the PTY on
-/// process exit, and the registry-managed `SpawnedChild::kill`
-/// closes the slave on tab close (which causes the reader to hit
-/// EOF and the master's resources to be reclaimed by the kernel
-/// when the last reference drops).
-fn leak_master(master: Box<dyn MasterPty + Send>) {
-    let _: &'static dyn MasterPty = Box::leak(master);
 }
 
 /// Provide a non-blocking handle into the Term task's inbox. The

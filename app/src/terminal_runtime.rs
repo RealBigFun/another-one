@@ -19,7 +19,8 @@ use portable_pty::MasterPty;
 // `LiveTerminalRuntime::ingest_frame` can ingest a `Full` frame
 // into the existing surface-snapshot cache.
 use daemon_proto::{
-    GridCellFlags as ProtoGridCellFlags, GridSnapshot as ProtoGridSnapshot, TerminalFrame,
+    GridCell as ProtoGridCell, GridCellFlags as ProtoGridCellFlags, GridColor as ProtoGridColor,
+    GridSnapshot as ProtoGridSnapshot, TerminalFrame,
 };
 
 // Shared with `core/src/terminal_types.rs` — the launcher side also
@@ -448,7 +449,23 @@ impl LiveTerminalRuntime {
 
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
         if self.dirty {
-            self.cached_snapshot = build_surface_snapshot(&self.term, self.size);
+            // The local alacritty `self.term` is only fed bytes
+            // while the legacy dual-write path is in effect (i.e.
+            // when this runtime owns a `local_pty`). Once the
+            // canonical state is the daemon's Term task, the
+            // local Term is empty and rebuilding from it would
+            // clobber the proto-derived `cached_snapshot` with a
+            // blank grid — visible as the screen flashing empty
+            // on resize / theme invalidate. Skip the rebuild and
+            // keep the last frame until the next `ingest_frame`.
+            //
+            // Goes away with the dual-write path itself: when no
+            // client drives a local Term, this whole branch is
+            // dead code and `dirty` becomes a pure invalidation
+            // hint to wait for the next daemon frame.
+            if self.local_pty.is_some() {
+                self.cached_snapshot = build_surface_snapshot(&self.term, self.size);
+            }
             self.dirty = false;
         }
         self.cached_snapshot.clone()
@@ -678,102 +695,386 @@ pub(crate) fn search_scrollback_in_term<T: EventListener>(
 fn build_surface_snapshot_from_proto(snapshot: &ProtoGridSnapshot) -> TerminalSurfaceSnapshot {
     let columns = snapshot.cols as usize;
     let rows = snapshot.rows as usize;
-    let mut surface_text = String::new();
+    let cursor_pos = snapshot
+        .cursor
+        .visible
+        .then(|| (snapshot.cursor.line as usize, snapshot.cursor.col as usize));
     let mut lines = Vec::with_capacity(rows);
+    let mut positioned_runs = Vec::new();
+    let mut cursor_snapshot: Option<TerminalCursorSnapshot> = None;
 
     for row_idx in 0..rows {
         let row = snapshot.viewport.get(row_idx);
-        let cells_in_row = row.map(|r| r.cells.len()).unwrap_or(0);
-        let mut line_text = String::new();
-        let mut cells = Vec::with_capacity(columns);
+        let mut text = String::new();
+        let mut cells = Vec::new();
+        let mut runs = Vec::new();
+        let mut background_spans = Vec::new();
+        let mut pending_blank_run = PendingTextRun::default();
+        let mut pending_positioned_run: Option<PendingPositionedRun> = None;
 
-        for col in 0..columns {
+        for column in 0..columns {
+            let default_cell = ProtoGridCell::default();
             let cell = row
-                .and_then(|r| r.cells.get(col))
-                .cloned()
-                .unwrap_or_default();
-            // Skip wide-char spacers when constructing text —
-            // they're a hidden second cell that pairs with the
-            // preceding wide character. The cell is still emitted
-            // into `cells` with width 0 so column indexing stays
-            // consistent with the grid frame.
-            let is_spacer = cell
-                .flags
-                .contains(ProtoGridCellFlags::WIDE_CHAR_SPACER)
-                || cell
-                    .flags
-                    .contains(ProtoGridCellFlags::LEADING_WIDE_CHAR_SPACER);
-            let ch = if is_spacer || cell.ch == '\0' {
-                ' '
-            } else {
-                cell.ch
-            };
-            let width = if cell.flags.contains(ProtoGridCellFlags::WIDE_CHAR) {
-                2
-            } else if is_spacer {
-                0
-            } else {
-                1
-            };
-            let text_str = if is_spacer {
-                String::new()
-            } else {
-                ch.to_string()
-            };
-            line_text.push_str(&text_str);
+                .and_then(|r| r.cells.get(column))
+                .unwrap_or(&default_cell);
+
+            // Wide-char spacer cells are emitted on the wire to
+            // preserve column indexing but don't render as their
+            // own glyph — the preceding wide character covers
+            // their column. Skipping here mirrors the alacritty
+            // path's `Flags::WIDE_CHAR_SPACER` handling.
+            if cell.flags.0
+                & (ProtoGridCellFlags::WIDE_CHAR_SPACER
+                    | ProtoGridCellFlags::LEADING_WIDE_CHAR_SPACER)
+                != 0
+            {
+                continue;
+            }
+
+            let is_cursor =
+                cursor_pos.is_some_and(|(line, col)| line == row_idx && col == column);
+            let mut cell_style = proto_resolve_cell_style(cell);
+            let has_explicit_background =
+                proto_effective_background_color(cell) != ProtoGridColor::Default;
+            let chunk = proto_cell_display_text(cell);
+            let copy_text = proto_cell_copy_text(cell);
+            let cell_width = proto_terminal_cell_width(cell);
+            if chunk.is_empty() {
+                continue;
+            }
+
+            maybe_push_background_span(
+                &mut background_spans,
+                column,
+                cell_width,
+                cell_style.background,
+                has_explicit_background,
+            );
             cells.push(TerminalCellSnapshot {
-                column: col,
-                width,
-                text: text_str.clone(),
-                copy_text: text_str,
+                column,
+                width: cell_width,
+                text: chunk.clone(),
+                copy_text,
                 hyperlink: None,
             });
-            // Below the trimmed-cells boundary we treat missing
-            // entries as default cells (renderer pads with
-            // GridCell::default()).
-            let _ = cells_in_row;
+
+            if is_cursor {
+                if let Some(snap) = cursor_snapshot_from_proto(
+                    row_idx,
+                    column,
+                    cell_width,
+                    snapshot.cursor.shape,
+                ) {
+                    if snap.kind == TerminalCursorKind::Block {
+                        cell_style.foreground = default_background_color();
+                    }
+                    cursor_snapshot = Some(snap);
+                }
+            }
+
+            let positioned_style = text_run_from_style(cell_style.clone());
+            if !proto_cell_is_render_blank(cell) {
+                append_positioned_run(
+                    &mut pending_positioned_run,
+                    &mut positioned_runs,
+                    row_idx,
+                    column,
+                    cell_width,
+                    chunk.clone(),
+                    positioned_style,
+                );
+            } else if let Some(batch) = pending_positioned_run.take() {
+                positioned_runs.push(TerminalPositionedRunSnapshot {
+                    line: batch.line,
+                    column: batch.column,
+                    cell_count: batch.cell_count,
+                    text: batch.text,
+                    style: batch.style,
+                });
+            }
+
+            if proto_cell_is_trimmable_blank(cell) && !is_cursor {
+                pending_blank_run.text.push_str(&chunk);
+                pending_blank_run.len += chunk.len();
+                pending_blank_run.style = Some(cell_style);
+                continue;
+            }
+
+            if pending_blank_run.len > 0 {
+                text.push_str(&pending_blank_run.text);
+                push_text_run(
+                    &mut runs,
+                    pending_blank_run.len,
+                    text_run_from_style(
+                        pending_blank_run
+                            .style
+                            .clone()
+                            .unwrap_or_else(default_cell_style),
+                    ),
+                );
+                pending_blank_run = PendingTextRun::default();
+            }
+
+            text.push_str(&chunk);
+            push_text_run(&mut runs, chunk.len(), text_run_from_style(cell_style));
         }
 
-        if row_idx + 1 < rows {
-            line_text.push('\n');
+        if text.is_empty() {
+            text.push('\u{00a0}');
+            push_text_run(
+                &mut runs,
+                text.len(),
+                text_run_from_style(default_cell_style()),
+            );
         }
-        surface_text.push_str(&line_text);
+
+        if pending_blank_run.len > 0 {
+            text.push_str(&pending_blank_run.text);
+            push_text_run(
+                &mut runs,
+                pending_blank_run.len,
+                text_run_from_style(
+                    pending_blank_run
+                        .style
+                        .clone()
+                        .unwrap_or_else(default_cell_style),
+                ),
+            );
+        }
+
+        if let Some(batch) = pending_positioned_run.take() {
+            positioned_runs.push(TerminalPositionedRunSnapshot {
+                line: batch.line,
+                column: batch.column,
+                cell_count: batch.cell_count,
+                text: batch.text,
+                style: batch.style,
+            });
+        }
+
         lines.push(TerminalLineSnapshot {
-            text: line_text,
+            text,
             cells,
-            runs: Vec::new(),
-            background_spans: Vec::new(),
+            runs,
+            background_spans,
         });
     }
 
-    let cursor = snapshot.cursor.visible.then(|| TerminalCursorSnapshot {
-        line: snapshot.cursor.line as usize,
-        column: snapshot.cursor.col as usize,
-        width: 1,
-        kind: match snapshot.cursor.shape {
-            daemon_proto::CursorShape::Underline
-            | daemon_proto::CursorShape::UnderlineBlinking => TerminalCursorKind::Underline,
-            daemon_proto::CursorShape::Beam | daemon_proto::CursorShape::BeamBlinking => {
-                TerminalCursorKind::Beam
-            }
-            _ => TerminalCursorKind::Block,
-        },
-        color: default_foreground_color(),
-        blinking: matches!(
-            snapshot.cursor.shape,
-            daemon_proto::CursorShape::BlockBlinking
-                | daemon_proto::CursorShape::UnderlineBlinking
-                | daemon_proto::CursorShape::BeamBlinking
-        ),
-    });
+    let surface_text = lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Cursor on an empty/out-of-range cell: synthesize a block at the
+    // reported position so the renderer still draws a caret.
+    if cursor_snapshot.is_none() {
+        if let Some((line, column)) = cursor_pos {
+            cursor_snapshot = cursor_snapshot_from_proto(line, column, 1, snapshot.cursor.shape);
+        }
+    }
 
     TerminalSurfaceSnapshot {
         text: surface_text,
         columns,
         lines,
-        positioned_runs: Vec::new(),
-        cursor,
+        positioned_runs,
+        cursor: cursor_snapshot,
     }
+}
+
+// ───────── proto-frame cell helpers (mirror alacritty siblings) ─────────
+
+fn proto_cell_display_text(cell: &ProtoGridCell) -> String {
+    let ch = if cell.flags.contains(ProtoGridCellFlags::HIDDEN)
+        || cell.ch == ' '
+        || cell.ch == '\0'
+    {
+        '\u{00a0}'
+    } else {
+        cell.ch
+    };
+    ch.to_string()
+}
+
+fn proto_cell_copy_text(cell: &ProtoGridCell) -> String {
+    if cell.flags.contains(ProtoGridCellFlags::HIDDEN) {
+        return " ".to_string();
+    }
+    let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
+    ch.to_string()
+}
+
+fn proto_cell_is_render_blank(cell: &ProtoGridCell) -> bool {
+    if cell.ch != ' ' && cell.ch != '\0' {
+        return false;
+    }
+    if cell.bg != ProtoGridColor::Default {
+        return false;
+    }
+    if cell.flags.0
+        & (ProtoGridCellFlags::UNDERLINE
+            | ProtoGridCellFlags::DOUBLE_UNDERLINE
+            | ProtoGridCellFlags::UNDERCURL
+            | ProtoGridCellFlags::DOTTED_UNDERLINE
+            | ProtoGridCellFlags::DASHED_UNDERLINE
+            | ProtoGridCellFlags::INVERSE
+            | ProtoGridCellFlags::STRIKEOUT)
+        != 0
+    {
+        return false;
+    }
+    true
+}
+
+fn proto_cell_is_trimmable_blank(cell: &ProtoGridCell) -> bool {
+    cell.flags.contains(ProtoGridCellFlags::HIDDEN) || cell.ch == ' ' || cell.ch == '\0'
+}
+
+fn proto_terminal_cell_width(cell: &ProtoGridCell) -> usize {
+    if cell.flags.contains(ProtoGridCellFlags::WIDE_CHAR) {
+        2
+    } else {
+        1
+    }
+}
+
+fn proto_effective_background_color(cell: &ProtoGridCell) -> ProtoGridColor {
+    if cell.flags.contains(ProtoGridCellFlags::INVERSE) {
+        cell.fg
+    } else {
+        cell.bg
+    }
+}
+
+fn proto_resolve_cell_style(cell: &ProtoGridCell) -> ResolvedCellStyle {
+    let raw_foreground = cell.fg;
+    let mut foreground = resolve_grid_color(cell.fg, cell.flags, true);
+    let mut background = resolve_grid_color(cell.bg, cell.flags, false);
+
+    if cell.flags.contains(ProtoGridCellFlags::INVERSE) {
+        std::mem::swap(&mut foreground, &mut background);
+    }
+
+    if cell.flags.contains(ProtoGridCellFlags::HIDDEN) {
+        foreground = background;
+    } else {
+        foreground = ensure_light_terminal_foreground_contrast(
+            foreground,
+            background,
+            matches!(raw_foreground, ProtoGridColor::Rgb { .. }),
+            crate::theme::current_terminal_theme(),
+        );
+    }
+
+    ResolvedCellStyle {
+        foreground,
+        background,
+        font: proto_terminal_font(cell.flags),
+        underline: proto_underline_style(cell, foreground),
+        strikethrough: cell
+            .flags
+            .contains(ProtoGridCellFlags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(foreground),
+            }),
+    }
+}
+
+fn proto_terminal_font(flags: ProtoGridCellFlags) -> gpui::Font {
+    let mut font = font("Lilex Nerd Font Mono");
+    if flags.contains(ProtoGridCellFlags::BOLD) {
+        font.weight = FontWeight::BOLD;
+    }
+    if flags.contains(ProtoGridCellFlags::ITALIC) {
+        font = font.italic();
+    }
+    font
+}
+
+fn proto_underline_style(cell: &ProtoGridCell, foreground: Hsla) -> Option<UnderlineStyle> {
+    let any_underline = cell.flags.0
+        & (ProtoGridCellFlags::UNDERLINE
+            | ProtoGridCellFlags::DOUBLE_UNDERLINE
+            | ProtoGridCellFlags::UNDERCURL
+            | ProtoGridCellFlags::DOTTED_UNDERLINE
+            | ProtoGridCellFlags::DASHED_UNDERLINE)
+        != 0;
+    if !any_underline {
+        return None;
+    }
+    Some(UnderlineStyle {
+        thickness: px(if cell.flags.contains(ProtoGridCellFlags::DOUBLE_UNDERLINE) {
+            2.
+        } else {
+            1.
+        }),
+        color: Some(foreground),
+        wavy: cell.flags.contains(ProtoGridCellFlags::UNDERCURL),
+    })
+}
+
+/// Resolve a wire-format `GridColor` to an `Hsla`, applying the same
+/// dim/bold-on-named promotion the alacritty `resolve_color` does.
+/// `Default` colors snap to the active theme's terminal default fg/bg;
+/// `Indexed` colors fall through to the same xterm 256-color cube
+/// `default_indexed_color` builds; `Rgb` is taken verbatim.
+fn resolve_grid_color(color: ProtoGridColor, flags: ProtoGridCellFlags, is_foreground: bool) -> Hsla {
+    match color {
+        ProtoGridColor::Default => {
+            if is_foreground {
+                if flags.contains(ProtoGridCellFlags::DIM) {
+                    let rgb = current_terminal_palette().dim_foreground;
+                    gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
+                } else {
+                    default_foreground_color()
+                }
+            } else {
+                default_background_color()
+            }
+        }
+        ProtoGridColor::Rgb { r, g, b } => {
+            gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
+        }
+        ProtoGridColor::Indexed { index } => {
+            let mut idx = index;
+            // Bold promotes the low-8 ANSI palette to its bright
+            // counterpart for foreground only, matching alacritty's
+            // `NamedColor::to_bright`. Dim demotes; for indexed we
+            // do not have a dim palette so leave as-is.
+            if is_foreground && flags.contains(ProtoGridCellFlags::BOLD) && idx < 8 {
+                idx += 8;
+            }
+            let rgb = default_indexed_color(idx);
+            gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
+        }
+    }
+}
+
+fn cursor_snapshot_from_proto(
+    line: usize,
+    column: usize,
+    width: usize,
+    shape: daemon_proto::CursorShape,
+) -> Option<TerminalCursorSnapshot> {
+    use daemon_proto::CursorShape as Shape;
+    let kind = match shape {
+        Shape::Underline | Shape::UnderlineBlinking => TerminalCursorKind::Underline,
+        Shape::Beam | Shape::BeamBlinking => TerminalCursorKind::Beam,
+        _ => TerminalCursorKind::Block,
+    };
+    Some(TerminalCursorSnapshot {
+        line,
+        column,
+        width,
+        kind,
+        color: crate::theme::terminal_default_cursor(),
+        blinking: matches!(
+            shape,
+            Shape::BlockBlinking | Shape::UnderlineBlinking | Shape::BeamBlinking
+        ),
+    })
 }
 
 fn build_surface_snapshot<T: EventListener>(
@@ -1685,6 +1986,14 @@ mod tests {
                 "line {i} content differs: proto={proto_trimmed:?} alacritty={ala_trimmed:?}"
             );
         }
+    }
+
+    #[test]
+    fn proto_cursor_uses_terminal_cursor_theme_color() {
+        let proto = proto_snapshot_from_lines(16, 2, &["hi"]);
+        let surface = build_surface_snapshot_from_proto(&proto);
+        let cursor = surface.cursor.expect("visible cursor");
+        assert_eq!(cursor.color, crate::theme::terminal_default_cursor());
     }
 
     #[test]

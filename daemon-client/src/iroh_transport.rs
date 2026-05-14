@@ -119,6 +119,7 @@ pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession
     let (events_tx, events_rx) = mpsc::unbounded_channel::<SessionEvent>();
     let bridge_session = Arc::clone(&inner);
     let bridge_attached = Arc::clone(&attached);
+    let bytes_events_tx = events_tx.clone();
     tokio::spawn(async move {
         // Each inbound chunk is now tagged by the daemon per #138,
         // so we forward the tuple directly instead of re-tagging
@@ -136,7 +137,7 @@ pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession
                     None => continue,
                 }
             };
-            if events_tx
+            if bytes_events_tx
                 .send(SessionEvent::PtyBytes {
                     section_id,
                     tab_id,
@@ -147,7 +148,40 @@ pub fn wrap_legacy_session(inner: Arc<LegacySession>) -> Box<dyn AbstractSession
                 break;
             }
         }
-        let _ = events_tx.send(SessionEvent::Closed { reason: None });
+        let _ = bytes_events_tx.send(SessionEvent::Closed { reason: None });
+    });
+    // Server-pushed `WorkerReply`s (TerminalLaunched, TerminalFrame,
+    // ProjectList projection updates, …) ride the legacy session's
+    // separate `next_worker_reply` channel, not the byte-stream
+    // channel above. Without a second pump, every push the daemon
+    // sends sits in `worker_replies_rx` forever and the GUI never
+    // sees state-change broadcasts — e.g. a daemon-spawned terminal
+    // launches but the GUI never installs the viewer-only runtime
+    // because `WorkerReply::TerminalLaunched` is stranded.
+    //
+    // Mirror the demux `in_memory.rs` does on its s2c pump: surface
+    // `WorkerReply::TerminalFrame` as the dedicated
+    // `SessionEvent::TerminalFrame` variant; everything else as
+    // `SessionEvent::Push(...)`.
+    let push_session = Arc::clone(&inner);
+    tokio::spawn(async move {
+        while let Some(reply) = push_session.next_worker_reply().await {
+            let event = match reply {
+                daemon_proto::WorkerReply::TerminalFrame {
+                    section_id,
+                    tab_id,
+                    frame,
+                } => SessionEvent::TerminalFrame {
+                    section_id,
+                    tab_id,
+                    frame,
+                },
+                other => SessionEvent::Push(other),
+            };
+            if events_tx.send(event).is_err() {
+                break;
+            }
+        }
     });
     Box::new(IrohSession {
         inner,

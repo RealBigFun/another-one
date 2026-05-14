@@ -5921,6 +5921,18 @@ impl AnotherOneApp {
 
         #[cfg(not(target_os = "android"))]
         {
+            // Claim the desktop viewport before dispatching LaunchTab
+            // so daemon-side spawn can open the PTY at the pane's
+            // actual grid size instead of the fallback 80×24.
+            if let Ok(mut state) = self.registry_state.lock() {
+                state.claim_viewport(
+                    crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID,
+                    request.key.clone(),
+                    request.size.cols,
+                    request.size.rows,
+                );
+            }
+
             // ── Client-role split (NOT a platform split) ───────────
             // Registry-host role: this binary also owns PTYs, so
             // the spawn goes to the local `terminal_launch` pipe
@@ -5944,6 +5956,11 @@ impl AnotherOneApp {
                     .insert(request.key.clone(), request.size);
                 let session = self.session_handle();
                 let key_for_callback = request.key.clone();
+                log::trace!(
+                    "DBG: dispatching LaunchTab section={} tab={}",
+                    request.key.section_id.store_key(),
+                    request.key.tab_id
+                );
                 crate::session_host::dispatch_fire_and_forget(
                     session,
                     daemon_proto::Control::LaunchTab {
@@ -6203,6 +6220,7 @@ impl AnotherOneApp {
                     tab_id,
                     frame,
                 } => {
+                    log::trace!("DBG: drain TerminalFrame section={} tab={}", section_id, tab_id);
                     // Daemon-canonical Term frame ingest. Phase 5a
                     // (docs/designs/01-daemon-canonical-terminal.md):
                     // dual-write — the alacritty path still owns
@@ -6800,6 +6818,7 @@ impl AnotherOneApp {
     /// retry), fall back to the default 80x24 — the next focus
     /// pass will reshape via the standard viewport-claim path.
     fn apply_proto_terminal_launched(&mut self, section_id: &str, tab_id: &str) {
+        log::trace!("DBG: apply_proto_terminal_launched section={section_id} tab={tab_id}");
         let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
             log::warn!("TerminalLaunched push with malformed section_id");
             return;
@@ -6854,9 +6873,23 @@ impl AnotherOneApp {
         if !daemon::terminal::daemon_spawn_enabled() {
             return;
         }
+        // Only subscribe once the local runtime exists. Until
+        // `apply_proto_terminal_launched` installs the viewer-only
+        // runtime in response to `WorkerReply::TerminalLaunched`,
+        // the daemon's `term_tasks` map is empty and a
+        // `TerminalSubscribe` would error with "no terminal task";
+        // recording `subscribed_terminal_key` after that failed
+        // dispatch would prevent any future retry on the next
+        // render tick. Restored tabs would then never receive
+        // frames — the symptom that motivated this guard.
+        if !self.live_terminal_runtimes.contains_key(focused) {
+            log::trace!("DBG: skipping subscribe — no live runtime for {focused:?}");
+            return;
+        }
         if self.subscribed_terminal_key.as_ref() == Some(focused) {
             return;
         }
+        log::trace!("DBG: dispatching TerminalSubscribe for {focused:?}");
         let session = self.session_handle();
         // Unsubscribe from the previous tab if any. Idempotent on
         // the daemon side; we don't await the reply because we
@@ -8370,14 +8403,43 @@ impl AnotherOneApp {
                     },
                 );
             }
-            let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) else {
-                continue;
-            };
             let size = TerminalGridSize {
                 cols: request.cols,
                 rows: request.rows,
                 pixel_width: 0,
                 pixel_height: 0,
+            };
+            if let Ok(state) = self.registry_state.lock() {
+                if let Some(master) = state.pty_masters.get(&request.key) {
+                    match master.lock() {
+                        Ok(master) => {
+                            if let Err(error) = master.resize(size.as_pty_size()) {
+                                self.terminal_manager
+                                    .errors
+                                    .insert(request.key.clone(), error.to_string());
+                            }
+                        }
+                        Err(_) => {
+                            self.terminal_manager.errors.insert(
+                                request.key.clone(),
+                                "terminal PTY resize lock poisoned".to_string(),
+                            );
+                        }
+                    }
+                }
+                if let Some(task) = state.term_tasks.get(&request.key) {
+                    if let Err(error) =
+                        task.try_send(daemon::terminal::TerminalCommand::Resize { size })
+                    {
+                        log::trace!(
+                            "terminal task resize for {:?} failed: {error:?}",
+                            request.key
+                        );
+                    }
+                }
+            }
+            let Some(runtime) = self.live_terminal_runtimes.get_mut(&request.key) else {
+                continue;
             };
             match runtime.resize(size) {
                 Ok(true) => {

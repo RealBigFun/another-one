@@ -219,10 +219,20 @@ impl Drop for TerminalTaskHandle {
         // Production code paths should prefer `shutdown().await` so
         // the caller can observe a panic in the task; this is a
         // safety net.
-        let inbox = self.inbox.clone();
-        tokio::spawn(async move {
-            let _ = inbox.send(TerminalCommand::Shutdown).await;
-        });
+        //
+        // GPUI's render thread drops the handle (via `forget_tab`)
+        // outside of a tokio runtime context, where `tokio::spawn`
+        // would panic and take the app with it. Guard with
+        // `Handle::try_current` — if no runtime is in scope we
+        // simply drop `self.inbox`, which closes the channel and
+        // makes the task's `inbox.recv().await` return `None`
+        // (the explicit Shutdown is just a hint).
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let inbox = self.inbox.clone();
+            handle.spawn(async move {
+                let _ = inbox.send(TerminalCommand::Shutdown).await;
+            });
+        }
     }
 }
 
