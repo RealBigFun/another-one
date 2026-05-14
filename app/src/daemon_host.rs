@@ -1172,6 +1172,76 @@ impl DaemonRegistry for DesktopTerminalRegistry {
         });
     }
 
+    /// Phase 5d-i of design 01 (#158): daemon-side PTY spawn for the
+    /// desktop registry. Resolves the launch config from the
+    /// project store, calls
+    /// [`daemon::terminal::spawn_terminal_in_daemon`], and stores
+    /// the resulting Term task in [`RegistryState::term_tasks`] so a
+    /// subscribed viewer's [`subscribe_terminal_frames`] resolves.
+    ///
+    /// Returns `Ok(None)` ("fall through to legacy launch_tab") in
+    /// any of these cases:
+    /// - tab already has a Term task (don't double-spawn);
+    /// - section / tab not found in the project store;
+    /// - tab has no `launch_config` persisted (warm launches and
+    ///   some legacy migrations land here — the legacy spawn path
+    ///   handles them).
+    ///
+    /// Spawn errors propagate as `Err`, surfaced to the caller as
+    /// `WorkerReply::Err { Internal }` by the dispatch arm.
+    fn daemon_spawn_terminal<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<Option<u32>>> {
+        let inner = self.inner.clone();
+        let section = section_id.to_string();
+        let tab = tab_id.to_string();
+        Box::pin(async move {
+            // Resolve the launch config under the lock; release
+            // before doing any blocking syscalls.
+            let Some((key, request)) = with_registry_state(&inner, |state| {
+                let key = key_from_wire(&section, &tab)?;
+                if state.term_tasks.contains_key(&key) {
+                    // Already spawned daemon-side; fall through.
+                    return None;
+                }
+                let request = build_daemon_spawn_request(state, &key)?;
+                Some((key, request))
+            })
+            .flatten() else {
+                return Ok(None);
+            };
+
+            // PTY open + child spawn block briefly; acceptable on
+            // a runtime worker. Inside `spawn_terminal_in_daemon`
+            // the Term task is spawned via `tokio::spawn` which
+            // requires being inside a runtime context — we are,
+            // since this future runs on the daemon's runtime.
+            let outcome = match daemon::terminal::spawn_terminal_in_daemon(request) {
+                Ok(o) => o,
+                Err(error) => return Err(error),
+            };
+            let process_id = outcome.process_id;
+
+            // Install the task. If the registry has dropped (app
+            // is shutting down), drop the outcome on the floor;
+            // its Drop will tear down the spawned child.
+            with_registry_state(&inner, |state| {
+                state.term_tasks.insert(key, outcome.task);
+                // Hold the SpawnedChild + masterPty etc. by
+                // leaking from the outcome — PTY lifetime is now
+                // tied to forget_tab dropping the Term task. The
+                // SpawnedChild::kill on tab close happens via
+                // forget_tab today's GPUI path; daemon-side
+                // teardown is wired in 5d-ii when the desktop
+                // stops spawning locally.
+                std::mem::forget(outcome.child);
+            });
+            Ok(Some(process_id.unwrap_or(0)))
+        })
+    }
+
     fn read_active_git_state(&self, project_id: &str) -> Option<ActiveGitStateWire> {
         let project_path = self
             .with_state(|state| project_path(state, project_id))
@@ -1790,6 +1860,47 @@ fn git_action_settings(store: &ProjectStore) -> GitActionSettings {
 
 fn project_path(state: &RegistryState, project_id: &str) -> Option<PathBuf> {
     state.project_store.workspace_path(project_id)
+}
+
+/// Phase 5d-i of design 01 (#158): build a
+/// [`daemon::terminal::SpawnRequest`] for `(section, tab)` from the
+/// project store snapshot. Returns `None` when the tab can't be
+/// resolved or has no persisted launch config (warm launches and
+/// some legacy migrations land in that branch — the legacy spawn
+/// path handles them).
+fn build_daemon_spawn_request(
+    state: &RegistryState,
+    key: &TerminalRuntimeKey,
+) -> Option<daemon::terminal::SpawnRequest> {
+    use another_one_core::terminal_types::TerminalGridSize;
+
+    let section_key = key.section_id.store_key();
+    let section = state.project_store.terminal_sections.get(&section_key)?;
+    let tab = section.tabs.iter().find(|t| t.id == key.tab_id)?;
+    let launch_config = tab.launch_config.clone()?;
+
+    // Walk back from section -> task -> project to resolve the cwd.
+    // The section_key is the task's `section_id`; we find the task
+    // by linear scan since the project_store doesn't index tasks
+    // by section_id (cheap; typical workspaces have <100 tasks).
+    let task = state
+        .project_store
+        .tasks
+        .values()
+        .flatten()
+        .find(|t| t.section_id == section_key);
+    let cwd = task.and_then(|task| project_path(state, &task.target_project_id));
+
+    // Use a sane default initial size; the first viewer's resize
+    // hint will reshape both the Term grid and the PTY master.
+    let size = TerminalGridSize::default();
+
+    Some(daemon::terminal::SpawnRequest {
+        cwd,
+        launch_config,
+        agent_launch_args: Vec::new(),
+        size,
+    })
 }
 
 fn with_registry_state<R>(
