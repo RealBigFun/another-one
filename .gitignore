@@ -37,3 +37,11 @@ app/android/app/src/main/jniLibs/
 # root after a panicking gradle / cargo run.
 app/android/core.*
 app/android/hs_err_pid*.log
+
+# Local agent scratch state — worktrees and ephemeral settings
+# checked out by the .claude harness.
+.claude/worktrees/
+.claude/settings.json
+
+# Project-root core dumps from panicking child processes.
+/core.[0-9]*

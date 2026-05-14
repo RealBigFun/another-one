@@ -755,7 +755,7 @@ fn build_surface_snapshot_from_proto(snapshot: &ProtoGridSnapshot) -> TerminalSu
                 width: cell_width,
                 text: chunk.clone(),
                 copy_text,
-                hyperlink: None,
+                hyperlink: cell.hyperlink.clone(),
             });
 
             if is_cursor {
@@ -894,7 +894,15 @@ fn proto_cell_display_text(cell: &ProtoGridCell) -> String {
     } else {
         cell.ch
     };
-    ch.to_string()
+    let mut out = String::with_capacity(1 + cell.zero_width.len());
+    out.push(ch);
+    // Combining marks / ZWJ tail (e.g. accented letters, flag
+    // emoji, family ZWJ sequences) render over the same cell.
+    // Forward them so the renderer composes the glyph correctly.
+    for combiner in &cell.zero_width {
+        out.push(*combiner);
+    }
+    out
 }
 
 fn proto_cell_copy_text(cell: &ProtoGridCell) -> String {
@@ -902,11 +910,19 @@ fn proto_cell_copy_text(cell: &ProtoGridCell) -> String {
         return " ".to_string();
     }
     let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
-    ch.to_string()
+    let mut out = String::with_capacity(1 + cell.zero_width.len());
+    out.push(ch);
+    for combiner in &cell.zero_width {
+        out.push(*combiner);
+    }
+    out
 }
 
 fn proto_cell_is_render_blank(cell: &ProtoGridCell) -> bool {
     if cell.ch != ' ' && cell.ch != '\0' {
+        return false;
+    }
+    if !cell.zero_width.is_empty() {
         return false;
     }
     if cell.bg != ProtoGridColor::Default {
@@ -928,6 +944,9 @@ fn proto_cell_is_render_blank(cell: &ProtoGridCell) -> bool {
 }
 
 fn proto_cell_is_trimmable_blank(cell: &ProtoGridCell) -> bool {
+    if !cell.zero_width.is_empty() {
+        return false;
+    }
     cell.flags.contains(ProtoGridCellFlags::HIDDEN) || cell.ch == ' ' || cell.ch == '\0'
 }
 
@@ -1004,13 +1023,22 @@ fn proto_underline_style(cell: &ProtoGridCell, foreground: Hsla) -> Option<Under
     if !any_underline {
         return None;
     }
+    // SGR 58 (`4:N` underline-color) rides on the cell's
+    // `underline_color` wire field. `Default` falls back to the
+    // resolved foreground so plain SGR 4 keeps painting in the text
+    // colour, matching alacritty's `cell.underline_color()` returning
+    // `None`.
+    let color = match cell.underline_color {
+        ProtoGridColor::Default => foreground,
+        other => resolve_grid_color(other, cell.flags, true),
+    };
     Some(UnderlineStyle {
         thickness: px(if cell.flags.contains(ProtoGridCellFlags::DOUBLE_UNDERLINE) {
             2.
         } else {
             1.
         }),
-        color: Some(foreground),
+        color: Some(color),
         wavy: cell.flags.contains(ProtoGridCellFlags::UNDERCURL),
     })
 }
@@ -1062,6 +1090,7 @@ fn cursor_snapshot_from_proto(
     let kind = match shape {
         Shape::Underline | Shape::UnderlineBlinking => TerminalCursorKind::Underline,
         Shape::Beam | Shape::BeamBlinking => TerminalCursorKind::Beam,
+        Shape::HollowBlock | Shape::HollowBlockBlinking => TerminalCursorKind::HollowBlock,
         _ => TerminalCursorKind::Block,
     };
     Some(TerminalCursorSnapshot {
@@ -1072,7 +1101,10 @@ fn cursor_snapshot_from_proto(
         color: crate::theme::terminal_default_cursor(),
         blinking: matches!(
             shape,
-            Shape::BlockBlinking | Shape::UnderlineBlinking | Shape::BeamBlinking
+            Shape::BlockBlinking
+                | Shape::UnderlineBlinking
+                | Shape::BeamBlinking
+                | Shape::HollowBlockBlinking
         ),
     })
 }
@@ -1951,6 +1983,7 @@ mod tests {
             },
             mode: ModeFlags::default(),
             scroll_offset: 0,
+            history_lines: 0,
         }
     }
 

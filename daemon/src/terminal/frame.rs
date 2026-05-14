@@ -64,6 +64,7 @@ fn serialize_snapshot<E: EventListener>(term: &Term<E>) -> GridSnapshot {
     let mode = serialize_mode_flags(term.mode());
 
     let scroll_offset = clamp_u32(grid.display_offset());
+    let history_lines = clamp_u32(grid.history_size());
 
     GridSnapshot {
         cols: clamp_u16(cols as i32),
@@ -73,6 +74,7 @@ fn serialize_snapshot<E: EventListener>(term: &Term<E>) -> GridSnapshot {
         cursor,
         mode,
         scroll_offset,
+        history_lines,
     }
 }
 
@@ -97,11 +99,21 @@ fn serialize_row<E: EventListener>(term: &Term<E>, line: Line) -> GridRow {
 }
 
 fn serialize_cell(cell: &Cell) -> GridCell {
+    let zero_width: Vec<char> = cell
+        .zerowidth()
+        .map(|chars| chars.iter().copied().collect())
+        .unwrap_or_default();
     GridCell {
         ch: if cell.c == '\0' { ' ' } else { cell.c },
         fg: serialize_color(cell.fg),
         bg: serialize_color(cell.bg),
         flags: serialize_flags(cell.flags),
+        underline_color: cell
+            .underline_color()
+            .map(serialize_color)
+            .unwrap_or(GridColor::Default),
+        hyperlink: cell.hyperlink().map(|link| link.uri().to_string()),
+        zero_width,
     }
 }
 
@@ -185,13 +197,13 @@ fn map_cursor_shape(shape: VteCursorShape, blinking: bool) -> CursorShape {
     match (shape, blinking) {
         (VteCursorShape::Block, false) => CursorShape::Block,
         (VteCursorShape::Block, true) => CursorShape::BlockBlinking,
-        // alacritty's `HollowBlock` (cursor outline only) renders
-        // closest to a block on the wire; viewers can still pick
-        // their own outline rendering. Promoting to a typed
-        // `HollowBlock` variant if needed is a wire-additive
-        // change later.
-        (VteCursorShape::HollowBlock, false) => CursorShape::Block,
-        (VteCursorShape::HollowBlock, true) => CursorShape::BlockBlinking,
+        // alacritty's `HollowBlock` (cursor outline only) maps to
+        // the dedicated wire variant so viewers can render the
+        // outline-only cursor (typical when the window loses
+        // focus). Older clients that don't recognise the variant
+        // can collapse it back to `Block` themselves.
+        (VteCursorShape::HollowBlock, false) => CursorShape::HollowBlock,
+        (VteCursorShape::HollowBlock, true) => CursorShape::HollowBlockBlinking,
         (VteCursorShape::Underline, false) => CursorShape::Underline,
         (VteCursorShape::Underline, true) => CursorShape::UnderlineBlinking,
         (VteCursorShape::Beam, false) => CursorShape::Beam,

@@ -2306,6 +2306,10 @@ pub enum TerminalRestoreStatus {
 /// `alacritty_terminal::term::cell::Cell` the renderer needs;
 /// purposely independent of alacritty's internal types so the wire
 /// shape doesn't track upstream refactors.
+///
+/// All optional fields use `#[serde(default)]` so older snapshots
+/// (without `underline_color`, `hyperlink`, or `zero_width`) decode
+/// into the wire-default values rather than failing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GridCell {
     /// The cell's primary character. Wide characters (CJK, etc.)
@@ -2315,6 +2319,21 @@ pub struct GridCell {
     pub fg: GridColor,
     pub bg: GridColor,
     pub flags: GridCellFlags,
+    /// Per-cell underline colour (SGR 58 / `4:N`). `Default` means
+    /// "use the foreground colour", matching alacritty's
+    /// `cell.underline_color()` returning `None`.
+    #[serde(default = "GridColor::default_for_underline", skip_serializing_if = "GridColor::is_default")]
+    pub underline_color: GridColor,
+    /// OSC 8 hyperlink target. `None` when the cell isn't part of a
+    /// hyperlinked run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<String>,
+    /// Combining / zero-width characters that follow `ch` and render
+    /// over the same cell (combining marks, ZWJ-joined emoji, etc.).
+    /// Empty when there are no combiners; non-empty when alacritty's
+    /// `cell.zerowidth()` returned a non-empty slice for this cell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zero_width: Vec<char>,
 }
 
 impl Default for GridCell {
@@ -2324,6 +2343,9 @@ impl Default for GridCell {
             fg: GridColor::Default,
             bg: GridColor::Default,
             flags: GridCellFlags::empty(),
+            underline_color: GridColor::Default,
+            hyperlink: None,
+            zero_width: Vec::new(),
         }
     }
 }
@@ -2342,6 +2364,21 @@ pub enum GridColor {
     Rgb { r: u8, g: u8, b: u8 },
     /// Indexed palette colour; renderer maps to its active palette.
     Indexed { index: u8 },
+}
+
+impl GridColor {
+    /// `serde(default = ...)` hook. Default underline colour is
+    /// `Default`, which the renderer interprets as "track the
+    /// foreground colour".
+    pub const fn default_for_underline() -> Self {
+        GridColor::Default
+    }
+
+    /// `serde(skip_serializing_if = ...)` hook. Lets the wire omit
+    /// the field when it carries the wire-default value.
+    pub const fn is_default(&self) -> bool {
+        matches!(self, GridColor::Default)
+    }
 }
 
 /// Per-cell rendering attributes. Bitfield kept dep-light (no
@@ -2408,6 +2445,13 @@ pub struct GridSnapshot {
     /// `0` means "viewing the live screen". Non-zero values are how
     /// many lines above the bottom the viewer is scrolled.
     pub scroll_offset: u32,
+    /// Total scrollback rows the daemon currently retains for this
+    /// tab (i.e. `term.grid().history_size()`). Lets viewers clamp a
+    /// `scroll_offset` they want to advance to without round-tripping
+    /// `Control::TerminalReadScrollback` first. `0` for fresh tabs
+    /// or tabs whose history has been cleared.
+    #[serde(default)]
+    pub history_lines: u32,
 }
 
 /// One row's contents replacement, addressed by line number from the
@@ -2433,6 +2477,11 @@ pub struct CursorState {
 
 /// Caret presentation. Blinking variants signal the renderer to
 /// drive a blink animation; non-blinking variants stay solid.
+///
+/// `HollowBlock` mirrors alacritty's outline-only block cursor
+/// (rendered when the window is unfocused or DECSCUSR requested it
+/// explicitly). Older clients that don't recognise the variant fall
+/// back to `Block` via the `try_from` helper.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
@@ -2443,6 +2492,8 @@ pub enum CursorShape {
     BlockBlinking,
     UnderlineBlinking,
     BeamBlinking,
+    HollowBlock,
+    HollowBlockBlinking,
 }
 
 /// Terminal mode flags the renderer cares about. Mouse mode bits
@@ -2778,12 +2829,18 @@ mod wire_roundtrip_tests {
                         fg: GridColor::Default,
                         bg: GridColor::Default,
                         flags: GridCellFlags::empty(),
+                        underline_color: GridColor::Default,
+                        hyperlink: None,
+                        zero_width: Vec::new(),
                     },
                     GridCell {
                         ch: 'i',
                         fg: GridColor::Rgb { r: 255, g: 0, b: 0 },
                         bg: GridColor::Indexed { index: 17 },
                         flags: GridCellFlags(GridCellFlags::BOLD | GridCellFlags::UNDERLINE),
+                        underline_color: GridColor::Rgb { r: 0, g: 255, b: 0 },
+                        hyperlink: Some("https://example.com".into()),
+                        zero_width: vec!['\u{0301}'],
                     },
                     GridCell::default(),
                 ],
@@ -2800,6 +2857,7 @@ mod wire_roundtrip_tests {
                 ..ModeFlags::default()
             },
             scroll_offset: 0,
+            history_lines: 128,
         }
     }
 
@@ -2824,6 +2882,9 @@ mod wire_roundtrip_tests {
                     fg: GridColor::Default,
                     bg: GridColor::Default,
                     flags: GridCellFlags::empty(),
+                    underline_color: GridColor::Default,
+                    hyperlink: None,
+                    zero_width: Vec::new(),
                 }],
             }],
             cursor: Some(CursorState {
