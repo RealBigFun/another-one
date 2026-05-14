@@ -1916,6 +1916,12 @@ pub struct AnotherOneApp {
     warm_terminal_launch_receiver: mpsc::Receiver<WarmTerminalLaunchReply>,
     /// Live PTY-backed terminal runtimes keyed by section and tab id.
     live_terminal_runtimes: HashMap<TerminalRuntimeKey, LiveTerminalRuntime>,
+    /// Phase 5b of design 01 (#158): the tab the desktop currently
+    /// has a `Control::TerminalSubscribe` open for, if any. None
+    /// when no tab is focused or the daemon-spawn flag is off.
+    /// Tracking the prior subscription lets `update_terminal_subscription`
+    /// emit a clean Unsubscribe before the next Subscribe.
+    subscribed_terminal_key: Option<TerminalRuntimeKey>,
     /// Last terminal mutation that needs low-latency drain/render ticks.
     last_terminal_activity: Instant,
     /// Input to send once a newly launched action terminal is ready.
@@ -4838,6 +4844,7 @@ impl AnotherOneApp {
             warm_terminal_launch_sender,
             warm_terminal_launch_receiver,
             live_terminal_runtimes: HashMap::new(),
+            subscribed_terminal_key: None,
             last_terminal_activity: Instant::now(),
             pending_post_launch_input: HashMap::new(),
             terminal_manager: another_one_core::terminal_manager::TerminalManager::new(),
@@ -5641,8 +5648,30 @@ impl AnotherOneApp {
     #[allow(deprecated)] // Phase 4 (design 01 / #158): PTY spawn moves to daemon.
     fn ensure_active_terminal_runtime(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(request) = self.active_terminal_request(window, cx) else {
+            // No active tab — if we held a daemon-side
+            // subscription, drop it so a backgrounded section
+            // doesn't keep the pacer alive.
+            if self.subscribed_terminal_key.is_some()
+                && daemon::terminal::daemon_spawn_enabled()
+            {
+                if let Some(old) = self.subscribed_terminal_key.take() {
+                    let session = self.session_handle();
+                    crate::session_host::dispatch_fire_and_forget(
+                        session,
+                        daemon_proto::Control::TerminalUnsubscribe {
+                            section_id: old.section_id.store_key(),
+                            tab_id: old.tab_id.clone(),
+                        },
+                        |_| {},
+                    );
+                }
+            }
             return;
         };
+
+        // Phase 5b-iii: keep the daemon-canonical subscription
+        // pointed at the focused tab. No-op when the flag is off.
+        self.update_terminal_subscription(&request.key);
 
         if self.live_terminal_runtimes.contains_key(&request.key) {
             if self.animating {
@@ -6616,6 +6645,59 @@ impl AnotherOneApp {
                 }
             }
         }
+    }
+
+    /// Phase 5b-iii of design 01 (#158): keep the desktop's
+    /// `Control::TerminalSubscribe` aimed at the focused tab. Called
+    /// every render tick from `ensure_active_terminal_runtime`. The
+    /// flag check is the only thing that gates this work — with the
+    /// flag off, every call is a `daemon_spawn_enabled() == false`
+    /// short-circuit and nothing else runs.
+    fn update_terminal_subscription(&mut self, focused: &TerminalRuntimeKey) {
+        if !daemon::terminal::daemon_spawn_enabled() {
+            return;
+        }
+        if self.subscribed_terminal_key.as_ref() == Some(focused) {
+            return;
+        }
+        let session = self.session_handle();
+        // Unsubscribe from the previous tab if any. Idempotent on
+        // the daemon side; we don't await the reply because we
+        // don't care about ordering against the next subscribe —
+        // the daemon's pacer keys on (viewer, section, tab) so
+        // overlap is harmless.
+        if let Some(old) = self.subscribed_terminal_key.take() {
+            crate::session_host::dispatch_fire_and_forget(
+                Arc::clone(&session),
+                daemon_proto::Control::TerminalUnsubscribe {
+                    section_id: old.section_id.store_key(),
+                    tab_id: old.tab_id.clone(),
+                },
+                |result| {
+                    if let Err(err) = result {
+                        log::trace!("TerminalUnsubscribe failed: {err}");
+                    }
+                },
+            );
+        }
+        // Subscribe to the new focused tab. `since_seq: None`
+        // requests a fresh `Full` frame; max_fps=60 is a hint that
+        // the pacer ignores in v1 (single fixed cap).
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::TerminalSubscribe {
+                section_id: focused.section_id.store_key(),
+                tab_id: focused.tab_id.clone(),
+                max_fps: 60,
+                since_seq: None,
+            },
+            |result| {
+                if let Err(err) = result {
+                    log::trace!("TerminalSubscribe failed: {err}");
+                }
+            },
+        );
+        self.subscribed_terminal_key = Some(focused.clone());
     }
 
     /// Drop a tab's entries from the registry. Called when the
