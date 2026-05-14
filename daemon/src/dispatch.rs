@@ -1109,6 +1109,10 @@ fn classify_shortcut_action(message: &str) -> ErrKind {
 mod tests {
     use super::*;
     use daemon_proto::ProjectSummary;
+    // `daemon_transport::in_memory` is deprecated
+    // (see docs/designs/01-daemon-canonical-terminal.md); this
+    // dispatch test still uses it until the migration lands.
+    #[allow(deprecated)]
     use daemon_transport::in_memory::pair;
     #[allow(unused_imports)]
     use daemon_transport::Session as _;

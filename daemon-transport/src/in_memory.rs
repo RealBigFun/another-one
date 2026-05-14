@@ -5,6 +5,23 @@
 //! concrete impl that proves the trait surface isn't iroh-shaped by
 //! accident.
 //!
+//! # Deprecated
+//!
+//! This transport is deprecated. The desktop in-process daemon seam
+//! and the dispatch test harness still use it; both will move off as
+//! part of the daemon-canonical-terminal work
+//! (`docs/designs/01-daemon-canonical-terminal.md`). New callers
+//! should not be added; expect this module to be removed once the
+//! existing call sites are migrated.
+//!
+
+// The module's own internals reference its deprecated types
+// (impl blocks, `pair()` calling itself, struct fields, in-module
+// tests). The `#[deprecated]` attributes are aimed at external
+// callers in other crates; suppress the in-crate warnings here so
+// the deprecation message stays a signal for callers, not noise.
+#![allow(deprecated)]
+
 //! ## Topology
 //!
 //! ```text
@@ -98,6 +115,10 @@ enum ServerFrame {
 /// The pair is independent of any transport / factory machinery. Use
 /// it for unit tests that just need both halves wired up without
 /// the discovery dance.
+#[deprecated(
+    since = "0.2.1",
+    note = "daemon_transport::in_memory is deprecated; see docs/designs/01-daemon-canonical-terminal.md. Existing callers (desktop daemon_host, dispatch test harness) will be migrated; do not add new ones."
+)]
 pub fn pair(peer_id: impl Into<String>) -> (Box<dyn ServerSession>, Box<dyn Session>) {
     let peer_id = peer_id.into();
     let (c2s_tx, c2s_rx) = mpsc::unbounded_channel::<ClientFrame>();
@@ -454,6 +475,10 @@ impl ServerSession for InMemoryServerSession {
 /// convention — keep one per harness so the names don't collide
 /// across tests.
 #[derive(Clone, Default)]
+#[deprecated(
+    since = "0.2.1",
+    note = "daemon_transport::in_memory is deprecated; see docs/designs/01-daemon-canonical-terminal.md."
+)]
 pub struct InMemoryDirectory {
     // Coordination state lives on the factory's `transports` map for
     // now — the directory is currently a marker / future
@@ -480,6 +505,10 @@ impl InMemoryDirectory {
 
 /// Server-side `Transport`. Pulls server halves of named pairs as
 /// clients dial them.
+#[deprecated(
+    since = "0.2.1",
+    note = "daemon_transport::in_memory is deprecated; see docs/designs/01-daemon-canonical-terminal.md."
+)]
 pub struct InMemoryTransport {
     name: String,
     /// Reserved for future cross-transport coordination. Kept on
@@ -542,6 +571,10 @@ impl Transport for InMemoryTransport {
 /// Client-side factory. Hosts a directory shared with one or more
 /// `InMemoryTransport`s (matched by name).
 #[derive(Clone)]
+#[deprecated(
+    since = "0.2.1",
+    note = "daemon_transport::in_memory is deprecated; see docs/designs/01-daemon-canonical-terminal.md."
+)]
 pub struct InMemoryTransportFactory {
     /// Coordination state for future timed-pairing semantics. The
     /// `transports` map below is what dials currently route through;

@@ -21,7 +21,12 @@ use std::time::Duration;
 use another_one::__test_harness::{DesktopTerminalRegistry, RegistryState};
 use another_one_core::project_store::{Project, ProjectStore, Task};
 use daemon_proto::{Control, WorkerReply};
-use daemon_transport::{in_memory::pair, DialTarget, Session as ClientSession, SessionEvent};
+// `daemon_transport::in_memory` is deprecated
+// (see docs/designs/01-daemon-canonical-terminal.md); this dispatch
+// test harness still relies on it until the migration lands.
+#[allow(deprecated)]
+use daemon_transport::in_memory::pair;
+use daemon_transport::{DialTarget, Session as ClientSession, SessionEvent};
 use futures_core::Stream;
 
 /// Test fixture wiring: `RegistryState` + `DesktopTerminalRegistry` +
