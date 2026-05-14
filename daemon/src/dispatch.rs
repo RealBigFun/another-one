@@ -1064,10 +1064,38 @@ async fn dispatch_call(
             let _was_present = subs.remove(&section_id, &tab_id);
             Some(WorkerReply::TerminalUnsubscribeAck)
         }
-        Control::TerminalReadScrollback { .. }
-        | Control::TerminalSearch { .. }
-        | Control::TerminalInput { .. } => Some(WorkerReply::Err {
-            message: "terminal scrollback/search/input not yet implemented; see docs/designs/01-daemon-canonical-terminal.md (Phase 3+).".into(),
+        Control::TerminalReadScrollback {
+            section_id,
+            tab_id,
+            range,
+        } => match registry.terminal_read_scrollback(&section_id, &tab_id, range).await {
+            Ok(reply) => Some(WorkerReply::TerminalScrollback {
+                section_id,
+                tab_id,
+                reply,
+            }),
+            Err(error) => Some(WorkerReply::Err {
+                message: format!("terminal scrollback failed: {error:#}"),
+                kind: ErrKind::Internal,
+            }),
+        },
+        Control::TerminalSearch {
+            section_id,
+            tab_id,
+            request,
+        } => match registry.terminal_search(&section_id, &tab_id, request).await {
+            Ok(reply) => Some(WorkerReply::TerminalSearch {
+                section_id,
+                tab_id,
+                reply,
+            }),
+            Err(error) => Some(WorkerReply::Err {
+                message: format!("terminal search failed: {error:#}"),
+                kind: ErrKind::Internal,
+            }),
+        },
+        Control::TerminalInput { .. } => Some(WorkerReply::Err {
+            message: "terminal input not yet implemented; see docs/designs/01-daemon-canonical-terminal.md (Phase 6 / 7).".into(),
             kind: ErrKind::Internal,
         }),
 

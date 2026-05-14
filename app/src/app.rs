@@ -1952,6 +1952,12 @@ pub struct AnotherOneApp {
     /// Active scrollback search (Cmd-F). At most one terminal at a time;
     /// opening the search on a different terminal closes any previous.
     pub(crate) terminal_search: Option<TerminalSearchState>,
+    /// Phase 5f of design 01 (#158): in-flight
+    /// `Control::TerminalSearch` reply channel. The session call
+    /// callback pushes `(query, reply)` so a stale reply for a
+    /// query the user already changed gets ignored.
+    terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
+    terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -4724,6 +4730,12 @@ impl AnotherOneApp {
             mpsc::sync_channel(TERMINAL_LAUNCH_QUEUE_CAP);
         let (warm_terminal_launch_sender, warm_terminal_launch_receiver) =
             mpsc::sync_channel(WARM_TERMINAL_LAUNCH_QUEUE_CAP);
+        let (terminal_search_reply_tx, terminal_search_reply_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(
+                String,
+                TerminalRuntimeKey,
+                daemon_proto::TerminalSearchReply,
+            )>();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -4865,6 +4877,8 @@ impl AnotherOneApp {
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             terminal_search: None,
+            terminal_search_reply_tx,
+            terminal_search_reply_rx,
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
@@ -8663,32 +8677,91 @@ impl AnotherOneApp {
         };
         let key = state.key.clone();
         let query = state.query.clone();
-        let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
+        // Empty query — just clear results and bail.
+        if query.is_empty() {
+            if let Some(state) = self.terminal_search.as_mut() {
+                state.matches.clear();
+                state.current_index = 0;
+            }
+            cx.notify();
             return;
-        };
-        let mut matches = runtime.search_scrollback(&query);
-        // Sort top-to-bottom (most-negative line first), left-to-right
-        // so prev/next traversal is deterministic regardless of the
-        // scan order chosen by `search_scrollback_in_term`.
-        matches.sort_by_key(|m| (m.line, m.start_col));
-        // Now pick a starting index against the sorted list — the first
-        // match at or below the current viewport top so the initial
-        // selection feels local to where the user was looking.
-        let display_offset = runtime.display_offset() as i32;
-        let top_grid_line = -display_offset - runtime.screen_lines() as i32 + 1;
-        let mut current_index = 0;
-        for (idx, m) in matches.iter().enumerate() {
-            if m.line >= top_grid_line {
-                current_index = idx;
-                break;
+        }
+        // Phase 5f of design 01 (#158): search runs against the
+        // daemon's canonical Term task via Control::TerminalSearch.
+        // Fire and forget; the reply lands in
+        // `terminal_search_reply_rx` for `drain_terminal_search_replies`
+        // to apply on the next render tick.
+        let session = self.session_handle();
+        let reply_tx = self.terminal_search_reply_tx.clone();
+        let key_for_callback = key.clone();
+        let query_for_callback = query.clone();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::TerminalSearch {
+                section_id: key.section_id.store_key(),
+                tab_id: key.tab_id.clone(),
+                request: daemon_proto::TerminalSearchRequest {
+                    pattern: query.clone(),
+                    regex: false,
+                    case_fold: daemon_proto::TerminalCaseFold::Insensitive,
+                },
+            },
+            move |result| match result {
+                Ok(daemon_proto::WorkerReply::TerminalSearch { reply, .. }) => {
+                    let _ = reply_tx.send((query_for_callback, key_for_callback, reply));
+                }
+                Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
+                    log::warn!("TerminalSearch err: {message}");
+                }
+                Ok(other) => {
+                    log::warn!("TerminalSearch unexpected reply: {:?}", std::mem::discriminant(&other));
+                }
+                Err(err) => {
+                    log::warn!("TerminalSearch session call failed: {err}");
+                }
+            },
+        );
+    }
+
+    /// Phase 5f of design 01 (#158): drain replies from the search
+    /// RPC channel. Stale replies (query no longer matches the
+    /// active search) are silently dropped.
+    fn drain_terminal_search_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+        loop {
+            match self.terminal_search_reply_rx.try_recv() {
+                Ok((query, key, reply)) => {
+                    let active_matches = match self.terminal_search.as_ref() {
+                        Some(s) if s.key == key && s.query == query => true,
+                        _ => false,
+                    };
+                    if !active_matches {
+                        continue;
+                    }
+                    let mut matches: Vec<TerminalScrollbackMatch> = reply
+                        .matches
+                        .into_iter()
+                        .map(|m| TerminalScrollbackMatch {
+                            line: m.line as i32,
+                            start_col: m.start_col as usize,
+                            end_col: m.end_col as usize,
+                        })
+                        .collect();
+                    matches.sort_by_key(|m| (m.line, m.start_col));
+                    if let Some(state) = self.terminal_search.as_mut() {
+                        state.matches = matches;
+                        state.current_index = state
+                            .current_index
+                            .min(state.matches.len().saturating_sub(1));
+                    }
+                    self.scroll_to_current_search_match(cx);
+                    updated = true;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
-        if let Some(state) = self.terminal_search.as_mut() {
-            state.matches = matches;
-            state.current_index = current_index.min(state.matches.len().saturating_sub(1));
-        }
-        self.scroll_to_current_search_match(cx);
-        cx.notify();
+        updated
     }
 
     fn scroll_to_current_search_match(&mut self, _cx: &mut Context<Self>) {
@@ -17171,6 +17244,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_check_runs_lookup(cx);
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
+                            should_notify |= this.drain_terminal_search_replies(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;

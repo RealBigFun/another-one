@@ -1021,6 +1021,67 @@ impl DaemonRegistry for DesktopTerminalRegistry {
             .flatten()
     }
 
+    /// Phase 5f of design 01 (#158): route
+    /// `Control::TerminalSearch` through the per-tab Term task.
+    /// Looks up the task handle, sends a `Search` command via
+    /// oneshot, awaits the reply.
+    fn terminal_search<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+        request: daemon_proto::TerminalSearchRequest,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<daemon_proto::TerminalSearchReply>> {
+        let inner = self.inner.clone();
+        let section = section_id.to_string();
+        let tab = tab_id.to_string();
+        Box::pin(async move {
+            let key = key_from_wire(&section, &tab)
+                .ok_or_else(|| anyhow::anyhow!("malformed section/tab id"))?;
+            let handle = with_registry_state(&inner, |state| {
+                state.term_tasks.get(&key).map(|t| t.inbox_clone())
+            })
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("no terminal task for section/tab"))?;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle
+                .send(daemon::terminal::TerminalCommand::Search { request, reply: tx })
+                .await
+                .map_err(|e| anyhow::anyhow!("term task inbox closed: {e}"))?;
+            rx.await
+                .map_err(|e| anyhow::anyhow!("term task dropped reply: {e}"))
+        })
+    }
+
+    /// Phase 5f of design 01 (#158): route
+    /// `Control::TerminalReadScrollback` through the per-tab Term
+    /// task.
+    fn terminal_read_scrollback<'a>(
+        &'a self,
+        section_id: &'a str,
+        tab_id: &'a str,
+        range: daemon_proto::ScrollbackRange,
+    ) -> daemon::registry::RegistryFuture<'a, anyhow::Result<daemon_proto::TerminalScrollbackReply>> {
+        let inner = self.inner.clone();
+        let section = section_id.to_string();
+        let tab = tab_id.to_string();
+        Box::pin(async move {
+            let key = key_from_wire(&section, &tab)
+                .ok_or_else(|| anyhow::anyhow!("malformed section/tab id"))?;
+            let handle = with_registry_state(&inner, |state| {
+                state.term_tasks.get(&key).map(|t| t.inbox_clone())
+            })
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("no terminal task for section/tab"))?;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle
+                .send(daemon::terminal::TerminalCommand::ReadScrollback { range, reply: tx })
+                .await
+                .map_err(|e| anyhow::anyhow!("term task inbox closed: {e}"))?;
+            rx.await
+                .map_err(|e| anyhow::anyhow!("term task dropped reply: {e}"))
+        })
+    }
+
     fn tab_input(&self, section_id: &str, tab_id: &str, bytes: &[u8]) {
         let Some(key) = key_from_wire(section_id, tab_id) else {
             return;
