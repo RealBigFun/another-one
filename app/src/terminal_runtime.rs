@@ -1043,8 +1043,8 @@ fn resolve_grid_color(color: ProtoGridColor, flags: ProtoGridCellFlags, is_foreg
         ProtoGridColor::Default => {
             if is_foreground {
                 if flags.contains(ProtoGridCellFlags::DIM) {
-                    let rgb = current_terminal_palette().dim_foreground;
-                    gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
+                    let [r, g, b] = crate::theme::current_terminal_palette().dim_foreground;
+                    gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
                 } else {
                     default_foreground_color()
                 }
@@ -1225,8 +1225,8 @@ fn text_run_from_style(style: ResolvedCellStyle) -> TextRun {
 }
 
 fn default_named_color(named: NamedColor) -> Rgb {
-    let palette = current_terminal_palette();
-    match named {
+    let palette = crate::theme::current_terminal_palette();
+    let triple = match named {
         NamedColor::Black => palette.normal[0],
         NamedColor::Red => palette.normal[1],
         NamedColor::Green => palette.normal[2],
@@ -1256,14 +1256,15 @@ fn default_named_color(named: NamedColor) -> Rgb {
         NamedColor::DimCyan => palette.dim[6],
         NamedColor::DimWhite => palette.dim[7],
         NamedColor::DimForeground => palette.dim_foreground,
-    }
+    };
+    rgb_from_triple(triple)
 }
 
 fn default_indexed_color(index: u8) -> Rgb {
-    let palette = current_terminal_palette();
+    let palette = crate::theme::current_terminal_palette();
     match index {
-        0..=7 => palette.normal[index as usize],
-        8..=15 => palette.bright[(index - 8) as usize],
+        0..=7 => rgb_from_triple(palette.normal[index as usize]),
+        8..=15 => rgb_from_triple(palette.bright[(index - 8) as usize]),
         16..=231 => {
             let index = index - 16;
             let red = index / 36;
@@ -1285,6 +1286,10 @@ fn default_indexed_color(index: u8) -> Rgb {
             }
         }
     }
+}
+
+fn rgb_from_triple([r, g, b]: [u8; 3]) -> Rgb {
+    Rgb { r, g, b }
 }
 
 fn default_background_color() -> Hsla {
@@ -1340,113 +1345,6 @@ fn default_color_request(index: usize) -> Rgb {
         x if x == NamedColor::DimCyan as usize => default_named_color(NamedColor::DimCyan),
         x if x == NamedColor::DimWhite as usize => default_named_color(NamedColor::DimWhite),
         _ => default_named_color(NamedColor::Background),
-    }
-}
-
-#[derive(Clone, Copy)]
-struct TerminalPalette {
-    background: Rgb,
-    foreground: Rgb,
-    cursor: Rgb,
-    bright_foreground: Rgb,
-    dim_foreground: Rgb,
-    normal: [Rgb; 8],
-    bright: [Rgb; 8],
-    dim: [Rgb; 8],
-}
-
-fn current_terminal_palette() -> &'static TerminalPalette {
-    terminal_palette(crate::theme::current_terminal_theme())
-}
-
-fn terminal_palette(resolved: crate::theme::ResolvedTheme) -> &'static TerminalPalette {
-    match resolved {
-        crate::theme::ResolvedTheme::Light => &AYU_LIGHT_TERMINAL,
-        crate::theme::ResolvedTheme::Dark => &AYU_DARK_TERMINAL,
-    }
-}
-
-const AYU_DARK_TERMINAL: TerminalPalette = TerminalPalette {
-    background: vte_rgb(0x0d1016),
-    foreground: vte_rgb(0xbfbdb6),
-    cursor: vte_rgb(0x5ac1fe),
-    bright_foreground: vte_rgb(0xbfbdb6),
-    dim_foreground: vte_rgb(0x85847f),
-    normal: [
-        vte_rgb(0x0d1016),
-        vte_rgb(0xef7177),
-        vte_rgb(0xaad84c),
-        vte_rgb(0xfeb454),
-        vte_rgb(0x5ac1fe),
-        vte_rgb(0x39bae5),
-        vte_rgb(0x95e5cb),
-        vte_rgb(0xbfbdb6),
-    ],
-    bright: [
-        vte_rgb(0x545557),
-        vte_rgb(0x83353b),
-        vte_rgb(0x567627),
-        vte_rgb(0x92582b),
-        vte_rgb(0x27618c),
-        vte_rgb(0x205a78),
-        vte_rgb(0x4c806f),
-        vte_rgb(0xfafafa),
-    ],
-    dim: [
-        vte_rgb(0x3a3b3c),
-        vte_rgb(0xa74f53),
-        vte_rgb(0x769735),
-        vte_rgb(0xb17d3a),
-        vte_rgb(0x3e87b1),
-        vte_rgb(0x2782a0),
-        vte_rgb(0x68a08e),
-        vte_rgb(0x85847f),
-    ],
-};
-
-const AYU_LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
-    background: vte_rgb(0xfcfcfc),
-    foreground: vte_rgb(0x5c6166),
-    cursor: vte_rgb(0x3b9ee5),
-    bright_foreground: vte_rgb(0x5c6166),
-    dim_foreground: vte_rgb(0xfcfcfc),
-    normal: [
-        vte_rgb(0x5c6166),
-        vte_rgb(0xef7271),
-        vte_rgb(0x85b304),
-        vte_rgb(0xf1ad49),
-        vte_rgb(0x3b9ee5),
-        vte_rgb(0x55b4d3),
-        vte_rgb(0x4dbf99),
-        vte_rgb(0xfcfcfc),
-    ],
-    bright: [
-        vte_rgb(0x3b9ee5),
-        vte_rgb(0xfebab6),
-        vte_rgb(0xc7d98f),
-        vte_rgb(0xfed5a3),
-        vte_rgb(0xabcdf2),
-        vte_rgb(0xb1d8e8),
-        vte_rgb(0xace0cb),
-        vte_rgb(0xffffff),
-    ],
-    dim: [
-        vte_rgb(0x9c9fa2),
-        vte_rgb(0x833538),
-        vte_rgb(0x445613),
-        vte_rgb(0x8a5227),
-        vte_rgb(0x214c76),
-        vte_rgb(0x2f5669),
-        vte_rgb(0x2a5f4a),
-        vte_rgb(0xbcbec0),
-    ],
-};
-
-const fn vte_rgb(hex: u32) -> Rgb {
-    Rgb {
-        r: ((hex >> 16) & 0xff) as u8,
-        g: ((hex >> 8) & 0xff) as u8,
-        b: (hex & 0xff) as u8,
     }
 }
 
@@ -1853,56 +1751,56 @@ mod tests {
         assert_eq!(styled_run.color, rgb(0xaf87ff).into());
     }
 
-    fn rgb_hex(rgb: Rgb) -> u32 {
-        ((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32
+    fn triple_hex([r, g, b]: [u8; 3]) -> u32 {
+        ((r as u32) << 16) | ((g as u32) << 8) | b as u32
     }
 
-    fn rgb_hexes(colors: [Rgb; 8]) -> [u32; 8] {
-        colors.map(rgb_hex)
+    fn triple_hexes(colors: [[u8; 3]; 8]) -> [u32; 8] {
+        colors.map(triple_hex)
     }
 
     #[test]
     fn ayu_dark_terminal_palette_matches_zed() {
-        let palette = terminal_palette(crate::theme::ResolvedTheme::Dark);
+        let palette = crate::theme::terminal_palette(crate::theme::ResolvedTheme::Dark);
 
-        assert_eq!(rgb_hex(palette.background), 0x0d1016);
-        assert_eq!(rgb_hex(palette.foreground), 0xbfbdb6);
-        assert_eq!(rgb_hex(palette.cursor), 0x5ac1fe);
-        assert_eq!(rgb_hex(palette.bright_foreground), 0xbfbdb6);
-        assert_eq!(rgb_hex(palette.dim_foreground), 0x85847f);
+        assert_eq!(triple_hex(palette.background), 0x0d1016);
+        assert_eq!(triple_hex(palette.foreground), 0xbfbdb6);
+        assert_eq!(triple_hex(palette.cursor), 0x5ac1fe);
+        assert_eq!(triple_hex(palette.bright_foreground), 0xbfbdb6);
+        assert_eq!(triple_hex(palette.dim_foreground), 0x85847f);
         assert_eq!(
-            rgb_hexes(palette.normal),
+            triple_hexes(palette.normal),
             [0x0d1016, 0xef7177, 0xaad84c, 0xfeb454, 0x5ac1fe, 0x39bae5, 0x95e5cb, 0xbfbdb6,]
         );
         assert_eq!(
-            rgb_hexes(palette.bright),
+            triple_hexes(palette.bright),
             [0x545557, 0x83353b, 0x567627, 0x92582b, 0x27618c, 0x205a78, 0x4c806f, 0xfafafa,]
         );
         assert_eq!(
-            rgb_hexes(palette.dim),
+            triple_hexes(palette.dim),
             [0x3a3b3c, 0xa74f53, 0x769735, 0xb17d3a, 0x3e87b1, 0x2782a0, 0x68a08e, 0x85847f,]
         );
     }
 
     #[test]
     fn ayu_light_terminal_palette_matches_zed() {
-        let palette = terminal_palette(crate::theme::ResolvedTheme::Light);
+        let palette = crate::theme::terminal_palette(crate::theme::ResolvedTheme::Light);
 
-        assert_eq!(rgb_hex(palette.background), 0xfcfcfc);
-        assert_eq!(rgb_hex(palette.foreground), 0x5c6166);
-        assert_eq!(rgb_hex(palette.cursor), 0x3b9ee5);
-        assert_eq!(rgb_hex(palette.bright_foreground), 0x5c6166);
-        assert_eq!(rgb_hex(palette.dim_foreground), 0xfcfcfc);
+        assert_eq!(triple_hex(palette.background), 0xfcfcfc);
+        assert_eq!(triple_hex(palette.foreground), 0x5c6166);
+        assert_eq!(triple_hex(palette.cursor), 0x3b9ee5);
+        assert_eq!(triple_hex(palette.bright_foreground), 0x5c6166);
+        assert_eq!(triple_hex(palette.dim_foreground), 0xfcfcfc);
         assert_eq!(
-            rgb_hexes(palette.normal),
+            triple_hexes(palette.normal),
             [0x5c6166, 0xef7271, 0x85b304, 0xf1ad49, 0x3b9ee5, 0x55b4d3, 0x4dbf99, 0xfcfcfc,]
         );
         assert_eq!(
-            rgb_hexes(palette.bright),
+            triple_hexes(palette.bright),
             [0x3b9ee5, 0xfebab6, 0xc7d98f, 0xfed5a3, 0xabcdf2, 0xb1d8e8, 0xace0cb, 0xffffff,]
         );
         assert_eq!(
-            rgb_hexes(palette.dim),
+            triple_hexes(palette.dim),
             [0x9c9fa2, 0x833538, 0x445613, 0x8a5227, 0x214c76, 0x2f5669, 0x2a5f4a, 0xbcbec0,]
         );
     }
@@ -1937,8 +1835,8 @@ mod tests {
 
     #[test]
     fn default_indexed_color_includes_xterm_gray_ramp() {
-        assert_eq!(default_indexed_color(232), vte_rgb(0x080808));
-        assert_eq!(default_indexed_color(244), vte_rgb(0x808080));
-        assert_eq!(default_indexed_color(255), vte_rgb(0xeeeeee));
+        assert_eq!(default_indexed_color(232), Rgb { r: 0x08, g: 0x08, b: 0x08 });
+        assert_eq!(default_indexed_color(244), Rgb { r: 0x80, g: 0x80, b: 0x80 });
+        assert_eq!(default_indexed_color(255), Rgb { r: 0xee, g: 0xee, b: 0xee });
     }
 }

@@ -82,6 +82,122 @@ pub fn terminal_default_cursor() -> Hsla {
     terminal_cursor_for_theme(current_terminal_theme())
 }
 
+/// Full terminal colour table consumed by the cell renderer.
+///
+/// All entries are stored as `[r, g, b]` u8 triples so this module
+/// has no dependency on the alacritty-side `Rgb` type. The renderer
+/// converts to its own colour types at the call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalPalette {
+    pub background: [u8; 3],
+    pub foreground: [u8; 3],
+    pub cursor: [u8; 3],
+    pub bright_foreground: [u8; 3],
+    pub dim_foreground: [u8; 3],
+    pub normal: [[u8; 3]; 8],
+    pub bright: [[u8; 3]; 8],
+    pub dim: [[u8; 3]; 8],
+}
+
+/// Resolve `hex` (0xRRGGBB) to a u8 triple at compile time.
+const fn hex_rgb(hex: u32) -> [u8; 3] {
+    [
+        ((hex >> 16) & 0xff) as u8,
+        ((hex >> 8) & 0xff) as u8,
+        (hex & 0xff) as u8,
+    ]
+}
+
+/// Look up the static palette for a resolved theme.
+pub fn terminal_palette(resolved: ResolvedTheme) -> &'static TerminalPalette {
+    match resolved {
+        ResolvedTheme::Light => &AYU_LIGHT_TERMINAL,
+        ResolvedTheme::Dark => &AYU_DARK_TERMINAL,
+    }
+}
+
+/// Convenience wrapper that reads the global terminal-theme atomic
+/// (`set_terminal_theme` / `current_terminal_theme`).
+pub fn current_terminal_palette() -> &'static TerminalPalette {
+    terminal_palette(current_terminal_theme())
+}
+
+const AYU_DARK_TERMINAL: TerminalPalette = TerminalPalette {
+    background: hex_rgb(DARK_TERMINAL_BACKGROUND_RGB),
+    foreground: hex_rgb(DARK_TERMINAL_FOREGROUND_RGB),
+    cursor: hex_rgb(DARK_TERMINAL_CURSOR_RGB),
+    bright_foreground: hex_rgb(0xbfbdb6),
+    dim_foreground: hex_rgb(0x85847f),
+    normal: [
+        hex_rgb(0x0d1016),
+        hex_rgb(0xef7177),
+        hex_rgb(0xaad84c),
+        hex_rgb(0xfeb454),
+        hex_rgb(0x5ac1fe),
+        hex_rgb(0x39bae5),
+        hex_rgb(0x95e5cb),
+        hex_rgb(0xbfbdb6),
+    ],
+    bright: [
+        hex_rgb(0x545557),
+        hex_rgb(0x83353b),
+        hex_rgb(0x567627),
+        hex_rgb(0x92582b),
+        hex_rgb(0x27618c),
+        hex_rgb(0x205a78),
+        hex_rgb(0x4c806f),
+        hex_rgb(0xfafafa),
+    ],
+    dim: [
+        hex_rgb(0x3a3b3c),
+        hex_rgb(0xa74f53),
+        hex_rgb(0x769735),
+        hex_rgb(0xb17d3a),
+        hex_rgb(0x3e87b1),
+        hex_rgb(0x2782a0),
+        hex_rgb(0x68a08e),
+        hex_rgb(0x85847f),
+    ],
+};
+
+const AYU_LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
+    background: hex_rgb(LIGHT_TERMINAL_BACKGROUND_RGB),
+    foreground: hex_rgb(LIGHT_TERMINAL_FOREGROUND_RGB),
+    cursor: hex_rgb(LIGHT_TERMINAL_CURSOR_RGB),
+    bright_foreground: hex_rgb(0x5c6166),
+    dim_foreground: hex_rgb(0xfcfcfc),
+    normal: [
+        hex_rgb(0x5c6166),
+        hex_rgb(0xef7271),
+        hex_rgb(0x85b304),
+        hex_rgb(0xf1ad49),
+        hex_rgb(0x3b9ee5),
+        hex_rgb(0x55b4d3),
+        hex_rgb(0x4dbf99),
+        hex_rgb(0xfcfcfc),
+    ],
+    bright: [
+        hex_rgb(0x3b9ee5),
+        hex_rgb(0xfebab6),
+        hex_rgb(0xc7d98f),
+        hex_rgb(0xfed5a3),
+        hex_rgb(0xabcdf2),
+        hex_rgb(0xb1d8e8),
+        hex_rgb(0xace0cb),
+        hex_rgb(0xffffff),
+    ],
+    dim: [
+        hex_rgb(0x9c9fa2),
+        hex_rgb(0x833538),
+        hex_rgb(0x445613),
+        hex_rgb(0x8a5227),
+        hex_rgb(0x214c76),
+        hex_rgb(0x2f5669),
+        hex_rgb(0x2a5f4a),
+        hex_rgb(0xbcbec0),
+    ],
+};
+
 /// Stable colour palette for project letter avatars (8 hues).
 pub const PROJECT_COLORS: [u32; 8] = [
     0x5B4A9E, // purple
