@@ -60,6 +60,13 @@ use another_one_core::state_authority::{self, Mutation, MutationOutcome};
 use crate::open_in::{detect_available_open_in_apps, open_path_in_app, OpenInAppKind};
 use crate::terminal_runtime::TerminalRuntimeKey;
 
+// Phase 5b (design 01 / #158): the desktop registry hosts daemon-
+// canonical Term tasks per tab so a focused viewer can subscribe
+// via `Control::TerminalSubscribe` and receive `TerminalFrame`
+// pushes alongside the legacy byte-stream path. Imported here so
+// `RegistryState` can store the per-tab handles.
+use daemon::terminal::TerminalTaskHandle;
+
 /// viewer_id used for the in-process desktop view. Stable across the
 /// app's lifetime; the app exits before it would ever need to disconnect.
 pub(crate) const DESKTOP_LOCAL_VIEWER_ID: &str = "desktop-local";
@@ -79,6 +86,17 @@ pub struct RegistryState {
     /// launcher's `PreparedTerminalRuntime::output_broadcast`. Mobile
     /// `AttachTab` subscribes to the matching sender.
     pub(crate) broadcasts: HashMap<TerminalRuntimeKey, broadcast::Sender<Vec<u8>>>,
+    /// Per-tab daemon-canonical Term task handles. Phase 5b of
+    /// design 01 (#158): when a PTY launches the desktop also
+    /// spawns a Term task that parses the same byte stream the
+    /// legacy `LiveTerminalRuntime::apply_output` does, so a
+    /// `Control::TerminalSubscribe` from the viewer can resolve
+    /// to a per-tab `watch::Receiver<Option<Arc<TerminalFrame>>>`.
+    /// The map is keyed by the same `TerminalRuntimeKey` as
+    /// `broadcasts` and `writers`; entries are inserted by
+    /// `register_tab_with_registry` (Phase 5b-ii) and removed by
+    /// `forget_tab`.
+    pub(crate) term_tasks: HashMap<TerminalRuntimeKey, TerminalTaskHandle>,
     /// Per-tab master-PTY writer handles shared with
     /// `LiveTerminalRuntime`. Mobile keystrokes flow through these
     /// exactly like desktop keystrokes do.
@@ -183,6 +201,7 @@ impl RegistryState {
         Self {
             project_store,
             broadcasts: HashMap::new(),
+            term_tasks: HashMap::new(),
             writers: HashMap::new(),
             pending_resizes: Vec::new(),
             pending_tab_launches: Vec::new(),
@@ -311,6 +330,11 @@ impl RegistryState {
     /// place. See #51.
     pub(crate) fn forget_tab(&mut self, key: &TerminalRuntimeKey) {
         self.broadcasts.remove(key);
+        // Drop the Term task handle: PacerHandle::Drop aborts the
+        // pacer task; TerminalTaskHandle::Drop sends Shutdown to
+        // the per-tab task and detaches the join. No leaks past a
+        // closed tab.
+        self.term_tasks.remove(key);
         self.writers.remove(key);
         self.active_viewers.remove(key);
         self.effective_sizes.remove(key);
@@ -960,6 +984,40 @@ impl DaemonRegistry for DesktopTerminalRegistry {
     fn attach_tab(&self, section_id: &str, tab_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
         let key = key_from_wire(section_id, tab_id)?;
         self.with_state(|state| state.broadcasts.get(&key).map(|tx| tx.subscribe()))
+            .flatten()
+    }
+
+    /// Phase 5b of design 01 (#158): expose the per-tab Term task's
+    /// frame watch so dispatch's `Control::TerminalSubscribe` arm
+    /// can spawn a pacer pointed at it. Returns `None` when the
+    /// tab isn't running (no PTY yet) or when the desktop hasn't
+    /// installed a Term task for the key (legacy-only mode).
+    fn subscribe_terminal_frames(
+        &self,
+        section_id: &str,
+        tab_id: &str,
+    ) -> Option<
+        tokio::sync::watch::Receiver<
+            Option<std::sync::Arc<daemon_proto::TerminalFrame>>,
+        >,
+    > {
+        let key = key_from_wire(section_id, tab_id)?;
+        self.with_state(|state| state.term_tasks.get(&key).map(|t| t.subscribe()))
+            .flatten()
+    }
+
+    /// Phase 5b: same shape as `subscribe_terminal_frames` but for
+    /// the bell / title / reset-title side-channel. Pacers (Phase
+    /// 3a) drain this and forward as `WorkerReply::Push(...)`.
+    fn subscribe_terminal_side_effects(
+        &self,
+        section_id: &str,
+        tab_id: &str,
+    ) -> Option<
+        tokio::sync::broadcast::Receiver<daemon::terminal::TerminalSideEffect>,
+    > {
+        let key = key_from_wire(section_id, tab_id)?;
+        self.with_state(|state| state.term_tasks.get(&key).map(|t| t.subscribe_side_effects()))
             .flatten()
     }
 
