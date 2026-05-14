@@ -14,7 +14,6 @@ daemon-proto = { path = "../daemon-proto" }
 # pulled in. Concrete transports add their own executor where they need
 # one (tokio for iroh / UDS, anything for in-memory).
 futures-core = "0.3"
-serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 # In-memory transport uses tokio mpsc/oneshot/Notify to wire the two
 # halves together. Sync-only feature set keeps this crate light;
