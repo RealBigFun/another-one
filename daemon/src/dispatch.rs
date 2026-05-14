@@ -290,7 +290,14 @@ pub async fn serve_session_with_attach(
 /// the rare verbs that don't elicit a reply (`LaunchTab`,
 /// `Resize`/`TabResize`, `DetachTab`) — the
 /// caller skips `session.reply` for those.
+// `dispatch_call` and `handle_attach` route the legacy byte-stream
+// AttachTab/DetachTab/TabResize lifecycle. Those Control variants are
+// `#[deprecated]` per design 01 (#158); the byte-stream path stays
+// load-bearing for in-process MCP `tab_output` until the renderer
+// cutover lands (Phase 5b–5d), so dispatch keeps handling them
+// without the per-call deprecation noise.
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 async fn dispatch_call(
     ctrl: Control,
     registry: &dyn DaemonRegistry,
@@ -967,7 +974,12 @@ async fn dispatch_call(
 /// got a receiver + replay buffer; `None` means the tab is launching
 /// (or doesn't exist) — we record the attach intent but defer
 /// installing a forwarder until the client retries.
+///
+/// **Legacy** (design 01 / #158): retired in Phase 5b once the
+/// desktop snapshot cutover lands. AttachTab/DetachTab keep working
+/// for the in-process MCP byte-stream consumer.
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 fn handle_attach(
     section_id: String,
     tab_id: String,

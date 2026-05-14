@@ -3,6 +3,12 @@
 //! few seconds, then exits. Smoke test only — real clients should wrap this
 //! pattern rather than duplicating transport details.
 //!
+//! **Legacy** (design 01 / #158): exercises `Control::AttachTab` /
+//! `TabResize` over the byte-stream path. Replaced by snapshot-aware
+//! verbs in Phase 5b; this binary is kept for byte-stream smoke
+//! testing until then.
+#![allow(deprecated)]
+//!
 //! Usage:
 //!   cargo run -p daemon-sandbox --bin iroh-client
 //!     (reads NodeId from /tmp/daemon-sandbox.nodeid)

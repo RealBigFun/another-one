@@ -280,6 +280,18 @@ impl LiveTerminalRuntime {
         Ok(true)
     }
 
+    /// Apply raw PTY bytes to the GPUI-thread Term + Processor.
+    ///
+    /// **Deprecated** (design 01 / #158): VT parsing moves to the
+    /// daemon's per-tab Term task. The GPUI viewer becomes a
+    /// snapshot consumer in Phase 5a (`ingest_frame`); this method
+    /// retires when the desktop cutover removes the legacy
+    /// `drain_terminal_launch_replies` and byte-cap mitigations
+    /// (Phase 5d).
+    #[deprecated(
+        since = "0.2.2",
+        note = "VT parsing moves daemon-side; viewers consume snapshots. Design 01 / #158, Phase 5."
+    )]
     pub fn apply_output(&mut self, bytes: &[u8]) -> TerminalRuntimeUpdate {
         self.parser.advance(&mut self.term, bytes);
         self.dirty = true;
