@@ -130,7 +130,21 @@ const TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 /// in-flight memory in the tens of MiB.
 const WARM_TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 
-/// Ceiling on how many `Output` bytes the GPUI main thread will
+/// Minimum chunk size for a `Control::TerminalReadScrollback` fetch.
+/// A scroll burst that exposes one uncached row at the top of the
+/// viewport otherwise pays a round-trip per row; padding to a page
+/// means subsequent scrolls within the page hit the cache. Same
+/// number is reused as the per-tick prefetch step once the visible
+/// window is satisfied.
+const SCROLLBACK_PAGE_LINES: u32 = 128;
+
+/// Soft cap on viewer-side scrollback cache depth, in lines past
+/// the live screen. Bounds memory growth on tabs with very long
+/// daemon-side history (alacritty's default is 10_000 lines). Once
+/// the cache reaches this many lines, idle prefetch stops; the user
+/// can still scroll past it but pays a round-trip per page.
+const SCROLLBACK_PREFETCH_CEILING: u32 = 4096;
+
 fn new_tab_seed_agent_id(
     state: Option<&SectionState>,
     default_agent_id: Option<&str>,
@@ -8871,7 +8885,9 @@ impl AnotherOneApp {
         let Some(runtime) = self.live_terminal_runtimes.get(key) else {
             return false;
         };
-        let Some(range) = runtime.missing_scrollback_window() else {
+        let Some(range) = runtime
+            .scrollback_fetch_window(SCROLLBACK_PAGE_LINES, SCROLLBACK_PREFETCH_CEILING)
+        else {
             return false;
         };
         self.scrollback_in_flight.insert(key.clone());
@@ -17403,6 +17419,16 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_session_events(cx);
                             should_notify |= this.drain_terminal_search_replies(cx);
                             should_notify |= this.drain_terminal_scrollback_replies(cx);
+                            // Idle prefetch: keep the focused tab's
+                            // scrollback cache warm so the next
+                            // scroll-into-history is a cache hit.
+                            // The dispatcher single-flights and
+                            // short-circuits when no fetch is
+                            // needed, so calling it every tick is
+                            // cheap (a hashset lookup).
+                            if let Some(focused) = this.active_terminal_key(cx) {
+                                this.maybe_dispatch_scrollback_fetch(&focused);
+                            }
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;

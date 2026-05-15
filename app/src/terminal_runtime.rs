@@ -570,6 +570,74 @@ impl LiveTerminalRuntime {
         })
     }
 
+    /// Highest cached daemon-offset row, or `0` if the cache is
+    /// empty. (`0` is reserved for the topmost live row, so a
+    /// zero return value means "no scrollback rows cached yet".)
+    fn scrollback_cache_top(&self) -> u32 {
+        self.scrollback_cache.keys().copied().next_back().unwrap_or(0)
+    }
+
+    /// Compute the next range to fetch, padding the visible-window
+    /// fetch up to `page_lines` and falling through to an idle
+    /// prefetch above the cache top when the visible window is
+    /// already covered. Returns `None` when nothing is worth
+    /// fetching given the current cache state and `ceiling_lines`
+    /// soft memory cap.
+    ///
+    /// The padding part: a tight scroll burst that exposes only one
+    /// uncached row at the top of the viewport otherwise pays a
+    /// round-trip per row. Padding to a page means subsequent
+    /// scrolls within the page hit the cache.
+    ///
+    /// The prefetch part: once the user is scrolled into history,
+    /// they're likely to keep scrolling. Walk the cache forward by
+    /// `page_lines` per tick until we hit `ceiling_lines` or
+    /// `history_lines`. Caller calls this every render tick; the
+    /// single-flight gate (`scrollback_in_flight`) prevents duplicate
+    /// requests.
+    pub fn scrollback_fetch_window(
+        &self,
+        page_lines: u32,
+        ceiling_lines: u32,
+    ) -> Option<daemon_proto::ScrollbackRange> {
+        if self.history_lines == 0 || page_lines == 0 {
+            return None;
+        }
+        // 1. Visible-window first — the user is waiting on these.
+        if let Some(visible) = self.missing_scrollback_window() {
+            // Pad up to `page_lines` while staying inside
+            // history_lines. Padding extends *past* the visible
+            // upper bound (oldest row) since that's the direction
+            // the user is most likely to scroll next.
+            let padded_count = page_lines.max(visible.count);
+            let max_count =
+                self.history_lines.saturating_sub(visible.start - 1);
+            let count = padded_count.min(max_count);
+            return Some(daemon_proto::ScrollbackRange {
+                start: visible.start,
+                count,
+            });
+        }
+        // 2. Idle prefetch — nothing visible is missing; pull a page
+        //    above the cache top so the next scroll is instant.
+        let top = self.scrollback_cache_top();
+        // Stop prefetching once we have the entire history
+        // (`top == history_lines`) or we've passed the soft cap.
+        if top >= self.history_lines || top >= ceiling_lines {
+            return None;
+        }
+        let start = top + 1;
+        let upper_bound = self.history_lines.min(ceiling_lines);
+        let end = (start + page_lines - 1).min(upper_bound);
+        if end < start {
+            return None;
+        }
+        Some(daemon_proto::ScrollbackRange {
+            start,
+            count: end - start + 1,
+        })
+    }
+
     /// Merge a `Control::TerminalReadScrollback` reply into the
     /// viewer-side cache and re-compose the visible surface if the
     /// new rows fall inside the current scroll window.
@@ -1527,6 +1595,112 @@ mod tests {
         let win = runtime.missing_scrollback_window().expect("window");
         assert_eq!(win.start, 4);
         assert_eq!(win.count, 2);
+    }
+
+    #[test]
+    fn fetch_window_pads_visible_to_a_page() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 200);
+        // Scroll up 1 — visible-window has 1 missing row at offset 1.
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime
+            .scrollback_fetch_window(64, 4096)
+            .expect("fetch window");
+        assert_eq!(win.start, 1);
+        // Padded to the page size, clamped to history.
+        assert_eq!(win.count, 64);
+    }
+
+    #[test]
+    fn fetch_window_clamps_padding_to_history() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        // history of 5 means the largest valid daemon-offset is 5.
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 5);
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime
+            .scrollback_fetch_window(64, 4096)
+            .expect("fetch window");
+        assert_eq!(win.start, 1);
+        // Page would request 64 rows but only 5 fit in history.
+        assert_eq!(win.count, 5);
+    }
+
+    #[test]
+    fn fetch_window_prefetches_above_cache_when_visible_satisfied() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 200);
+        assert!(runtime.viewer_scroll_lines(1));
+
+        // Simulate a reply landing for offsets [1..=10] so the
+        // visible window is fully cached and the fetch helper
+        // falls through to the prefetch branch.
+        let rows: Vec<_> = (0..10)
+            .map(|i| proto_row_from_text(&format!("hist{i}"), 8))
+            .collect();
+        let reply = TerminalScrollbackReply {
+            rows,
+            range_actual: ScrollbackRange { start: 1, count: 10 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        // No visible rows missing now; expect a prefetch slab
+        // starting one past the cache top (offset 11).
+        let win = runtime
+            .scrollback_fetch_window(32, 4096)
+            .expect("prefetch window");
+        assert_eq!(win.start, 11);
+        assert_eq!(win.count, 32);
+    }
+
+    #[test]
+    fn fetch_window_stops_at_prefetch_ceiling() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 1000);
+        assert!(runtime.viewer_scroll_lines(1));
+
+        // Pre-fill cache up to offset 50.
+        let rows: Vec<_> = (0..50)
+            .map(|i| proto_row_from_text(&format!("r{i}"), 8))
+            .collect();
+        let reply = TerminalScrollbackReply {
+            rows,
+            range_actual: ScrollbackRange { start: 1, count: 50 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        // Ceiling is 50: cache is at the cap; nothing more to
+        // prefetch even though history is 1000.
+        assert!(runtime.scrollback_fetch_window(32, 50).is_none());
+        // Bumping the ceiling reopens prefetch.
+        let win = runtime.scrollback_fetch_window(32, 100).expect("window");
+        assert_eq!(win.start, 51);
+        assert_eq!(win.count, 32);
     }
 
     #[test]
