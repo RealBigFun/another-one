@@ -33,7 +33,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi;
 use another_one_core::terminal_types::TerminalGridSize;
 use daemon_proto::{
@@ -298,7 +298,7 @@ impl TerminalTask {
         let proxy = TermEventProxy {
             queue: Arc::clone(&event_queue),
         };
-        let term = Term::new(Config::default(), &size, proxy);
+        let term = super::term_config::make_term(size, proxy);
         Self {
             term,
             parser: ansi::Processor::default(),

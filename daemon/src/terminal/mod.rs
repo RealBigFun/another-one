@@ -15,6 +15,7 @@ pub mod task;
 pub mod frame;
 pub mod launch;
 pub mod pacer;
+pub mod term_config;
 
 pub use launch::{daemon_spawn_enabled, spawn_terminal_in_daemon, DaemonSpawnedTerminal, SpawnRequest, SpawnedChild};
 pub use pacer::{spawn_pacer, PacerConfig, PacerHandle};

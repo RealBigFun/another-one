@@ -1295,7 +1295,6 @@ mod tests {
 
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::term::test::TermSize;
-    use alacritty_terminal::term::{Config, Term};
     use alacritty_terminal::vte::ansi;
 
     fn snapshot_from_ansi(bytes: &[u8]) -> TerminalSurfaceSnapshot {
@@ -1305,7 +1304,14 @@ mod tests {
         // that captured the legacy alacritty-grid builder's output
         // before Phase 5b cutover stay green so long as both halves
         // of the pipeline preserve the same behaviour.
-        let mut term = Term::new(Config::default(), &TermSize::new(32, 4), VoidListener);
+        let _termsize = TermSize::new(32, 4);
+        let size = TerminalGridSize {
+            cols: 32,
+            rows: 4,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut term = daemon::terminal::term_config::make_term(size, VoidListener);
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
         let frame = daemon::terminal::frame::serialize_full_frame(&term, 1);
