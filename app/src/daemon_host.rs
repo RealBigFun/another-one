@@ -1773,13 +1773,11 @@ fn perform_gh_auth_check() -> daemon_proto::GhAuthStatusWire {
         Some(provider) => provider.probe_auth(&cwd),
         None => another_one_core::git_remote::AuthStatus::ToolMissing,
     };
-    if matches!(
-        status,
-        another_one_core::git_remote::AuthStatus::ToolMissing
-            | another_one_core::git_remote::AuthStatus::NotAuthenticated
-    ) {
-        log::trace!("gh auth check: provider reported {:?}", status);
-    }
+    // Debug-level so a `RUST_LOG=another_one=debug` run surfaces
+    // every probe firing (incl. timestamps) — useful for diagnosing
+    // "overlay keeps flashing" reports where the cause is repeated
+    // probes rather than a stuck wrong-status.
+    log::debug!("gh auth check: provider reported {:?}", status);
     match status {
         another_one_core::git_remote::AuthStatus::Authenticated => {
             daemon_proto::GhAuthStatusWire::Authenticated

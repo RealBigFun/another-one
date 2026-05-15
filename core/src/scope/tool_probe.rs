@@ -1,11 +1,18 @@
 //! Cached PATH lookups for external CLIs (`git`, `gh`, …).
 //!
-//! Replaces the ad-hoc `find_gh_cli` + per-call `which`-style probes
-//! scattered through `git_actions.rs`. Capability `applies()` impls
-//! reach for `scope.system().tool_probe.has("foo")` to decide
-//! whether they're available; the result is cached for the process
-//! lifetime and explicitly invalidated when a session-level event
-//! says the answer may have changed (e.g. `RecheckGhAuth`).
+//! Delegates discovery to `crate::command_env::find_executable` — the
+//! same lookup the actual shell-out helpers (`find_gh_cli`,
+//! `git_command`) use. Caches results for the process lifetime and
+//! exposes `invalidate` for session-level revalidation events (e.g.
+//! `Control::RecheckGhAuth` after the user installs `gh`).
+//!
+//! Why delegate instead of walking `$PATH` ourselves: on macOS GUI
+//! launches inherit a minimal launchd PATH that omits Homebrew, so a
+//! naïve `which`-style probe would miss `gh` even when the actual
+//! shell-out succeeds via the login-shell-initialized PATH + the
+//! `/opt/homebrew/bin` fallback list. Capability `applies()` MUST
+//! agree with the shell-out's discovery or the registry will hide
+//! providers that would otherwise work.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,14 +29,18 @@ impl ToolProbe {
         }
     }
 
-    /// `Some(path)` if `name` resolved on PATH at some point in this
-    /// process (or the most recent invalidate), `None` if a prior
-    /// probe came up empty.
+    /// `Some(path)` if `name` resolved on PATH (or one of its known
+    /// fallbacks) at some point in this process; `None` if a prior
+    /// probe came up empty. Delegates to
+    /// `command_env::find_executable` so the answer matches what
+    /// the eventual shell-out will see — see module docs.
     pub fn find(&self, name: &str) -> Option<PathBuf> {
         if let Some(hit) = self.cache.read().unwrap().get(name).cloned() {
             return hit;
         }
-        let resolved = which_on_path(name);
+        let cwd = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let resolved =
+            crate::command_env::find_executable(name, &cwd, &fallbacks_for(name));
         self.cache
             .write()
             .unwrap()
@@ -54,23 +65,18 @@ impl Default for ToolProbe {
     }
 }
 
-fn which_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        // Windows: try with `.exe` suffix.
-        #[cfg(windows)]
-        {
-            let with_ext = dir.join(format!("{name}.exe"));
-            if with_ext.is_file() {
-                return Some(with_ext);
-            }
-        }
+/// Per-tool fallback paths matched against the canonical install
+/// locations the existing `find_*_cli` helpers in `git_actions.rs`
+/// use. Kept here (not on the impls) so a `ToolProbe.find("gh")`
+/// call surfaces the same answer regardless of caller.
+fn fallbacks_for(name: &str) -> Vec<PathBuf> {
+    match name {
+        "gh" => vec![
+            PathBuf::from("/opt/homebrew/bin/gh"),
+            PathBuf::from("/usr/local/bin/gh"),
+        ],
+        _ => Vec::new(),
     }
-    None
 }
 
 #[cfg(test)]
