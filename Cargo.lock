@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "another-one"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "alacritty_terminal",
  "android-activity",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "another-one-core"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "another-one-mcp-shim"
-version = "0.2.4"
+version = "0.2.5"
 
 [[package]]
 name = "anstream"
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "daemon"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "alacritty_terminal",
  "another-one-core",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "daemon-client"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "daemon",
@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "daemon-proto"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -1856,7 +1856,7 @@ dependencies = [
 
 [[package]]
 name = "daemon-transport"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "daemon-proto",
  "futures-core",
