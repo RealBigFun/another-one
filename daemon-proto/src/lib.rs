@@ -380,7 +380,7 @@ pub enum Control {
     /// shell actions) records the command bytes the daemon writes
     /// once the PTY is up.
     ///
-    /// **Single-shot Ack** (resolved per ojm.7's bd body): the
+    /// **Single-shot Ack**: the
     /// reply carries only the new `tab_id` so the caller can
     /// `AttachTab` and watch the action's PTY output flow over the
     /// existing data-frame pipeline. There's no streaming
