@@ -1954,15 +1954,24 @@ pub struct AnotherOneApp {
     terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     /// `Control::TerminalReadScrollback` reply channel. The session
-    /// call callback pushes `(key, reply)` so the renderer's drain
-    /// loop can merge cached rows back into the runtime that asked
-    /// for them. See `App::dispatch_terminal_scrollback_fetch`.
-    terminal_scrollback_reply_tx: tokio::sync::mpsc::UnboundedSender<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
-    terminal_scrollback_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
+    /// call callback pushes `(key, generation, reply)` so the renderer's
+    /// drain loop can ignore stale rows if live output moved the
+    /// scrollback offset space while the request was in flight.
+    terminal_scrollback_reply_tx: tokio::sync::mpsc::UnboundedSender<(
+        TerminalRuntimeKey,
+        u64,
+        daemon_proto::TerminalScrollbackReply,
+    )>,
+    terminal_scrollback_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(
+        TerminalRuntimeKey,
+        u64,
+        daemon_proto::TerminalScrollbackReply,
+    )>,
     /// Tabs with a `Control::TerminalReadScrollback` request currently
-    /// in flight. Prevents duplicate fetches for the same window when
-    /// the user keeps scrolling before the previous reply lands.
-    scrollback_in_flight: HashSet<TerminalRuntimeKey>,
+    /// in flight, keyed by the runtime generation at dispatch time.
+    /// Prevents duplicate fetches for the same window when the user
+    /// keeps scrolling before the previous reply lands.
+    scrollback_in_flight: HashMap<TerminalRuntimeKey, u64>,
     /// Per-tab viewer-input queue. Each entry is a long-lived task
     /// that owns one clone of `Session::push_data`; the GPUI thread
     /// pushes keystroke bytes via `try_send` instead of spawning a
@@ -4759,6 +4768,7 @@ impl AnotherOneApp {
         let (terminal_scrollback_reply_tx, terminal_scrollback_reply_rx) =
             tokio::sync::mpsc::unbounded_channel::<(
                 TerminalRuntimeKey,
+                u64,
                 daemon_proto::TerminalScrollbackReply,
             )>();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
@@ -4906,7 +4916,7 @@ impl AnotherOneApp {
             terminal_search_reply_rx,
             terminal_scrollback_reply_tx,
             terminal_scrollback_reply_rx,
-            scrollback_in_flight: HashSet::new(),
+            scrollback_in_flight: HashMap::new(),
             viewer_input_senders: HashMap::new(),
             gh_check_dismissed_for_session: false,
             terminal_bell_at: HashMap::new(),
@@ -8893,18 +8903,19 @@ impl AnotherOneApp {
         &mut self,
         key: &TerminalRuntimeKey,
     ) -> bool {
-        if self.scrollback_in_flight.contains(key) {
+        if self.scrollback_in_flight.contains_key(key) {
             return false;
         }
         let Some(runtime) = self.live_terminal_runtimes.get(key) else {
             return false;
         };
+        let generation = runtime.scrollback_generation();
         let Some(range) = runtime
             .scrollback_fetch_window(SCROLLBACK_PAGE_LINES, SCROLLBACK_PREFETCH_CEILING)
         else {
             return false;
         };
-        self.scrollback_in_flight.insert(key.clone());
+        self.scrollback_in_flight.insert(key.clone(), generation);
         tracing::trace!(
             target: "another_one::terminal",
             section = %key.section_id.store_key(),
@@ -8925,7 +8936,7 @@ impl AnotherOneApp {
             },
             move |result| match result {
                 Ok(daemon_proto::WorkerReply::TerminalScrollback { reply, .. }) => {
-                    let _ = reply_tx.send((key_for_callback, reply));
+                    let _ = reply_tx.send((key_for_callback, generation, reply));
                 }
                 Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
                     log::warn!("TerminalReadScrollback err: {message}");
@@ -8953,22 +8964,24 @@ impl AnotherOneApp {
         let mut updated = false;
         loop {
             match self.terminal_scrollback_reply_rx.try_recv() {
-                Ok((key, reply)) => {
+                Ok((key, generation, reply)) => {
                     self.scrollback_in_flight.remove(&key);
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        runtime.apply_scrollback_reply(&reply);
-                        let snapshot = runtime.snapshot();
-                        self.terminal_surface_snapshots
-                            .insert(key.clone(), snapshot);
+                        if runtime.scrollback_generation() == generation {
+                            runtime.apply_scrollback_reply(&reply);
+                            let snapshot = runtime.snapshot();
+                            self.terminal_surface_snapshots
+                                .insert(key.clone(), snapshot);
+                            cx.notify();
+                            updated = true;
+                        }
                         // The window the reply filled may not have
                         // covered every visible scrollback row
                         // (`range_actual.count` clamps against
-                        // history-size). Re-issue a fetch for the
-                        // remainder so a viewer scrolled deep enough
-                        // to span two requests doesn't stop halfway.
+                        // history-size), or it may have gone stale
+                        // while output advanced. Re-issue a fetch
+                        // for any rows still missing.
                         self.maybe_dispatch_scrollback_fetch(&key);
-                        cx.notify();
-                        updated = true;
                     }
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
