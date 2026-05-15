@@ -61,6 +61,20 @@ const INBOX_CAPACITY: usize = 256;
 /// the consumer; Phase 3c's dispatcher logs and continues.
 const SIDE_EFFECT_CAPACITY: usize = 64;
 
+/// Soft cap on the per-tab byte ring used by `resize` to reflow
+/// scrollback. 4 MiB is enough headroom for a long agent
+/// conversation (a Claude Code essay-length transcript is on the
+/// order of 100–500 KiB of raw bytes; an `htop` session is much
+/// smaller because TUIs paint in place). Bumping this trades memory
+/// per tab for further-back resize-reflow fidelity.
+const BYTE_RING_CAPACITY: usize = 4 * 1024 * 1024;
+
+/// When the byte ring exceeds [`BYTE_RING_CAPACITY`], drop oldest
+/// bytes in chunks of this size rather than per-byte. Larger drops
+/// amortize the bookkeeping cost; smaller drops keep more recent
+/// history. 256 KiB is one ANSI-storm worth of output.
+const BYTE_RING_DROP_CHUNK: usize = 256 * 1024;
+
 /// Out-of-band signals from the Term task. These ride a dedicated
 /// channel separate from the frame stream so viewers can react
 /// regardless of frame cadence (a bell flash should fire even on a
@@ -257,6 +271,26 @@ pub fn spawn_terminal_task(size: TerminalGridSize) -> TerminalTaskHandle {
 struct TerminalTask {
     term: Term<TermEventProxy>,
     parser: ansi::Processor,
+    /// Current grid size. Carried explicitly so resize-replay can
+    /// rebuild the Term + parser at the new dimensions without
+    /// re-deriving from the live grid (which would be an old-width
+    /// grid until alacritty reflows it, which it doesn't).
+    size: TerminalGridSize,
+    /// Bounded ring of every PTY byte the task has parsed, capped at
+    /// [`BYTE_RING_CAPACITY`]. Used by `resize` to rebuild the Term
+    /// at the new dimensions and re-parse the byte stream so
+    /// scrollback rows reflow to the new column count. alacritty's
+    /// own `Term::resize` reflows only the live screen — not
+    /// scrollback — so without the replay, history rows stay at the
+    /// width they were captured at.
+    ///
+    /// When the ring exceeds the cap, oldest bytes drop in chunks of
+    /// [`BYTE_RING_DROP_CHUNK`]. A drop point may slice mid-UTF-8 or
+    /// mid-escape-sequence; UTF-8 self-syncs after ≤4 bytes and ANSI
+    /// escape sequences are short, so the worst case is one or two
+    /// garbled rows at the start of replay before the parser
+    /// recovers.
+    byte_ring: VecDeque<u8>,
     /// Events the alacritty `Term` surfaces during parsing
     /// (PtyWrite, Title, Bell, ColorRequest, …). The proxy pushes
     /// here; the task drains after each `Bytes` and routes
@@ -302,6 +336,8 @@ impl TerminalTask {
         Self {
             term,
             parser: ansi::Processor::default(),
+            size,
+            byte_ring: VecDeque::new(),
             event_queue,
             dirty: false,
             seq: 0,
@@ -317,15 +353,76 @@ impl TerminalTask {
     /// access are discarded with a trace log until Phase 4.
     fn apply_bytes(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
+        self.push_to_byte_ring(bytes);
         self.dirty = true;
         self.drain_events();
         self.emit_full_frame();
     }
 
-    /// Resize the Term grid. Phase 4 will route the same command to
-    /// the PTY master; for Phase 2 this is Term-only.
+    /// Append `bytes` to the byte ring, dropping oldest bytes in
+    /// `BYTE_RING_DROP_CHUNK` increments to keep the ring under
+    /// `BYTE_RING_CAPACITY`. Done in chunks so we're not paying
+    /// per-byte capacity checks on every push.
+    fn push_to_byte_ring(&mut self, bytes: &[u8]) {
+        self.byte_ring.extend(bytes.iter().copied());
+        while self.byte_ring.len() > BYTE_RING_CAPACITY {
+            // Drop oldest BYTE_RING_DROP_CHUNK bytes (or the
+            // overage, whichever is smaller).
+            let drop_n = (self.byte_ring.len() - BYTE_RING_CAPACITY)
+                .max(BYTE_RING_DROP_CHUNK)
+                .min(self.byte_ring.len());
+            self.byte_ring.drain(..drop_n);
+        }
+    }
+
+    /// Resize the Term grid and reflow scrollback by rebuilding the
+    /// Term at the new dimensions and re-parsing the byte ring
+    /// through it. alacritty's `Term::resize` reflows the live
+    /// screen only — scrollback rows stay at the width they were
+    /// captured at — so without the replay the viewer sees
+    /// old-width rows when it scrolls into history after a window
+    /// resize.
+    ///
+    /// Phase 4 will route the same command to the PTY master; for
+    /// Phase 2 this is Term-only.
     fn resize(&mut self, size: TerminalGridSize) {
-        self.term.resize(size);
+        if size == self.size {
+            // No-op; avoid the cost of an unnecessary replay.
+            self.dirty = true;
+            self.emit_full_frame();
+            return;
+        }
+        self.size = size;
+        // Rebuild Term + parser at the new size, then replay every
+        // byte we've buffered through the new parser. Discards the
+        // event queue (events from the original parse already fired
+        // on the side-effect channel; replaying would duplicate
+        // them).
+        let proxy = TermEventProxy {
+            queue: Arc::clone(&self.event_queue),
+        };
+        if let Ok(mut q) = self.event_queue.lock() {
+            q.clear();
+        }
+        self.term = super::term_config::make_term(size, proxy);
+        self.parser = ansi::Processor::default();
+        if !self.byte_ring.is_empty() {
+            // VecDeque's two contiguous slices — feed both halves
+            // through the parser without copying.
+            let (a, b) = self.byte_ring.as_slices();
+            if !a.is_empty() {
+                self.parser.advance(&mut self.term, a);
+            }
+            if !b.is_empty() {
+                self.parser.advance(&mut self.term, b);
+            }
+        }
+        // Discard any events the replay produced (already-emitted
+        // bell/title from the first parse stay; replay duplicates
+        // are noise).
+        if let Ok(mut q) = self.event_queue.lock() {
+            q.clear();
+        }
         self.dirty = true;
         self.emit_full_frame();
     }
@@ -684,6 +781,89 @@ mod tests {
             _ => panic!("expected Full"),
         }
         handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn resize_reflows_scrollback_via_byte_ring_replay() {
+        // Start narrow (10 cols, 3 rows). Push enough text that
+        // some lines wrap to the narrow width and earlier rows
+        // fall into scrollback.
+        let handle = spawn_terminal_task(small_size());
+        let payload =
+            b"the quick brown fox jumps over the lazy dog the rainy night was long".to_vec();
+        handle
+            .send(TerminalCommand::Bytes(payload.clone()))
+            .await
+            .expect("send bytes");
+
+        // Capture the narrow scrollback shape.
+        let narrow = read_scrollback_via_handle(&handle, 0, 16).await;
+        assert!(
+            !narrow.is_empty(),
+            "some text should have wrapped into scrollback at 10 cols"
+        );
+        let narrow_cols_max = narrow
+            .iter()
+            .map(|row| row.cells.len())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            narrow_cols_max <= 10,
+            "narrow rows max cols {narrow_cols_max} exceeds initial 10 cols"
+        );
+
+        // Resize wider (40 cols). Without byte-ring replay the
+        // scrollback rows would still report ≤ 10-col widths; with
+        // replay, the entire byte stream re-parses through a
+        // fresh Term at 40 cols and history reflows.
+        handle
+            .send(TerminalCommand::Resize {
+                size: TerminalGridSize {
+                    cols: 40,
+                    rows: 3,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+            })
+            .await
+            .expect("send resize");
+
+        let wide = read_scrollback_via_handle(&handle, 0, 16).await;
+        // Reflow at 40 cols means the same byte stream produces
+        // fewer (wider) rows in scrollback than the narrow run.
+        assert!(
+            wide.len() <= narrow.len(),
+            "reflow should produce at most as many rows: wide={} narrow={}",
+            wide.len(),
+            narrow.len()
+        );
+        // The wide rows should report a higher max-col-count than
+        // the narrow rows when they did wrap originally.
+        let wide_cols_max = wide.iter().map(|row| row.cells.len()).max().unwrap_or(0);
+        assert!(
+            wide_cols_max > narrow_cols_max,
+            "reflow at 40 cols should fit more cells per row: wide={wide_cols_max} narrow={narrow_cols_max}"
+        );
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    /// Helper: drive a `ReadScrollback` round-trip and return the
+    /// resulting rows.
+    async fn read_scrollback_via_handle(
+        handle: &TerminalTaskHandle,
+        start: u32,
+        count: u32,
+    ) -> Vec<daemon_proto::GridRow> {
+        use daemon_proto::ScrollbackRange;
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::ReadScrollback {
+                range: ScrollbackRange { start, count },
+                reply: tx,
+            })
+            .await
+            .expect("send read_scrollback");
+        rx.await.expect("reply").rows
     }
 
     #[tokio::test]

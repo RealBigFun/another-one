@@ -264,6 +264,18 @@ impl LiveTerminalRuntime {
             local.master.resize(size.as_pty_size())?;
         }
         self.size = size;
+        // Invalidate any cached scrollback rows: they were captured
+        // at the old column count and would render mangled in the
+        // new viewport. The daemon Term task replays its byte ring
+        // through a fresh Term at the new size (see
+        // `daemon::terminal::task::TerminalTask::resize`); the next
+        // `Control::TerminalReadScrollback` fetches the reflowed
+        // rows. Reset `viewer_scroll_offset` to 0 so the user lands
+        // on the live screen — holding an old offset across a
+        // resize is rarely what they want anyway, and avoids a
+        // brief blank-row flash while the cache rewarms.
+        self.scrollback_cache.clear();
+        self.viewer_scroll_offset = 0;
         self.dirty = true;
         Ok(true)
     }
@@ -1701,6 +1713,52 @@ mod tests {
         let win = runtime.scrollback_fetch_window(32, 100).expect("window");
         assert_eq!(win.start, 51);
         assert_eq!(win.count, 32);
+    }
+
+    #[test]
+    fn resize_invalidates_scrollback_cache_and_resets_offset() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 100);
+        assert!(runtime.viewer_scroll_lines(3));
+
+        let reply = TerminalScrollbackReply {
+            rows: (0..3)
+                .map(|i| proto_row_from_text(&format!("r{i}"), 8))
+                .collect(),
+            range_actual: ScrollbackRange { start: 1, count: 3 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+        assert_eq!(runtime.viewer_scroll_offset(), 3);
+
+        // Resize to a different size — cached rows captured at the
+        // old column count would render mangled in the new viewport,
+        // and the user is unlikely to want to keep the historical
+        // offset on a window snap. Both reset.
+        let new_size = TerminalGridSize {
+            cols: 16,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        runtime.resize(new_size).expect("resize");
+
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
+        // Re-scrolling up triggers a fresh fetch (cache empty).
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime
+            .scrollback_fetch_window(64, 4096)
+            .expect("fetch window post-resize");
+        assert_eq!(
+            win.start, 1,
+            "post-resize scroll-up should re-fetch from offset 1"
+        );
     }
 
     #[test]
