@@ -70,7 +70,7 @@ use crate::terminal_launch::{
 };
 use crate::terminal_runtime::{
     LiveTerminalRuntime, TerminalGridSize, TerminalMouseEncoding, TerminalMouseLevel,
-    TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalScrollbackMatch,
+    TerminalMouseProtocol, TerminalRuntimeKey, TerminalScrollbackMatch,
     TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
@@ -131,25 +131,6 @@ const TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 const WARM_TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 
 /// Ceiling on how many `Output` bytes the GPUI main thread will
-/// parse + render within a single drain tick before yielding back
-/// to the GPUI run loop. The drain used to greedily consume every
-/// pending reply, so a CDP-sized burst (several MiB across tens of
-/// chunks) would pay the full alacritty VT parse cost on one tick
-/// and stall the main thread for hundreds of ms. See #127 / the
-/// #128 watchdog data that motivated it.
-///
-/// 64 KiB keeps a single drain tick comfortably under one 60 Hz
-/// frame on the parse hot path while still clearing a typical
-/// interactive burst (`ls -la`, a prompt redraw, a test summary)
-/// in one tick. Larger values (256 KiB was the first pass) still
-/// blew the frame budget once a burst was dense enough. The
-/// leftover sits in the bounded channel and gets picked up on the
-/// next refresh tick (16 ms fast / 250 ms idle); the channel cap
-/// absorbs many ticks of backlog before backpressuring the reader,
-/// which is the intended behavior when the child is outpacing the
-/// UI (see [`TERMINAL_LAUNCH_QUEUE_CAP`]'s comment).
-const DRAIN_OUTPUT_BYTE_CAP: usize = 64 * 1024;
-
 fn new_tab_seed_agent_id(
     state: Option<&SectionState>,
     default_agent_id: Option<&str>,
@@ -479,15 +460,15 @@ impl TerminalTab {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-fn apply_terminal_title_update(tab: &mut TerminalTab, terminal_update: &TerminalRuntimeUpdate) {
+fn apply_terminal_title_update(tab: &mut TerminalTab, title: Option<&str>, reset_title: bool) {
     if tab.fixed_title.is_some() {
         return;
     }
 
-    if terminal_update.reset_title {
+    if reset_title {
         tab.title = tab.launch_config.default_title();
-    } else if let Some(title) = &terminal_update.title {
-        tab.title = title.clone();
+    } else if let Some(title) = title {
+        tab.title = title.to_string();
     }
 }
 
@@ -5250,17 +5231,22 @@ impl AnotherOneApp {
     /// paying on every echo. No-op when the runtime is viewer-only
     /// (mobile) — there the remote daemon parses its own PTY output
     /// and the new title arrives via the next projection.
+    /// Apply a title change pushed by the daemon's per-tab Term task
+    /// (via `WorkerReply::TerminalTitle` / `TerminalResetTitle`). The
+    /// inputs already match the wire shape — either a new title
+    /// string or a reset-to-default flag.
     fn apply_pty_title_update(
         &mut self,
         key: &TerminalRuntimeKey,
-        terminal_update: &crate::terminal_runtime::TerminalRuntimeUpdate,
+        title: Option<String>,
+        reset_title: bool,
     ) {
-        if !terminal_update.reset_title && terminal_update.title.is_none() {
+        if !reset_title && title.is_none() {
             return;
         }
-        let update = if terminal_update.reset_title {
+        let update = if reset_title {
             another_one_core::project_store::PtyTabTitleUpdate::Reset
-        } else if let Some(title) = terminal_update.title.clone() {
+        } else if let Some(title) = title {
             another_one_core::project_store::PtyTabTitleUpdate::Set(title)
         } else {
             return;
@@ -6085,25 +6071,18 @@ impl AnotherOneApp {
                     let key = TerminalRuntimeKey { section_id, tab_id };
                     crate::leakscope::note_drain_output(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
-                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        let terminal_update = runtime.apply_output(&bytes);
-                        output_dirty_keys.insert(key.clone());
-                        if terminal_update.bell {
-                            self.terminal_bell_at.insert(key.clone(), Instant::now());
-                        }
-                        // Daemon-authoritative title: parse-and-apply
-                        // happens in-process on desktop (we ARE the
-                        // registry host), no wire round-trip per
-                        // PTY echo.
-                        if runtime.has_local_pty() {
-                            self.apply_pty_title_update(&key, &terminal_update);
-                        }
-                        // Use the receiver-count gated helper —
-                        // `emit_client_event` always constructs the
-                        // event (cloning `bytes` and `tab_id`) even
-                        // when no MCP client is subscribed, which is
-                        // the common case on desktop. Wasted alloc
-                        // per PTY chunk → per keystroke echo.
+                    if self.live_terminal_runtimes.contains_key(&key) {
+                        // Daemon-canonical (design 01 / #158): the
+                        // VT parser owns this byte stream now — the
+                        // renderer no longer parses anything from
+                        // PtyBytes. Bell + title arrive as
+                        // dedicated `WorkerReply::TerminalBell` /
+                        // `TerminalTitle` pushes (handled below in
+                        // the Push arm); surface refreshes ride
+                        // `SessionEvent::TerminalFrame`. The bytes
+                        // are still mirrored to MCP subscribers via
+                        // the `tab_output` event so external tools
+                        // see exactly what the shell wrote.
                         self.maybe_emit_tab_output(&key.tab_id, &bytes);
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
@@ -6313,12 +6292,11 @@ impl AnotherOneApp {
         // once at the end. At 60 Hz drain frequency this caps snapshot
         // work at 60 rebuilds/sec even under sustained output storms.
         let output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
-        // Bounded per-tick output budget. See
-        // [`DRAIN_OUTPUT_BYTE_CAP`] for the why; once we've parsed
-        // this many `Output` bytes we break out of the greedy
-        // `try_recv` loop and let GPUI repaint before the next
-        // tick picks up the remainder.
-        let mut drained_output_bytes: usize = 0;
+        // Phase 5b cutover (#158): the per-tick byte cap retired
+        // alongside `apply_output`. With VT parsing now off the GPUI
+        // thread, the drain just mirrors bytes to MCP subscribers
+        // and tees them into the daemon Term task — sub-millisecond
+        // work that doesn't need a budget.
 
         loop {
             match self.terminal_launch_receiver.try_recv() {
@@ -6356,29 +6334,18 @@ impl AnotherOneApp {
                 }
                 Ok(TerminalLaunchReply::Output { key, bytes }) => {
                     crate::leakscope::note_drain_output(bytes.len());
-                    drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
-                    // Phase 5b dual-write: tee bytes into the
-                    // daemon-canonical Term task so a focused
-                    // viewer's `Control::TerminalSubscribe` sees
-                    // the same content the legacy `apply_output`
-                    // path renders. Best-effort; see
-                    // `try_send_bytes_to_term_task`.
+                    // Tee bytes into the daemon-canonical Term task
+                    // so the focused viewer's
+                    // `Control::TerminalSubscribe` sees them.
                     self.try_send_bytes_to_term_task(&key, &bytes);
-                    // Phase 5d-v (design 01 / #158): VT parse runs
-                    // daemon-side; the GPUI drain only mirrors
-                    // bytes to MCP subscribers + checks the
+                    // VT parse runs daemon-side; the GPUI drain only
+                    // mirrors bytes to MCP subscribers + checks the
                     // claude-restore retry hook for tabs whose
-                    // legacy runtime is gone.
+                    // runtime hasn't materialised yet.
                     self.maybe_emit_tab_output(&key.tab_id, &bytes);
                     let _ = self.maybe_retry_claude_restore(&key, cx);
                     updated = true;
-                    if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                        // Yield back to the GPUI run loop. Remaining
-                        // replies stay in the bounded channel and
-                        // will be picked up on the next drain tick.
-                        break;
-                    }
                 }
                 Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
                     let section_id = key.section_id.clone();
@@ -6499,11 +6466,6 @@ impl AnotherOneApp {
         // guard. With VT parse off the GPUI thread, the warm
         // drain only mirrors bytes + bumps state — sub-millisecond.
         let mut updated = false;
-        // Same byte budget as the hot drain — see
-        // [`DRAIN_OUTPUT_BYTE_CAP`]. Warm and hot drains both run
-        // on the GPUI main thread so they share the same frame-time
-        // budget regardless of which channel a chunk arrived on.
-        let mut drained_output_bytes: usize = 0;
 
         loop {
             match self.warm_terminal_launch_receiver.try_recv() {
@@ -6570,7 +6532,6 @@ impl AnotherOneApp {
                 }
                 Ok(WarmTerminalLaunchReply::Output { launch_id, bytes }) => {
                     crate::leakscope::note_drain_output(bytes.len());
-                    drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     let attached_key = self
                         .prewarmed_terminal_launches
                         .get(&launch_id)
@@ -6578,31 +6539,16 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         self.append_terminal_recent_output(&key, &bytes);
-                        // Phase 5b dual-write (warm-launch path).
+                        // Tee into the daemon-canonical Term task.
                         self.try_send_bytes_to_term_task(&key, &bytes);
-                        // Phase 5d-v (design 01 / #158): GPUI parse
-                        // is gone for the post-attach warm path; the
-                        // daemon-canonical Term task owns grid +
-                        // bell + title. Mirror to MCP subscribers,
-                        // retry claude-restore for known-stale
-                        // runtimes, and bump the byte-cap.
                         self.maybe_emit_tab_output(&key.tab_id, &bytes);
                         let _ = self.maybe_retry_claude_restore(&key, cx);
                         updated = true;
-                        if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                            break;
-                        }
-                        continue;
                     }
-
-                    if let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) {
-                        if let Some(runtime) = launch.runtime.as_mut() {
-                            let _ = runtime.apply_output(&bytes);
-                        }
-                    }
-                    if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                        break;
-                    }
+                    // Pre-warmed runtime that hasn't been attached to
+                    // a tab yet: bytes already teed to the daemon
+                    // Term task; renderer-side state is empty until
+                    // attach lands.
                 }
                 Ok(WarmTerminalLaunchReply::SessionDiscovered { launch_id, session }) => {
                     let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
@@ -6793,11 +6739,10 @@ impl AnotherOneApp {
     /// flag off, every call is a `daemon_spawn_enabled() == false`
     /// short-circuit and nothing else runs.
     /// Phase 5c of design 01 (#158): apply a daemon-pushed
-    /// `WorkerReply::TerminalTitle` to GPUI-side state. Mirrors
-    /// what the legacy `apply_pty_title_update` does for the
-    /// alacritty-driven path; routed here from
-    /// `drain_session_events`'s Push arm so that a flag-on viewer
-    /// (with `apply_output` skipped) still gets title updates.
+    /// `WorkerReply::TerminalTitle` / `TerminalResetTitle` to
+    /// GPUI-side state. Routed here from `drain_session_events`'s
+    /// Push arm; the daemon-canonical Term task is the sole source
+    /// of title changes post-cutover.
     fn apply_proto_terminal_title(&mut self, section_id: &str, tab_id: &str, title: Option<String>) {
         let Some(section_id) = SectionId::from_store_key(section_id) else {
             log::warn!("TerminalTitle push with malformed section_id");
@@ -6807,17 +6752,8 @@ impl AnotherOneApp {
             section_id,
             tab_id: tab_id.to_string(),
         };
-        let update = match title {
-            Some(title) => crate::terminal_runtime::TerminalRuntimeUpdate {
-                title: Some(title),
-                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
-            },
-            None => crate::terminal_runtime::TerminalRuntimeUpdate {
-                reset_title: true,
-                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
-            },
-        };
-        self.apply_pty_title_update(&key, &update);
+        let reset_title = title.is_none();
+        self.apply_pty_title_update(&key, title, reset_title);
     }
 
     /// Phase 5c: handle a daemon-pushed `WorkerReply::TerminalBell`.
@@ -14185,7 +14121,7 @@ mod tests {
     };
     use crate::terminal_runtime::{
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
-        TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
+        TerminalMouseProtocol, TerminalRuntimeKey, TerminalSurfaceSnapshot,
     };
     use crate::theme::{dark_theme, light_theme};
     use another_one_core::clients::ClientId;
@@ -15178,24 +15114,10 @@ mod tests {
             Some("Run tests".to_string()),
         );
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: Some("cargo test".to_string()),
-                reset_title: false,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, Some("cargo test"), false);
         assert_eq!(tab.title, "Run tests");
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: None,
-                reset_title: true,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, None, true);
         assert_eq!(tab.title, "Run tests");
     }
 
@@ -15204,24 +15126,10 @@ mod tests {
         let mut tab =
             TerminalTab::with_id("tab-1".to_string(), TerminalLaunchConfig::default(), None);
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: Some("cargo test".to_string()),
-                reset_title: false,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, Some("cargo test"), false);
         assert_eq!(tab.title, "cargo test");
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: None,
-                reset_title: true,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, None, true);
         assert_eq!(tab.title, "Terminal");
     }
 

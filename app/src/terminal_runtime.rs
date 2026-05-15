@@ -1,13 +1,7 @@
-use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::color::Colors;
-use alacritty_terminal::term::{Config, Term};
-use alacritty_terminal::vte::ansi::{self, NamedColor, Rgb};
+use alacritty_terminal::vte::ansi::Rgb;
 #[cfg(test)]
 use gpui::rgb;
 use gpui::{font, px, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
@@ -160,29 +154,6 @@ struct PendingPositionedRun {
     style: TextRun,
 }
 
-#[derive(Default)]
-pub(crate) struct TerminalRuntimeUpdate {
-    pub title: Option<String>,
-    pub reset_title: bool,
-    /// True when the running TUI rang the terminal bell (`\x07`) during
-    /// this drain pass. The host briefly flashes the pane to surface it.
-    pub bell: bool,
-}
-
-#[derive(Clone)]
-struct RuntimeEventProxy {
-    queue: Arc<Mutex<VecDeque<Event>>>,
-}
-
-impl EventListener for RuntimeEventProxy {
-    fn send_event(&self, event: Event) {
-        match self.queue.lock() {
-            Ok(mut queue) => queue.push_back(event),
-            Err(error) => eprintln!("failed to queue terminal runtime event: {error}"),
-        }
-    }
-}
-
 /// Local PTY backing for a `LiveTerminalRuntime`. Present when the
 /// renderer owns the PTY directly (desktop's `spawn_terminal_launch`
 /// path); `None` when the renderer is a viewer of a remote PTY (mobile
@@ -199,14 +170,11 @@ pub(crate) struct LocalPty {
 }
 
 pub(crate) struct LiveTerminalRuntime {
-    term: Term<RuntimeEventProxy>,
-    parser: ansi::Processor,
     /// `Some` for locally-spawned PTYs (desktop); `None` for
     /// session-attached viewers (mobile). When `None`, input must
     /// route through `daemon_transport::Session::push_data` and
     /// resize requests must travel as `Control::TabResize`.
     local_pty: Option<LocalPty>,
-    event_queue: Arc<Mutex<VecDeque<Event>>>,
     size: TerminalGridSize,
     dirty: bool,
     /// Live (un-scrolled) surface composed from the latest
@@ -237,21 +205,13 @@ pub(crate) struct LiveTerminalRuntime {
 
 impl LiveTerminalRuntime {
     pub fn from_prepared(prepared: PreparedTerminalRuntime) -> Self {
-        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
-        let event_proxy = RuntimeEventProxy {
-            queue: event_queue.clone(),
-        };
-        let term = Term::new(Config::default(), &prepared.size, event_proxy);
         Self {
-            term,
-            parser: ansi::Processor::default(),
             local_pty: Some(LocalPty {
                 master: prepared.master,
                 writer: Arc::new(Mutex::new(prepared.writer)),
                 child_killer: prepared.child_killer,
                 output_broadcast: prepared.output_broadcast,
             }),
-            event_queue,
             size: prepared.size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
@@ -263,23 +223,13 @@ impl LiveTerminalRuntime {
     }
 
     /// Construct a viewer-only runtime backed by a remote PTY (i.e.
-    /// the daemon owns the actual shell process; this side just
-    /// applies bytes pushed via `SessionEvent::PtyBytes` into a local
-    /// VT grid). Input must be routed through
-    /// `daemon_transport::Session::push_data` by the caller — the
-    /// runtime's `write_input` is a no-op when there is no local PTY.
-    #[allow(dead_code)] // only constructed on cfg(target_os = "android")
+    /// the daemon owns the actual shell process). Input must be
+    /// routed through `daemon_transport::Session::push_data` by the
+    /// caller — the runtime's `write_input` is a no-op when there is
+    /// no local PTY.
     pub fn from_remote(size: TerminalGridSize) -> Self {
-        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
-        let event_proxy = RuntimeEventProxy {
-            queue: event_queue.clone(),
-        };
-        let term = Term::new(Config::default(), &size, event_proxy);
         Self {
-            term,
-            parser: ansi::Processor::default(),
             local_pty: None,
-            event_queue,
             size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
@@ -313,61 +263,9 @@ impl LiveTerminalRuntime {
         if let Some(local) = self.local_pty.as_mut() {
             local.master.resize(size.as_pty_size())?;
         }
-        self.term.resize(size);
         self.size = size;
         self.dirty = true;
         Ok(true)
-    }
-
-    /// Apply raw PTY bytes to the GPUI-thread Term + Processor.
-    ///
-    /// **Deprecated** (design 01 / #158): VT parsing moves to the
-    /// daemon's per-tab Term task. The GPUI viewer becomes a
-    /// snapshot consumer in Phase 5a (`ingest_frame`); this method
-    /// retires when the desktop cutover removes the legacy
-    /// `drain_terminal_launch_replies` and byte-cap mitigations
-    /// (Phase 5d).
-    #[deprecated(
-        since = "0.2.2",
-        note = "VT parsing moves daemon-side; viewers consume snapshots. Design 01 / #158, Phase 5."
-    )]
-    pub fn apply_output(&mut self, bytes: &[u8]) -> TerminalRuntimeUpdate {
-        self.parser.advance(&mut self.term, bytes);
-        self.dirty = true;
-
-        let mut update = TerminalRuntimeUpdate::default();
-        let mut pty_writes = Vec::new();
-
-        if let Ok(mut queue) = self.event_queue.lock() {
-            while let Some(event) = queue.pop_front() {
-                match event {
-                    Event::Title(title) => update.title = Some(title),
-                    Event::ResetTitle => update.reset_title = true,
-                    Event::PtyWrite(text) => pty_writes.push(text.into_bytes()),
-                    Event::ColorRequest(index, formatter) => {
-                        let color = resolve_color_request(index, self.term.colors());
-                        pty_writes.push(formatter(color).into_bytes());
-                    }
-                    Event::TextAreaSizeRequest(formatter) => {
-                        pty_writes.push(formatter(window_size_from_grid(self.size)).into_bytes());
-                    }
-                    Event::Bell => update.bell = true,
-                    Event::Wakeup
-                    | Event::MouseCursorDirty
-                    | Event::CursorBlinkingChange
-                    | Event::ClipboardStore(_, _)
-                    | Event::ClipboardLoad(_, _)
-                    | Event::Exit
-                    | Event::ChildExit(_) => {}
-                }
-            }
-        }
-
-        for bytes in pty_writes {
-            let _ = self.write_input(&bytes);
-        }
-
-        update
     }
 
     pub fn write_input(&self, bytes: &[u8]) -> io::Result<()> {
@@ -388,11 +286,7 @@ impl LiveTerminalRuntime {
     }
 
     pub fn paste_text(&self, text: &str) -> io::Result<()> {
-        let bracketed = self
-            .term
-            .mode()
-            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
-        let payload = encode_paste_payload(text, bracketed);
+        let payload = encode_paste_payload(text, self.bracketed_paste());
         self.write_input(payload.as_bytes())
     }
 
@@ -430,34 +324,48 @@ impl LiveTerminalRuntime {
         self.history_lines
     }
 
+    /// True when the running TUI has switched to the alternate
+    /// screen (vim, less, htop, …). Read from the most recent
+    /// `ingest_frame`'s `mode.alt_screen`.
     pub fn is_alternate_screen(&self) -> bool {
-        self.term
-            .mode()
-            .contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
+        self.live_snapshot
+            .as_ref()
+            .map(|s| s.mode.alt_screen)
+            .unwrap_or(false)
     }
 
     /// Inspect the active mouse-tracking mode, if any. Returns `None` when
     /// the application has not enabled mouse reporting — in which case the
     /// host should treat mouse events as native (selection, link click).
+    /// Sourced from the daemon-pushed `GridSnapshot::mode` flags.
     pub fn mouse_protocol(&self) -> Option<TerminalMouseProtocol> {
-        let mode = self.term.mode();
-        let level = if mode.contains(alacritty_terminal::term::TermMode::MOUSE_MOTION) {
+        let mode = self.live_snapshot.as_ref().map(|s| s.mode)?;
+        let level = if mode.mouse_motion {
             TerminalMouseLevel::AnyMotion
-        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_DRAG) {
+        } else if mode.mouse_drag {
             TerminalMouseLevel::ButtonDrag
-        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK) {
+        } else if mode.mouse_click {
             TerminalMouseLevel::ClickOnly
         } else {
             return None;
         };
-        let encoding = if mode.contains(alacritty_terminal::term::TermMode::SGR_MOUSE) {
+        let encoding = if mode.sgr_mouse {
             TerminalMouseEncoding::Sgr
-        } else if mode.contains(alacritty_terminal::term::TermMode::UTF8_MOUSE) {
+        } else if mode.utf8_mouse {
             TerminalMouseEncoding::Utf8
         } else {
             TerminalMouseEncoding::Default
         };
         Some(TerminalMouseProtocol { level, encoding })
+    }
+
+    /// Whether the running TUI has enabled DECSET 2004 (bracketed
+    /// paste). Sourced from the latest daemon frame's mode flags.
+    fn bracketed_paste(&self) -> bool {
+        self.live_snapshot
+            .as_ref()
+            .map(|s| s.mode.bracketed_paste)
+            .unwrap_or(false)
     }
 
     pub fn request_soft_redraw(&self) -> io::Result<()> {
@@ -695,24 +603,6 @@ impl LiveTerminalRuntime {
         self.dirty
     }
 
-    /// Walk the full alacritty grid (history + viewport) and return all
-    /// matches of `query`. Empty queries yield an empty list. Search is
-    /// always case-insensitive — matches the typical "Cmd-F" UX where
-    /// users don't think about case.
-    ///
-    /// Match positions are reported in alacritty grid coordinates: `line`
-    /// is `Line.0` (negative for scrollback rows, 0..=screen_lines-1 for
-    /// viewport), and `[start_col, end_col)` is a half-open cell range.
-    /// Multi-byte UTF-8 chars occupy a single cell so column ranges line
-    /// up with cell positions, not UTF-8 byte offsets.
-    /// Phase 5f of design 01 (#158): superseded by
-    /// `Control::TerminalSearch`. Kept compiled for tests +
-    /// future viewer-side fallback; not called by production paths.
-    #[allow(dead_code)]
-    pub fn search_scrollback(&self, query: &str) -> Vec<TerminalScrollbackMatch> {
-        search_scrollback_in_term(&self.term, query)
-    }
-
     /// Adjust the viewer scroll offset so the given match lies near
     /// the vertical middle of the viewport. No-op if the match is
     /// already visible without scrolling. Returns `true` when the
@@ -799,89 +689,6 @@ pub(crate) fn encode_paste_payload(text: &str, bracketed: bool) -> String {
     format!("\u{1b}[200~{}\u{1b}[201~", sanitized)
 }
 
-/// Walk the full alacritty grid (history + viewport) and return all
-/// case-insensitive substring matches of `query`. Empty queries yield
-/// an empty list. Match positions are in alacritty grid coordinates:
-/// `line` is `Line.0` (negative for scrollback rows, 0..=screen_lines-1
-/// is in viewport), `[start_col, end_col)` is a half-open cell range.
-/// Phase 5f of design 01 (#158): superseded by daemon-side
-/// search via `Control::TerminalSearch`. Kept for tests + as a
-/// reference impl while the daemon-side path matures.
-#[allow(dead_code)]
-pub(crate) fn search_scrollback_in_term<T: EventListener>(
-    term: &Term<T>,
-    query: &str,
-) -> Vec<TerminalScrollbackMatch> {
-    let query = query.trim_end_matches('\0');
-    if query.is_empty() {
-        return Vec::new();
-    }
-    // Lowercase the query into a Vec<char> so we can compare
-    // char-by-char without re-walking UTF-8 bytes. Some chars
-    // lowercase to multi-char sequences; flatten those eagerly.
-    let needle_chars: Vec<char> = query.chars().flat_map(|ch| ch.to_lowercase()).collect();
-    if needle_chars.is_empty() {
-        return Vec::new();
-    }
-    let mut matches = Vec::new();
-    let grid = term.grid();
-    let columns = grid.columns();
-    let topmost = grid.topmost_line().0;
-    let bottommost = grid.bottommost_line().0;
-
-    for line in topmost..=bottommost {
-        let mut chars: Vec<char> = Vec::with_capacity(columns);
-        let mut cols: Vec<usize> = Vec::with_capacity(columns);
-        for col in 0..columns {
-            let cell = &grid[alacritty_terminal::index::Line(line)]
-                [alacritty_terminal::index::Column(col)];
-            if cell
-                .flags
-                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-            {
-                continue;
-            }
-            chars.push(cell.c);
-            cols.push(col);
-        }
-        if chars.len() < needle_chars.len() {
-            continue;
-        }
-        // Naive O(n·m) scan — terminal rows are short (≤ ~500 cols)
-        // and the typical needle is 1–20 chars, so this stays fast
-        // even on a 100k-row scrollback.
-        'outer: for start in 0..=chars.len() - needle_chars.len() {
-            for (offset, needle_ch) in needle_chars.iter().copied().enumerate() {
-                let row_ch = chars[start + offset];
-                let row_lowered = row_ch.to_lowercase().next().unwrap_or(row_ch);
-                if row_lowered != needle_ch {
-                    continue 'outer;
-                }
-            }
-            let start_col = cols[start];
-            let last_char = start + needle_chars.len() - 1;
-            // Account for wide chars (CJK etc): the cell after the
-            // anchor-cell is a `WIDE_CHAR_SPACER` and was filtered out
-            // of `cols`, so the bare `cols[last] + 1` highlight would
-            // only cover the left half of a 2-cell glyph.
-            let last_col = cols[last_char];
-            let last_anchor_cell = &grid[alacritty_terminal::index::Line(line)]
-                [alacritty_terminal::index::Column(last_col)];
-            let last_cell_width = if last_anchor_cell.flags.contains(Flags::WIDE_CHAR) {
-                2
-            } else {
-                1
-            };
-            let end_col = last_col + last_cell_width;
-            matches.push(TerminalScrollbackMatch {
-                line,
-                start_col,
-                end_col,
-            });
-        }
-    }
-    matches
-}
 
 /// Build a [`TerminalSurfaceSnapshot`] from a daemon-canonical
 /// [`ProtoGridSnapshot`]. Mirrors the alacritty-driven
@@ -1441,41 +1248,6 @@ fn text_run_from_style(style: ResolvedCellStyle) -> TextRun {
     }
 }
 
-fn default_named_color(named: NamedColor) -> Rgb {
-    let palette = crate::theme::current_terminal_palette();
-    let triple = match named {
-        NamedColor::Black => palette.normal[0],
-        NamedColor::Red => palette.normal[1],
-        NamedColor::Green => palette.normal[2],
-        NamedColor::Yellow => palette.normal[3],
-        NamedColor::Blue => palette.normal[4],
-        NamedColor::Magenta => palette.normal[5],
-        NamedColor::Cyan => palette.normal[6],
-        NamedColor::White => palette.normal[7],
-        NamedColor::BrightBlack => palette.bright[0],
-        NamedColor::BrightRed => palette.bright[1],
-        NamedColor::BrightGreen => palette.bright[2],
-        NamedColor::BrightYellow => palette.bright[3],
-        NamedColor::BrightBlue => palette.bright[4],
-        NamedColor::BrightMagenta => palette.bright[5],
-        NamedColor::BrightCyan => palette.bright[6],
-        NamedColor::BrightWhite => palette.bright[7],
-        NamedColor::Foreground => palette.foreground,
-        NamedColor::Cursor => palette.cursor,
-        NamedColor::BrightForeground => palette.bright_foreground,
-        NamedColor::Background => palette.background,
-        NamedColor::DimBlack => palette.dim[0],
-        NamedColor::DimRed => palette.dim[1],
-        NamedColor::DimGreen => palette.dim[2],
-        NamedColor::DimYellow => palette.dim[3],
-        NamedColor::DimBlue => palette.dim[4],
-        NamedColor::DimMagenta => palette.dim[5],
-        NamedColor::DimCyan => palette.dim[6],
-        NamedColor::DimWhite => palette.dim[7],
-        NamedColor::DimForeground => palette.dim_foreground,
-    };
-    rgb_from_triple(triple)
-}
 
 fn default_indexed_color(index: u8) -> Rgb {
     let palette = crate::theme::current_terminal_palette();
@@ -1517,130 +1289,14 @@ fn default_foreground_color() -> Hsla {
     crate::theme::terminal_default_foreground()
 }
 
-fn window_size_from_grid(size: TerminalGridSize) -> WindowSize {
-    WindowSize {
-        num_lines: size.rows,
-        num_cols: size.cols,
-        cell_width: if size.cols == 0 {
-            0
-        } else {
-            size.pixel_width / size.cols
-        },
-        cell_height: if size.rows == 0 {
-            0
-        } else {
-            size.pixel_height / size.rows
-        },
-    }
-}
-
-fn resolve_color_request(index: usize, colors: &Colors) -> Rgb {
-    colors[index].unwrap_or_else(|| default_color_request(index))
-}
-
-fn default_color_request(index: usize) -> Rgb {
-    if index <= u8::MAX as usize {
-        return default_indexed_color(index as u8);
-    }
-
-    match index {
-        x if x == NamedColor::Foreground as usize => default_named_color(NamedColor::Foreground),
-        x if x == NamedColor::Background as usize => default_named_color(NamedColor::Background),
-        x if x == NamedColor::Cursor as usize => default_named_color(NamedColor::Cursor),
-        x if x == NamedColor::BrightForeground as usize => {
-            default_named_color(NamedColor::BrightForeground)
-        }
-        x if x == NamedColor::DimForeground as usize => {
-            default_named_color(NamedColor::DimForeground)
-        }
-        x if x == NamedColor::DimBlack as usize => default_named_color(NamedColor::DimBlack),
-        x if x == NamedColor::DimRed as usize => default_named_color(NamedColor::DimRed),
-        x if x == NamedColor::DimGreen as usize => default_named_color(NamedColor::DimGreen),
-        x if x == NamedColor::DimYellow as usize => default_named_color(NamedColor::DimYellow),
-        x if x == NamedColor::DimBlue as usize => default_named_color(NamedColor::DimBlue),
-        x if x == NamedColor::DimMagenta as usize => default_named_color(NamedColor::DimMagenta),
-        x if x == NamedColor::DimCyan as usize => default_named_color(NamedColor::DimCyan),
-        x if x == NamedColor::DimWhite as usize => default_named_color(NamedColor::DimWhite),
-        _ => default_named_color(NamedColor::Background),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::term::test::TermSize;
-
-    fn term_from_ansi(rows: usize, cols: usize, bytes: &[u8]) -> Term<VoidListener> {
-        let mut term = Term::new(Config::default(), &TermSize::new(cols, rows), VoidListener);
-        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
-        parser.advance(&mut term, bytes);
-        term
-    }
-
-    #[test]
-    fn search_scrollback_finds_match_in_viewport() {
-        let term = term_from_ansi(4, 32, b"hello world\r\nrust hello rust\r\n");
-        let matches = search_scrollback_in_term(&term, "hello");
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].start_col, 0);
-        assert_eq!(matches[0].end_col, 5);
-        assert_eq!(matches[1].start_col, 5);
-        assert_eq!(matches[1].end_col, 10);
-    }
-
-    #[test]
-    fn search_scrollback_is_case_insensitive() {
-        let term = term_from_ansi(4, 32, b"Hello World\r\n");
-        let m = search_scrollback_in_term(&term, "WORLD");
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].start_col, 6);
-        assert_eq!(m[0].end_col, 11);
-    }
-
-    #[test]
-    fn search_scrollback_empty_query_yields_empty() {
-        let term = term_from_ansi(4, 32, b"hello\r\n");
-        assert!(search_scrollback_in_term(&term, "").is_empty());
-        assert!(search_scrollback_in_term(&term, "\0\0").is_empty());
-    }
-
-    #[test]
-    fn search_scrollback_walks_history_above_viewport() {
-        // 4-row terminal, push 8 rows so 4 lines fall into scrollback.
-        let mut bytes: Vec<u8> = Vec::new();
-        for i in 0..8 {
-            bytes.extend_from_slice(format!("row{i}\r\n").as_bytes());
-        }
-        let term = term_from_ansi(4, 16, &bytes);
-        // "row1" should now live in scrollback (above the visible viewport).
-        let m = search_scrollback_in_term(&term, "row1");
-        assert_eq!(m.len(), 1);
-        assert!(
-            m[0].line < 0,
-            "expected scrollback (negative line), got {}",
-            m[0].line
-        );
-    }
-
-    #[test]
-    fn search_scrollback_wide_char_match_spans_two_columns() {
-        // Match anchored on a 2-cell-wide CJK glyph should report
-        // end_col one past its right cell, not its anchor cell.
-        let term = term_from_ansi(4, 16, "look 日本 here\r\n".as_bytes());
-        let m = search_scrollback_in_term(&term, "日");
-        assert_eq!(m.len(), 1);
-        // "look " takes cols 0..5, then 日 occupies cols 5+6.
-        assert_eq!(m[0].start_col, 5);
-        assert_eq!(m[0].end_col, 7, "wide-char highlight covers 2 cells");
-    }
-
-    #[test]
-    fn search_scrollback_no_match_yields_empty() {
-        let term = term_from_ansi(4, 32, b"hello world\r\n");
-        assert!(search_scrollback_in_term(&term, "zzz").is_empty());
-    }
+    use alacritty_terminal::term::{Config, Term};
+    use alacritty_terminal::vte::ansi;
 
     fn snapshot_from_ansi(bytes: &[u8]) -> TerminalSurfaceSnapshot {
         // Drive the canonical pipeline end-to-end: alacritty Term
@@ -1946,42 +1602,6 @@ mod tests {
         // history_lines = 0; viewer offset must clamp.
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 0);
         assert_eq!(runtime.viewer_scroll_offset(), 0);
-    }
-
-    #[test]
-    fn bell_event_surfaces_in_runtime_update() {
-        // We can't drive a full LiveTerminalRuntime without a PTY, but
-        // we can verify Term raises Event::Bell on `\x07` and that our
-        // drain loop sets `update.bell = true`. Mirror the drain loop
-        // inline using a dedicated proxy so we don't need PTY plumbing.
-        use std::collections::VecDeque;
-        use std::sync::{Arc, Mutex};
-
-        let queue: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let proxy_queue = queue.clone();
-        struct Proxy {
-            queue: Arc<Mutex<VecDeque<Event>>>,
-        }
-        impl EventListener for Proxy {
-            fn send_event(&self, event: Event) {
-                self.queue.lock().unwrap().push_back(event);
-            }
-        }
-        let mut term = Term::new(
-            Config::default(),
-            &TermSize::new(8, 4),
-            Proxy { queue: proxy_queue },
-        );
-        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
-        parser.advance(&mut term, b"a\x07b");
-
-        let mut update = TerminalRuntimeUpdate::default();
-        while let Some(event) = queue.lock().unwrap().pop_front() {
-            if matches!(event, Event::Bell) {
-                update.bell = true;
-            }
-        }
-        assert!(update.bell, "BEL byte should surface as update.bell");
     }
 
     #[test]
