@@ -18,11 +18,13 @@
 mod command_env;
 
 pub mod agents;
+pub mod capability;
 pub mod clients;
+pub mod git;
 pub mod git_actions;
 pub mod git_operation;
+pub mod git_remote;
 pub mod git_service;
-pub mod github;
 pub mod leakscope;
 pub mod mcp;
 pub mod open_in;
@@ -31,6 +33,7 @@ pub mod process;
 pub mod project_service;
 pub mod project_store;
 pub mod resource_usage;
+pub mod scope;
 pub mod section;
 pub mod shortcuts;
 pub mod sqlite_persistence;

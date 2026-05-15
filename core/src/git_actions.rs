@@ -334,7 +334,7 @@ fn undo_last_commit(repo_path: &Path) -> Result<ToolbarActionOutcome, ToolbarAct
     run_simple_git_command(repo_path, ToolbarGitAction::UndoLastCommit)
 }
 
-fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
     let output = git_command(repo_path).args(args).output().ok()?;
 
     if !output.status.success() {
@@ -741,11 +741,28 @@ fn create_pull_request(
             ToolbarActionError::from_message(format!("Create PR failed. {message}"))
         })?;
 
-    let provider = crate::github::make_provider(repo_path);
+    let scope = crate::capability::project_scope(String::new(), repo_path.to_path_buf());
+    let provider = {
+        let git = crate::git::resolve_git(&scope).ok_or_else(|| {
+            ToolbarActionError::from_message(
+                "Create PR failed. `git` is not installed or not on the app PATH.",
+            )
+        })?;
+        let remote_url = git.remote_url(repo_path, "origin").ok_or_else(|| {
+            ToolbarActionError::from_message(
+                "Create PR failed. Could not determine the project's git remote.",
+            )
+        })?;
+        crate::git_remote::resolve_for_remote(&scope, &remote_url).ok_or_else(|| {
+            ToolbarActionError::from_message(
+                "Create PR failed. GitHub CLI (`gh`) is not installed or not on the app PATH.",
+            )
+        })?
+    };
     let outcome = provider
         .create_pull_request(
             repo_path,
-            crate::github::CreatePrArgs {
+            crate::git_remote::CreatePrArgs {
                 head_branch: head_branch.clone(),
                 draft,
                 base_branch: base_branch.map(str::to_string),
@@ -754,16 +771,16 @@ fn create_pull_request(
             },
         )
         .map_err(|err| match err {
-            crate::github::GhError::NotInstalled => ToolbarActionError::from_message(
+            crate::git_remote::RemoteError::NotInstalled => ToolbarActionError::from_message(
                 "Create PR failed. GitHub CLI (`gh`) is not installed or not on the app PATH.",
             ),
-            crate::github::GhError::NotAuthenticated => ToolbarActionError::from_message(
+            crate::git_remote::RemoteError::NotAuthenticated => ToolbarActionError::from_message(
                 "Create PR failed. GitHub CLI is not signed in. Run: gh auth login",
             ),
-            crate::github::GhError::NetworkError(msg) => ToolbarActionError::from_message(
-                format!("Create PR failed. {msg}"),
-            ),
-            crate::github::GhError::Other(msg) => ToolbarActionError::from_message(format!(
+            crate::git_remote::RemoteError::NetworkError(msg) => {
+                ToolbarActionError::from_message(format!("Create PR failed. {msg}"))
+            }
+            crate::git_remote::RemoteError::Other(msg) => ToolbarActionError::from_message(format!(
                 "{}: {msg}",
                 if draft {
                     "Draft PR creation failed"
@@ -1520,7 +1537,7 @@ fn command_output_details(output: &Output) -> String {
     }
 }
 
-fn git_current_branch(repo_path: &Path) -> Option<String> {
+pub(crate) fn git_current_branch(repo_path: &Path) -> Option<String> {
     git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|branch| branch != "HEAD")
 }
 
@@ -1553,8 +1570,8 @@ fn git_command(repo_path: &Path) -> Command {
 }
 
 /// Build a base `Command` with the app's resolved PATH applied.
-/// Public to the crate so [`crate::github::cli::GhCliProvider`] can
-/// reuse the spawn shape without duplicating the helper.
+/// Public to the crate so [`crate::git_remote::GhCliRemoteProvider`]
+/// can reuse the spawn shape without duplicating the helper.
 #[cfg(feature = "github-cli")]
 pub(crate) fn external_command_for_provider(
     program: impl AsRef<std::ffi::OsStr>,

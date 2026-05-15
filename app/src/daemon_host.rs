@@ -1762,36 +1762,38 @@ pub(crate) fn spawn_gh_auth_check(
 
 fn perform_gh_auth_check() -> daemon_proto::GhAuthStatusWire {
     let cwd = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-    let provider = another_one_core::github::make_provider(&cwd);
-    let status = provider.probe_auth();
+    let scope = another_one_core::capability::system_scope();
+    // Boot-time path: we don't yet know the project's remote URL,
+    // so we ask for *any* applicable `GitRemoteProvider`. Today
+    // that's only the GitHub-via-`gh` impl. When a second provider
+    // ships (Bitbucket / GitLab), this site re-fans-out per
+    // provider so the overlay reflects each backend's auth state
+    // independently.
+    let status = match another_one_core::git_remote::resolve_any(&scope) {
+        Some(provider) => provider.probe_auth(&cwd),
+        None => another_one_core::git_remote::AuthStatus::ToolMissing,
+    };
     if matches!(
         status,
-        another_one_core::github::AuthStatus::GhMissing
-            | another_one_core::github::AuthStatus::NotAuthenticated
+        another_one_core::git_remote::AuthStatus::ToolMissing
+            | another_one_core::git_remote::AuthStatus::NotAuthenticated
     ) {
-        // Expected on installs without gh / signed-out gh; the
-        // renderer surfaces the overlay. Trace-level so production
-        // logs stay quiet but RUST_LOG=trace can resurrect the
-        // diagnostic.
         log::trace!("gh auth check: provider reported {:?}", status);
     }
     match status {
-        another_one_core::github::AuthStatus::Authenticated => {
+        another_one_core::git_remote::AuthStatus::Authenticated => {
             daemon_proto::GhAuthStatusWire::Authenticated
         }
-        another_one_core::github::AuthStatus::NotAuthenticated => {
+        another_one_core::git_remote::AuthStatus::NotAuthenticated => {
             daemon_proto::GhAuthStatusWire::NotAuthenticated
         }
-        another_one_core::github::AuthStatus::GhMissing => {
+        another_one_core::git_remote::AuthStatus::ToolMissing => {
             daemon_proto::GhAuthStatusWire::GhMissing
         }
         // The provider's `Checking` state is for in-flight
-        // RecheckGhAuth ticks where the renderer-side flag is set
-        // before the worker thread runs; the boot-time path
-        // shouldn't see it. Map to GhMissing as the safest fallback
-        // (the renderer treats Checking the same way for the
-        // purposes of suppressing the alarming overlay).
-        another_one_core::github::AuthStatus::Checking => {
+        // RecheckGhAuth ticks; boot-time path shouldn't see it.
+        // Mirror the renderer's "treat Checking as overlay-suppress".
+        another_one_core::git_remote::AuthStatus::Checking => {
             daemon_proto::GhAuthStatusWire::Checking
         }
     }

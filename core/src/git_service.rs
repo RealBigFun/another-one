@@ -16,7 +16,7 @@
 //! Reply types (`GitRefreshReply`, …) live here so desktop and any
 //! future daemon/mobile client share the same vocabulary.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 
 use tokio::sync::broadcast;
@@ -278,11 +278,13 @@ pub struct ProjectPullRequestReply {
     pub pull_request: Option<PullRequestStatus>,
 }
 
-/// Look up the latest pull-request status for a branch. Routed
-/// through [`crate::github::make_provider`] so installs without
-/// `gh` (or builds without the `github-cli` feature) get the
-/// `MissingProvider` no-op and surface `Ok(None)` — same observable
-/// outcome as the pre-trait "gh-missing means no PR" behaviour.
+/// Look up the latest pull-request status for a branch. Routes
+/// through the capability registry: resolves `Git` to read the
+/// project's remote URL, then asks each registered
+/// `GitRemoteProvider` whether it owns that URL. Returns `None`
+/// for any of: no git on PATH, no remote configured, no remote
+/// provider claims the URL, or the provider succeeded but found
+/// no PR — same observable outcome as the pre-trait path.
 pub fn spawn_pull_request_lookup(
     sender: broadcast::Sender<ProjectPullRequestReply>,
     lookup_key: String,
@@ -290,20 +292,23 @@ pub fn spawn_pull_request_lookup(
     branch_name: String,
 ) {
     thread::spawn(move || {
-        let provider = crate::github::make_provider(&project_path);
-        // Provider returns Result<Option<...>, GhError>; the legacy
-        // free function collapsed every failure to `None`, so we
-        // preserve that here. A future revision can pipe GhError
-        // back to the renderer for richer UX.
-        let pull_request = provider
-            .find_pull_request(&project_path, &branch_name)
-            .ok()
-            .flatten();
+        let pull_request = lookup_pull_request(&project_path, &branch_name);
         let _ = sender.send(ProjectPullRequestReply {
             lookup_key,
             pull_request,
         });
     });
+}
+
+fn lookup_pull_request(project_path: &Path, branch_name: &str) -> Option<PullRequestStatus> {
+    let scope = crate::capability::project_scope(String::new(), project_path.to_path_buf());
+    let git = crate::git::resolve_git(&scope)?;
+    let remote = git.remote_url(project_path, "origin")?;
+    let provider = crate::git_remote::resolve_for_remote(&scope, &remote)?;
+    provider
+        .find_pull_request(project_path, branch_name)
+        .ok()
+        .flatten()
 }
 
 #[derive(Clone)]
@@ -315,9 +320,11 @@ pub struct ProjectPagePullRequestsReply {
 }
 
 /// Query the project-page PR list (filter + text search). Routes
-/// through [`crate::github::make_provider`] so the
-/// `MissingProvider` fallback returns the typed `NotInstalled`
-/// error rather than spawning gh.
+/// through the capability registry: a `GitRemoteProvider` is
+/// selected by the project's remote URL. With no matching provider
+/// (e.g. a self-hosted Gitea remote, or `gh` not installed), the
+/// reply carries the "GitHub CLI not installed" string — same
+/// observable behaviour as the pre-trait `MissingProvider`.
 pub fn spawn_project_page_pull_requests(
     sender: broadcast::Sender<ProjectPagePullRequestsReply>,
     project_id: String,
@@ -326,15 +333,12 @@ pub fn spawn_project_page_pull_requests(
     query: String,
 ) {
     thread::spawn(move || {
-        let provider = crate::github::make_provider(&project_path);
         let filter = match filter_index {
-            1 => crate::github::PrFilter::ReviewRequested,
-            2 => crate::github::PrFilter::Author,
-            _ => crate::github::PrFilter::AllOpen,
+            1 => crate::git_remote::PrFilter::ReviewRequested,
+            2 => crate::git_remote::PrFilter::Author,
+            _ => crate::git_remote::PrFilter::AllOpen,
         };
-        let result = provider
-            .list_pull_requests(&project_path, filter, Some(&query), 100)
-            .map_err(|err| err.to_string());
+        let result = list_project_pull_requests(&project_path, filter, &query);
         let _ = sender.send(ProjectPagePullRequestsReply {
             project_id,
             filter_index,
@@ -344,6 +348,24 @@ pub fn spawn_project_page_pull_requests(
     });
 }
 
+fn list_project_pull_requests(
+    project_path: &Path,
+    filter: crate::git_remote::PrFilter,
+    query: &str,
+) -> Result<Vec<ProjectPagePullRequest>, String> {
+    let scope = crate::capability::project_scope(String::new(), project_path.to_path_buf());
+    let provider = match crate::git::resolve_git(&scope)
+        .and_then(|git| git.remote_url(project_path, "origin"))
+        .and_then(|url| crate::git_remote::resolve_for_remote(&scope, &url))
+    {
+        Some(p) => p,
+        None => return Err(crate::git_remote::RemoteError::NotInstalled.to_string()),
+    };
+    provider
+        .list_pull_requests(project_path, filter, Some(query), 100)
+        .map_err(|err| err.to_string())
+}
+
 #[derive(Clone)]
 pub struct ProjectCheckRunsReply {
     pub lookup_key: String,
@@ -351,7 +373,9 @@ pub struct ProjectCheckRunsReply {
 }
 
 /// Fetch the GitHub check-runs (CI status) for a PR. Routes
-/// through [`crate::github::make_provider`].
+/// through the capability registry; with no matching provider,
+/// returns the "GitHub CLI not installed" string for parity with
+/// the pre-trait fallback path.
 pub fn spawn_check_runs_lookup(
     sender: broadcast::Sender<ProjectCheckRunsReply>,
     lookup_key: String,
@@ -359,10 +383,24 @@ pub fn spawn_check_runs_lookup(
     pull_request_number: Option<u64>,
 ) {
     thread::spawn(move || {
-        let provider = crate::github::make_provider(&project_path);
-        let result = provider
-            .pull_request_checks(&project_path, pull_request_number)
-            .map_err(|err| err.to_string());
+        let result = lookup_check_runs(&project_path, pull_request_number);
         let _ = sender.send(ProjectCheckRunsReply { lookup_key, result });
     });
+}
+
+fn lookup_check_runs(
+    project_path: &Path,
+    pull_request_number: Option<u64>,
+) -> Result<Option<Vec<PullRequestCheck>>, String> {
+    let scope = crate::capability::project_scope(String::new(), project_path.to_path_buf());
+    let provider = match crate::git::resolve_git(&scope)
+        .and_then(|git| git.remote_url(project_path, "origin"))
+        .and_then(|url| crate::git_remote::resolve_for_remote(&scope, &url))
+    {
+        Some(p) => p,
+        None => return Err(crate::git_remote::RemoteError::NotInstalled.to_string()),
+    };
+    provider
+        .pull_request_checks(project_path, pull_request_number)
+        .map_err(|err| err.to_string())
 }
