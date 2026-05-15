@@ -354,7 +354,7 @@ mod tests {
         #[allow(deprecated)]
         let (server, client) = daemon_transport::in_memory::pair("test-viewer");
         let server_arc: Arc<dyn ServerSession> = Arc::from(server);
-        let term_handle = spawn_terminal_task(small_size());
+        let term_handle = spawn_terminal_task(small_size(), None);
         let pacer = spawn_pacer(
             PacerConfig {
                 viewer_id: "test-viewer".into(),
@@ -423,7 +423,7 @@ mod tests {
         // pacer subscribes. Subscribing with `since_seq = Some(1)`
         // means the viewer already holds seq=1; no initial emit
         // should fire until a *new* frame arrives.
-        let term_handle = spawn_terminal_task(small_size());
+        let term_handle = spawn_terminal_task(small_size(), None);
         term_handle
             .send(TerminalCommand::Bytes(b"a".to_vec()))
             .await

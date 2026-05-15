@@ -132,6 +132,13 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
         .master
         .take_writer()
         .context("daemon spawn: pty writer")?;
+    // Wrap once and share between the Term task (for VT-response
+    // writes — CSI c, OSC 4, CSI 14t/18t) and the SpawnedChild's
+    // public `writer` handle (used by the registry for client
+    // input). Both paths take the same `Arc<Mutex<...>>` so writes
+    // serialise through one mutex.
+    let writer: std::sync::Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(writer));
     let child = pair
         .slave
         .spawn_command(builder)
@@ -141,7 +148,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
     drop(pair.slave); // close the slave-side handle on the parent side
 
     // Start the Term task now so the reader has a destination.
-    let task = spawn_terminal_task(req.size);
+    let task = spawn_terminal_task(req.size, Some(std::sync::Arc::clone(&writer)));
     let task_inbox = task.try_send_handle();
 
     // Reader thread: blocking read from the PTY master, blocking
@@ -167,7 +174,7 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
         },
         process_id,
         master,
-        writer: std::sync::Arc::new(std::sync::Mutex::new(writer)),
+        writer,
     })
 }
 

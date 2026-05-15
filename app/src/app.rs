@@ -6716,7 +6716,12 @@ impl AnotherOneApp {
         // work inside `daemon::terminal::spawn_terminal_task`.
         let term_task = {
             let _guard = crate::session_host::runtime_handle().enter();
-            daemon::terminal::spawn_terminal_task(size)
+            // Pass the writer in so the Term task can respond to
+            // VT-defined query escapes (CSI c primary-device-attribute
+            // — fish/bash with vte-completion probe with this every
+            // prompt; OSC 4 colour queries; CSI 14t/18t text-area
+            // size queries).
+            daemon::terminal::spawn_terminal_task(size, Some(Arc::clone(&writer)))
         };
         if let Ok(mut state) = self.registry_state.lock() {
             state.broadcasts.insert(key.clone(), broadcast_sender);

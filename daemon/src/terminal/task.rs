@@ -30,11 +30,12 @@
 //! add `select!` arms and command variants without restructuring.
 
 use std::collections::VecDeque;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
+use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener, WindowSize};
 use alacritty_terminal::term::Term;
-use alacritty_terminal::vte::ansi;
+use alacritty_terminal::vte::ansi::{self, NamedColor, Rgb};
 use another_one_core::terminal_types::TerminalGridSize;
 use daemon_proto::{
     ScrollbackRange, TerminalFrame, TerminalScrollbackReply, TerminalSearchReply,
@@ -253,11 +254,29 @@ impl Drop for TerminalTaskHandle {
 /// Spawn a per-tab Term task on the current tokio runtime. Returns
 /// the handle the registry holds. The task starts idle: nothing to
 /// do until `Bytes` arrive on the inbox.
-pub fn spawn_terminal_task(size: TerminalGridSize) -> TerminalTaskHandle {
+/// Spawn a per-tab Term task on the current tokio runtime. Returns
+/// the handle the registry holds. The task starts idle: nothing to
+/// do until `Bytes` arrive on the inbox.
+///
+/// `pty_writer` is `Some` when the caller owns a PTY master and
+/// wants the Term task to handle VT-defined response queries
+/// (CSI c, OSC 4, CSI 14t/18t). Without it the task drops those
+/// queries silently and shells/TUIs that probe with them fall
+/// back to limited mode.
+pub fn spawn_terminal_task(
+    size: TerminalGridSize,
+    pty_writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
+) -> TerminalTaskHandle {
     let (tx, rx) = mpsc::channel(INBOX_CAPACITY);
     let (frame_tx, frame_rx) = watch::channel(None::<Arc<TerminalFrame>>);
     let (side_tx, _) = broadcast::channel(SIDE_EFFECT_CAPACITY);
-    let join = tokio::spawn(run_terminal_task(rx, size, frame_tx, side_tx.clone()));
+    let join = tokio::spawn(run_terminal_task(
+        rx,
+        size,
+        frame_tx,
+        side_tx.clone(),
+        pty_writer,
+    ));
     TerminalTaskHandle {
         inbox: tx,
         frame_watch: frame_rx,
@@ -320,6 +339,17 @@ struct TerminalTask {
     /// `Err` we discard; the events were observably delivered to
     /// nobody, which matches the design.
     side_effects: broadcast::Sender<TerminalSideEffect>,
+    /// PTY master writer. `Some` when the registry passed one in at
+    /// spawn time (desktop's `register_tab_with_registry` does);
+    /// `None` for tests and any future spawn path that doesn't own
+    /// a PTY. When `Some`, the task responds to VT-defined query
+    /// escapes (CSI c primary-device-attribute, OSC 4 colour
+    /// queries, CSI 14t/18t text-area-size queries) by writing the
+    /// formatted reply back through the PTY. Without a writer the
+    /// queries drop silently and shells/TUIs that probe with them
+    /// (fish, bash with vte-completion, …) fall back to limited
+    /// mode and warn loudly.
+    pty_writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
 }
 
 impl TerminalTask {
@@ -327,6 +357,7 @@ impl TerminalTask {
         size: TerminalGridSize,
         frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>,
         side_effects: broadcast::Sender<TerminalSideEffect>,
+        pty_writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     ) -> Self {
         let event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let proxy = TermEventProxy {
@@ -344,6 +375,7 @@ impl TerminalTask {
             frame_watch,
             latest: None,
             side_effects,
+            pty_writer,
         }
     }
 
@@ -428,10 +460,13 @@ impl TerminalTask {
     }
 
     /// Drain the alacritty event queue into the side-channel.
-    /// Events the task can't yet handle (PtyWrite/ColorRequest/
-    /// TextAreaSizeRequest — all need writer access for the
-    /// response) are discarded with a trace log. Phase 4 wires
-    /// those to the PTY writer.
+    /// Drain the alacritty event queue into the side-channel. The
+    /// writer-bound events (PtyWrite, ColorRequest, TextAreaSizeRequest)
+    /// require an attached PTY writer; when present, the task
+    /// responds with the formatted reply expected by the protocol.
+    /// When absent the events drop silently — fish/bash with
+    /// vte-completion will warn loudly that the terminal didn't
+    /// answer their CSI c probe.
     fn drain_events(&mut self) {
         let drained: Vec<AlacrittyEvent> = match self.event_queue.lock() {
             Ok(mut queue) => queue.drain(..).collect(),
@@ -451,12 +486,17 @@ impl TerminalTask {
                 AlacrittyEvent::Bell => {
                     let _ = self.side_effects.send(TerminalSideEffect::Bell);
                 }
-                AlacrittyEvent::PtyWrite(_)
-                | AlacrittyEvent::ColorRequest(_, _)
-                | AlacrittyEvent::TextAreaSizeRequest(_) => {
-                    tracing::trace!(
-                        "terminal task: dropping writer-bound event (Phase 4 wires it)"
-                    );
+                AlacrittyEvent::PtyWrite(text) => {
+                    self.write_to_pty(text.as_bytes());
+                }
+                AlacrittyEvent::ColorRequest(index, formatter) => {
+                    let rgb = resolve_color_request(index, self.term.colors());
+                    let reply = formatter(rgb);
+                    self.write_to_pty(reply.as_bytes());
+                }
+                AlacrittyEvent::TextAreaSizeRequest(formatter) => {
+                    let reply = formatter(window_size_from_grid(self.size));
+                    self.write_to_pty(reply.as_bytes());
                 }
                 AlacrittyEvent::Wakeup
                 | AlacrittyEvent::MouseCursorDirty
@@ -484,6 +524,26 @@ impl TerminalTask {
         let _ = self.frame_watch.send(Some(Arc::clone(&frame)));
         self.latest = Some(frame);
         self.dirty = false;
+    }
+
+    /// Write a VT response payload to the PTY master, if one is
+    /// attached. No-op when `pty_writer` is `None` — tests and
+    /// future spawn paths without a real PTY skip silently.
+    fn write_to_pty(&self, bytes: &[u8]) {
+        let Some(writer) = self.pty_writer.as_ref() else {
+            return;
+        };
+        let mut guard = match writer.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Err(err) = guard.write_all(bytes) {
+            tracing::warn!("terminal task: pty write_all failed: {err}");
+            return;
+        }
+        if let Err(err) = guard.flush() {
+            tracing::warn!("terminal task: pty flush failed: {err}");
+        }
     }
 
     /// Borrow the underlying Term for tests. Production code paths
@@ -535,8 +595,9 @@ async fn run_terminal_task(
     size: TerminalGridSize,
     frame_watch: watch::Sender<Option<Arc<TerminalFrame>>>,
     side_effects: broadcast::Sender<TerminalSideEffect>,
+    pty_writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
 ) {
-    let mut state = TerminalTask::new(size, frame_watch, side_effects);
+    let mut state = TerminalTask::new(size, frame_watch, side_effects, pty_writer);
     while let Some(command) = inbox.recv().await {
         match command {
             TerminalCommand::Bytes(bytes) => {
@@ -567,6 +628,93 @@ async fn run_terminal_task(
     // alacritty's `Term` cleans up on drop.
 }
 
+/// Resolve a `gh auth status`-style color-query index into the RGB
+/// the running TUI expects in the OSC 4 reply. Mirrors the legacy
+/// renderer-side `resolve_color_request` (deleted in design 01
+/// Phase 5b's renderer cutover); now lives daemon-side because the
+/// Term task is what holds the canonical palette.
+fn resolve_color_request(
+    index: usize,
+    colors: &alacritty_terminal::term::color::Colors,
+) -> Rgb {
+    if let Some(rgb) = colors[index] {
+        return rgb;
+    }
+    if index <= u8::MAX as usize {
+        return default_indexed_color(index as u8);
+    }
+    match index {
+        x if x == NamedColor::Foreground as usize => Rgb {
+            r: 0xbf,
+            g: 0xbd,
+            b: 0xb6,
+        },
+        x if x == NamedColor::Background as usize => Rgb {
+            r: 0x0d,
+            g: 0x10,
+            b: 0x16,
+        },
+        x if x == NamedColor::Cursor as usize => Rgb {
+            r: 0x5a,
+            g: 0xc1,
+            b: 0xfe,
+        },
+        _ => Rgb {
+            r: 0x0d,
+            g: 0x10,
+            b: 0x16,
+        },
+    }
+}
+
+fn default_indexed_color(index: u8) -> Rgb {
+    match index {
+        0 => Rgb {
+            r: 0x0d,
+            g: 0x10,
+            b: 0x16,
+        },
+        16..=231 => {
+            let index = index - 16;
+            let cube = [0u8, 95, 135, 175, 215, 255];
+            Rgb {
+                r: cube[(index / 36) as usize],
+                g: cube[((index % 36) / 6) as usize],
+                b: cube[(index % 6) as usize],
+            }
+        }
+        232..=255 => {
+            let v = 8u8.saturating_add((index - 232).saturating_mul(10));
+            Rgb { r: v, g: v, b: v }
+        }
+        _ => Rgb {
+            r: 0xff,
+            g: 0xff,
+            b: 0xff,
+        },
+    }
+}
+
+/// Format a `WindowSize` reply for `CSI 14t` / `CSI 18t` queries.
+/// alacritty's formatter takes a `WindowSize`; the values come
+/// straight from the daemon-side grid + pixel hints.
+fn window_size_from_grid(size: TerminalGridSize) -> WindowSize {
+    WindowSize {
+        num_lines: size.rows,
+        num_cols: size.cols,
+        cell_width: if size.cols == 0 {
+            0
+        } else {
+            size.pixel_width / size.cols
+        },
+        cell_height: if size.rows == 0 {
+            0
+        } else {
+            size.pixel_height / size.rows
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,7 +734,7 @@ mod tests {
     fn fresh_state() -> TerminalTask {
         let (frame_tx, _frame_rx) = watch::channel(None::<Arc<TerminalFrame>>);
         let (side_tx, _side_rx) = broadcast::channel(SIDE_EFFECT_CAPACITY);
-        TerminalTask::new(small_size(), frame_tx, side_tx)
+        TerminalTask::new(small_size(), frame_tx, side_tx, None)
     }
 
     #[test]
@@ -659,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_runs_and_shuts_down_cleanly() {
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         handle
             .send(TerminalCommand::Bytes(b"abc".to_vec()))
             .await
@@ -669,7 +817,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_exits_when_handle_dropped() {
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         let inbox = handle.inbox.clone();
         drop(handle);
         for _ in 0..50 {
@@ -683,7 +831,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_full_frame_returns_none_before_any_bytes() {
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         let (tx, rx) = oneshot::channel();
         handle
             .send(TerminalCommand::RequestFullFrame { reply: tx })
@@ -696,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_full_frame_returns_latest_after_bytes() {
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         handle
             .send(TerminalCommand::Bytes(b"hi".to_vec()))
             .await
@@ -720,7 +868,7 @@ mod tests {
 
     #[tokio::test]
     async fn watch_receiver_observes_frame_emission() {
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         let rx = handle.subscribe();
 
         // Initial value is `None` (no frames yet).
@@ -749,7 +897,7 @@ mod tests {
 
     #[tokio::test]
     async fn resize_reshapes_grid_and_emits_frame() {
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         // Seed some bytes; the seq starts at 1 here.
         handle
             .send(TerminalCommand::Bytes(b"hi".to_vec()))
@@ -788,7 +936,7 @@ mod tests {
         // Start narrow (10 cols, 3 rows). Push enough text that
         // some lines wrap to the narrow width and earlier rows
         // fall into scrollback.
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         let payload =
             b"the quick brown fox jumps over the lazy dog the rainy night was long".to_vec();
         handle
@@ -870,7 +1018,7 @@ mod tests {
     async fn search_finds_literal_substring_with_case_fold() {
         use daemon_proto::{TerminalCaseFold, TerminalSearchRequest};
 
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         handle
             .send(TerminalCommand::Bytes(b"hello".to_vec()))
             .await
@@ -901,7 +1049,7 @@ mod tests {
     async fn search_with_regex_returns_all_matches() {
         use daemon_proto::{TerminalCaseFold, TerminalSearchRequest};
 
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         handle
             .send(TerminalCommand::Bytes(b"abc123".to_vec()))
             .await
@@ -934,7 +1082,7 @@ mod tests {
         // start=0 with count=2 returns the topmost viewport row
         // and stops there (history is empty so offset=1 walks off
         // the end). Range_actual.count reflects what was returned.
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         handle
             .send(TerminalCommand::Bytes(b"top".to_vec()))
             .await
@@ -968,7 +1116,7 @@ mod tests {
         // BEL = 0x07. alacritty's Term surfaces an Event::Bell on
         // every BEL the parser sees; the task forwards it through
         // the broadcast.
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         let mut subscriber = handle.subscribe_side_effects();
         handle
             .send(TerminalCommand::Bytes(vec![b'h', 0x07, b'i']))
@@ -990,7 +1138,7 @@ mod tests {
     async fn osc_title_emits_side_effect() {
         // OSC 0 ; <title> ST changes the window title. Sequence:
         // ESC ] 0 ; my-title ESC \
-        let handle = spawn_terminal_task(small_size());
+        let handle = spawn_terminal_task(small_size(), None);
         let mut subscriber = handle.subscribe_side_effects();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"\x1b]0;hello-title\x1b\\");
@@ -1006,6 +1154,76 @@ mod tests {
         .expect("timeout")
         .expect("recv");
         assert_eq!(event, TerminalSideEffect::Title("hello-title".into()));
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    /// In-memory writer used to assert VT-response payloads land
+    /// where they should without spinning up a real PTY.
+    struct CapturingWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn primary_device_attribute_query_replies_via_writer() {
+        // CSI c — fish/bash with vte-completion probe with this on
+        // every prompt and time out (warning loudly) when the
+        // terminal doesn't answer. alacritty parses the query and
+        // surfaces a `PtyWrite` event with the canonical
+        // "CSI ? 6 c" reply (VT102 + secondary-attrs).
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let writer: std::sync::Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Box::new(CapturingWriter(
+                std::sync::Arc::clone(&captured),
+            ))));
+        let handle = spawn_terminal_task(small_size(), Some(writer));
+        // Send the Primary Device Attribute query.
+        handle
+            .send(TerminalCommand::Bytes(b"\x1b[c".to_vec()))
+            .await
+            .expect("send bytes");
+        // Drain frame so the bytes apply has finished.
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::RequestFullFrame { reply: tx })
+            .await
+            .expect("request frame");
+        let _ = rx.await;
+        // alacritty's reply for CSI c is the VT100 Pre-VT220
+        // identifier `\x1b[?6c`.
+        let buf = captured.lock().unwrap().clone();
+        let reply = String::from_utf8_lossy(&buf);
+        assert!(
+            reply.contains("\x1b[?6c") || reply.contains("\x1b[?1;2c"),
+            "expected primary-device-attribute reply, got {reply:?}"
+        );
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn missing_writer_drops_pty_responses_silently() {
+        // Without a writer attached, the same query is dropped
+        // (silently — fish will warn, but the daemon doesn't
+        // crash). Regression guard for the `pty_writer.is_none()`
+        // branch in `write_to_pty`.
+        let handle = spawn_terminal_task(small_size(), None);
+        handle
+            .send(TerminalCommand::Bytes(b"\x1b[c".to_vec()))
+            .await
+            .expect("send bytes");
+        let (tx, rx) = oneshot::channel();
+        handle
+            .send(TerminalCommand::RequestFullFrame { reply: tx })
+            .await
+            .expect("request frame");
+        let _ = rx.await;
         handle.shutdown().await.expect("shutdown");
     }
 }
