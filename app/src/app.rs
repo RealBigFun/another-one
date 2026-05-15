@@ -1970,6 +1970,14 @@ pub struct AnotherOneApp {
     /// + `await` a `push_data` call on every key, paying the runtime
     /// task overhead before any input reached the daemon).
     viewer_input_senders: HashMap<TerminalRuntimeKey, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    /// User-acknowledged dismissal of the `gh auth` overlay for the
+    /// current app session. Some Linux desktops launch the binary
+    /// without `/usr/sbin` on PATH, or run with a keyring access
+    /// scope where `gh auth status` exits non-zero — either way the
+    /// user knows their setup and doesn't want a blocking overlay
+    /// every relaunch. Click "Dismiss" once and the overlay stays
+    /// hidden until the next process boot.
+    pub(crate) gh_check_dismissed_for_session: bool,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -4900,6 +4908,7 @@ impl AnotherOneApp {
             terminal_scrollback_reply_rx,
             scrollback_in_flight: HashSet::new(),
             viewer_input_senders: HashMap::new(),
+            gh_check_dismissed_for_session: false,
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
