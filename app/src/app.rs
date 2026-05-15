@@ -70,7 +70,7 @@ use crate::terminal_launch::{
 };
 use crate::terminal_runtime::{
     LiveTerminalRuntime, TerminalGridSize, TerminalMouseEncoding, TerminalMouseLevel,
-    TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalScrollbackMatch,
+    TerminalMouseProtocol, TerminalRuntimeKey, TerminalScrollbackMatch,
     TerminalSurfaceSnapshot, TERMINAL_LINE_HEIGHT_RATIO,
 };
 use crate::theme;
@@ -130,25 +130,20 @@ const TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 /// in-flight memory in the tens of MiB.
 const WARM_TERMINAL_LAUNCH_QUEUE_CAP: usize = 2048;
 
-/// Ceiling on how many `Output` bytes the GPUI main thread will
-/// parse + render within a single drain tick before yielding back
-/// to the GPUI run loop. The drain used to greedily consume every
-/// pending reply, so a CDP-sized burst (several MiB across tens of
-/// chunks) would pay the full alacritty VT parse cost on one tick
-/// and stall the main thread for hundreds of ms. See #127 / the
-/// #128 watchdog data that motivated it.
-///
-/// 64 KiB keeps a single drain tick comfortably under one 60 Hz
-/// frame on the parse hot path while still clearing a typical
-/// interactive burst (`ls -la`, a prompt redraw, a test summary)
-/// in one tick. Larger values (256 KiB was the first pass) still
-/// blew the frame budget once a burst was dense enough. The
-/// leftover sits in the bounded channel and gets picked up on the
-/// next refresh tick (16 ms fast / 250 ms idle); the channel cap
-/// absorbs many ticks of backlog before backpressuring the reader,
-/// which is the intended behavior when the child is outpacing the
-/// UI (see [`TERMINAL_LAUNCH_QUEUE_CAP`]'s comment).
-const DRAIN_OUTPUT_BYTE_CAP: usize = 64 * 1024;
+/// Minimum chunk size for a `Control::TerminalReadScrollback` fetch.
+/// A scroll burst that exposes one uncached row at the top of the
+/// viewport otherwise pays a round-trip per row; padding to a page
+/// means subsequent scrolls within the page hit the cache. Same
+/// number is reused as the per-tick prefetch step once the visible
+/// window is satisfied.
+const SCROLLBACK_PAGE_LINES: u32 = 128;
+
+/// Soft cap on viewer-side scrollback cache depth, in lines past
+/// the live screen. Bounds memory growth on tabs with very long
+/// daemon-side history (alacritty's default is 10_000 lines). Once
+/// the cache reaches this many lines, idle prefetch stops; the user
+/// can still scroll past it but pays a round-trip per page.
+const SCROLLBACK_PREFETCH_CEILING: u32 = 4096;
 
 fn new_tab_seed_agent_id(
     state: Option<&SectionState>,
@@ -479,15 +474,15 @@ impl TerminalTab {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-fn apply_terminal_title_update(tab: &mut TerminalTab, terminal_update: &TerminalRuntimeUpdate) {
+fn apply_terminal_title_update(tab: &mut TerminalTab, title: Option<&str>, reset_title: bool) {
     if tab.fixed_title.is_some() {
         return;
     }
 
-    if terminal_update.reset_title {
+    if reset_title {
         tab.title = tab.launch_config.default_title();
-    } else if let Some(title) = &terminal_update.title {
-        tab.title = title.clone();
+    } else if let Some(title) = title {
+        tab.title = title.to_string();
     }
 }
 
@@ -1958,6 +1953,31 @@ pub struct AnotherOneApp {
     /// query the user already changed gets ignored.
     terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
+    /// `Control::TerminalReadScrollback` reply channel. The session
+    /// call callback pushes `(key, reply)` so the renderer's drain
+    /// loop can merge cached rows back into the runtime that asked
+    /// for them. See `App::dispatch_terminal_scrollback_fetch`.
+    terminal_scrollback_reply_tx: tokio::sync::mpsc::UnboundedSender<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
+    terminal_scrollback_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
+    /// Tabs with a `Control::TerminalReadScrollback` request currently
+    /// in flight. Prevents duplicate fetches for the same window when
+    /// the user keeps scrolling before the previous reply lands.
+    scrollback_in_flight: HashSet<TerminalRuntimeKey>,
+    /// Per-tab viewer-input queue. Each entry is a long-lived task
+    /// that owns one clone of `Session::push_data`; the GPUI thread
+    /// pushes keystroke bytes via `try_send` instead of spawning a
+    /// fresh tokio task per keystroke (the legacy path would `spawn`
+    /// + `await` a `push_data` call on every key, paying the runtime
+    /// task overhead before any input reached the daemon).
+    viewer_input_senders: HashMap<TerminalRuntimeKey, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    /// User-acknowledged dismissal of the `gh auth` overlay for the
+    /// current app session. Some Linux desktops launch the binary
+    /// without `/usr/sbin` on PATH, or run with a keyring access
+    /// scope where `gh auth status` exits non-zero — either way the
+    /// user knows their setup and doesn't want a blocking overlay
+    /// every relaunch. Click "Dismiss" once and the overlay stays
+    /// hidden until the next process boot.
+    pub(crate) gh_check_dismissed_for_session: bool,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -4736,6 +4756,11 @@ impl AnotherOneApp {
                 TerminalRuntimeKey,
                 daemon_proto::TerminalSearchReply,
             )>();
+        let (terminal_scrollback_reply_tx, terminal_scrollback_reply_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(
+                TerminalRuntimeKey,
+                daemon_proto::TerminalScrollbackReply,
+            )>();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
             let mut expanded = HashSet::new();
             if let Some(first) = store.projects.first() {
@@ -4879,6 +4904,11 @@ impl AnotherOneApp {
             terminal_search: None,
             terminal_search_reply_tx,
             terminal_search_reply_rx,
+            terminal_scrollback_reply_tx,
+            terminal_scrollback_reply_rx,
+            scrollback_in_flight: HashSet::new(),
+            viewer_input_senders: HashMap::new(),
+            gh_check_dismissed_for_session: false,
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
@@ -5224,17 +5254,22 @@ impl AnotherOneApp {
     /// paying on every echo. No-op when the runtime is viewer-only
     /// (mobile) — there the remote daemon parses its own PTY output
     /// and the new title arrives via the next projection.
+    /// Apply a title change pushed by the daemon's per-tab Term task
+    /// (via `WorkerReply::TerminalTitle` / `TerminalResetTitle`). The
+    /// inputs already match the wire shape — either a new title
+    /// string or a reset-to-default flag.
     fn apply_pty_title_update(
         &mut self,
         key: &TerminalRuntimeKey,
-        terminal_update: &crate::terminal_runtime::TerminalRuntimeUpdate,
+        title: Option<String>,
+        reset_title: bool,
     ) {
-        if !terminal_update.reset_title && terminal_update.title.is_none() {
+        if !reset_title && title.is_none() {
             return;
         }
-        let update = if terminal_update.reset_title {
+        let update = if reset_title {
             another_one_core::project_store::PtyTabTitleUpdate::Reset
-        } else if let Some(title) = terminal_update.title.clone() {
+        } else if let Some(title) = title {
             another_one_core::project_store::PtyTabTitleUpdate::Set(title)
         } else {
             return;
@@ -6059,25 +6094,18 @@ impl AnotherOneApp {
                     let key = TerminalRuntimeKey { section_id, tab_id };
                     crate::leakscope::note_drain_output(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
-                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        let terminal_update = runtime.apply_output(&bytes);
-                        output_dirty_keys.insert(key.clone());
-                        if terminal_update.bell {
-                            self.terminal_bell_at.insert(key.clone(), Instant::now());
-                        }
-                        // Daemon-authoritative title: parse-and-apply
-                        // happens in-process on desktop (we ARE the
-                        // registry host), no wire round-trip per
-                        // PTY echo.
-                        if runtime.has_local_pty() {
-                            self.apply_pty_title_update(&key, &terminal_update);
-                        }
-                        // Use the receiver-count gated helper —
-                        // `emit_client_event` always constructs the
-                        // event (cloning `bytes` and `tab_id`) even
-                        // when no MCP client is subscribed, which is
-                        // the common case on desktop. Wasted alloc
-                        // per PTY chunk → per keystroke echo.
+                    if self.live_terminal_runtimes.contains_key(&key) {
+                        // Daemon-canonical (design 01 / #158): the
+                        // VT parser owns this byte stream now — the
+                        // renderer no longer parses anything from
+                        // PtyBytes. Bell + title arrive as
+                        // dedicated `WorkerReply::TerminalBell` /
+                        // `TerminalTitle` pushes (handled below in
+                        // the Push arm); surface refreshes ride
+                        // `SessionEvent::TerminalFrame`. The bytes
+                        // are still mirrored to MCP subscribers via
+                        // the `tab_output` event so external tools
+                        // see exactly what the shell wrote.
                         self.maybe_emit_tab_output(&key.tab_id, &bytes);
                         updated = true;
                     } else if self.maybe_retry_claude_restore(&key, cx) {
@@ -6287,12 +6315,11 @@ impl AnotherOneApp {
         // once at the end. At 60 Hz drain frequency this caps snapshot
         // work at 60 rebuilds/sec even under sustained output storms.
         let output_dirty_keys: HashSet<TerminalRuntimeKey> = HashSet::new();
-        // Bounded per-tick output budget. See
-        // [`DRAIN_OUTPUT_BYTE_CAP`] for the why; once we've parsed
-        // this many `Output` bytes we break out of the greedy
-        // `try_recv` loop and let GPUI repaint before the next
-        // tick picks up the remainder.
-        let mut drained_output_bytes: usize = 0;
+        // Phase 5b cutover (#158): the per-tick byte cap retired
+        // alongside `apply_output`. With VT parsing now off the GPUI
+        // thread, the drain just mirrors bytes to MCP subscribers
+        // and tees them into the daemon Term task — sub-millisecond
+        // work that doesn't need a budget.
 
         loop {
             match self.terminal_launch_receiver.try_recv() {
@@ -6330,29 +6357,18 @@ impl AnotherOneApp {
                 }
                 Ok(TerminalLaunchReply::Output { key, bytes }) => {
                     crate::leakscope::note_drain_output(bytes.len());
-                    drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     self.append_terminal_recent_output(&key, &bytes);
-                    // Phase 5b dual-write: tee bytes into the
-                    // daemon-canonical Term task so a focused
-                    // viewer's `Control::TerminalSubscribe` sees
-                    // the same content the legacy `apply_output`
-                    // path renders. Best-effort; see
-                    // `try_send_bytes_to_term_task`.
+                    // Tee bytes into the daemon-canonical Term task
+                    // so the focused viewer's
+                    // `Control::TerminalSubscribe` sees them.
                     self.try_send_bytes_to_term_task(&key, &bytes);
-                    // Phase 5d-v (design 01 / #158): VT parse runs
-                    // daemon-side; the GPUI drain only mirrors
-                    // bytes to MCP subscribers + checks the
+                    // VT parse runs daemon-side; the GPUI drain only
+                    // mirrors bytes to MCP subscribers + checks the
                     // claude-restore retry hook for tabs whose
-                    // legacy runtime is gone.
+                    // runtime hasn't materialised yet.
                     self.maybe_emit_tab_output(&key.tab_id, &bytes);
                     let _ = self.maybe_retry_claude_restore(&key, cx);
                     updated = true;
-                    if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                        // Yield back to the GPUI run loop. Remaining
-                        // replies stay in the bounded channel and
-                        // will be picked up on the next drain tick.
-                        break;
-                    }
                 }
                 Ok(TerminalLaunchReply::SessionDiscovered { key, session }) => {
                     let section_id = key.section_id.clone();
@@ -6374,6 +6390,7 @@ impl AnotherOneApp {
                     if self.maybe_retry_claude_restore(&key, cx) {
                         self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
+                        self.forget_viewer_input_sender(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         self.unregister_tab_from_registry(&key);
                         updated = true;
@@ -6391,6 +6408,7 @@ impl AnotherOneApp {
                         .mark_launch_failed(key.clone(), details);
                     self.clear_terminal_recent_output(&key);
                     self.live_terminal_runtimes.remove(&key);
+                    self.forget_viewer_input_sender(&key);
                     self.unregister_tab_from_registry(&key);
                     self.update_terminal_tab(&key, cx, |tab| {
                         tab.restore_status = TerminalRestoreStatus::Failed;
@@ -6405,6 +6423,7 @@ impl AnotherOneApp {
                     self.terminal_manager
                         .mark_launch_failed(key.clone(), details.clone());
                     self.live_terminal_runtimes.remove(&key);
+                    self.forget_viewer_input_sender(&key);
                     self.terminal_surface_snapshots.remove(&key);
                     self.unregister_tab_from_registry(&key);
                     self.clear_terminal_recent_output(&key);
@@ -6470,11 +6489,6 @@ impl AnotherOneApp {
         // guard. With VT parse off the GPUI thread, the warm
         // drain only mirrors bytes + bumps state — sub-millisecond.
         let mut updated = false;
-        // Same byte budget as the hot drain — see
-        // [`DRAIN_OUTPUT_BYTE_CAP`]. Warm and hot drains both run
-        // on the GPUI main thread so they share the same frame-time
-        // budget regardless of which channel a chunk arrived on.
-        let mut drained_output_bytes: usize = 0;
 
         loop {
             match self.warm_terminal_launch_receiver.try_recv() {
@@ -6541,7 +6555,6 @@ impl AnotherOneApp {
                 }
                 Ok(WarmTerminalLaunchReply::Output { launch_id, bytes }) => {
                     crate::leakscope::note_drain_output(bytes.len());
-                    drained_output_bytes = drained_output_bytes.saturating_add(bytes.len());
                     let attached_key = self
                         .prewarmed_terminal_launches
                         .get(&launch_id)
@@ -6549,31 +6562,16 @@ impl AnotherOneApp {
 
                     if let Some(key) = attached_key {
                         self.append_terminal_recent_output(&key, &bytes);
-                        // Phase 5b dual-write (warm-launch path).
+                        // Tee into the daemon-canonical Term task.
                         self.try_send_bytes_to_term_task(&key, &bytes);
-                        // Phase 5d-v (design 01 / #158): GPUI parse
-                        // is gone for the post-attach warm path; the
-                        // daemon-canonical Term task owns grid +
-                        // bell + title. Mirror to MCP subscribers,
-                        // retry claude-restore for known-stale
-                        // runtimes, and bump the byte-cap.
                         self.maybe_emit_tab_output(&key.tab_id, &bytes);
                         let _ = self.maybe_retry_claude_restore(&key, cx);
                         updated = true;
-                        if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                            break;
-                        }
-                        continue;
                     }
-
-                    if let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) {
-                        if let Some(runtime) = launch.runtime.as_mut() {
-                            let _ = runtime.apply_output(&bytes);
-                        }
-                    }
-                    if drained_output_bytes >= DRAIN_OUTPUT_BYTE_CAP {
-                        break;
-                    }
+                    // Pre-warmed runtime that hasn't been attached to
+                    // a tab yet: bytes already teed to the daemon
+                    // Term task; renderer-side state is empty until
+                    // attach lands.
                 }
                 Ok(WarmTerminalLaunchReply::SessionDiscovered { launch_id, session }) => {
                     let Some(launch) = self.prewarmed_terminal_launches.get_mut(&launch_id) else {
@@ -6619,6 +6617,7 @@ impl AnotherOneApp {
                         if self.maybe_retry_claude_restore(&key, cx) {
                             self.terminal_manager.processes.remove(&key);
                             self.live_terminal_runtimes.remove(&key);
+                            self.forget_viewer_input_sender(&key);
                             self.terminal_surface_snapshots.remove(&key);
                             self.unregister_tab_from_registry(&key);
                             updated = true;
@@ -6637,6 +6636,7 @@ impl AnotherOneApp {
                         self.terminal_manager.errors.insert(key.clone(), details);
                         self.clear_terminal_recent_output(&key);
                         self.live_terminal_runtimes.remove(&key);
+                        self.forget_viewer_input_sender(&key);
                         self.unregister_tab_from_registry(&key);
                         self.update_terminal_tab(&key, cx, |tab| {
                             tab.restore_status = TerminalRestoreStatus::Failed;
@@ -6665,6 +6665,7 @@ impl AnotherOneApp {
                         self.terminal_manager.pending_launches.remove(&key);
                         self.terminal_manager.processes.remove(&key);
                         self.live_terminal_runtimes.remove(&key);
+                        self.forget_viewer_input_sender(&key);
                         self.terminal_surface_snapshots.remove(&key);
                         self.unregister_tab_from_registry(&key);
                         self.terminal_manager
@@ -6715,7 +6716,12 @@ impl AnotherOneApp {
         // work inside `daemon::terminal::spawn_terminal_task`.
         let term_task = {
             let _guard = crate::session_host::runtime_handle().enter();
-            daemon::terminal::spawn_terminal_task(size)
+            // Pass the writer in so the Term task can respond to
+            // VT-defined query escapes (CSI c primary-device-attribute
+            // — fish/bash with vte-completion probe with this every
+            // prompt; OSC 4 colour queries; CSI 14t/18t text-area
+            // size queries).
+            daemon::terminal::spawn_terminal_task(size, Some(Arc::clone(&writer)))
         };
         if let Ok(mut state) = self.registry_state.lock() {
             state.broadcasts.insert(key.clone(), broadcast_sender);
@@ -6742,13 +6748,30 @@ impl AnotherOneApp {
     ) {
         if let Ok(state) = self.registry_state.lock() {
             if let Some(task) = state.term_tasks.get(key) {
-                if let Err(err) = task
-                    .try_send(daemon::terminal::TerminalCommand::Bytes(bytes.to_vec()))
-                {
-                    log::trace!(
-                        "term task try_send for {:?} failed: {err:?}",
-                        key
-                    );
+                match task.try_send(daemon::terminal::TerminalCommand::Bytes(bytes.to_vec())) {
+                    Ok(()) => {
+                        tracing::trace!(
+                            target: "another_one::terminal",
+                            section = %key.section_id.store_key(),
+                            tab = %key.tab_id,
+                            bytes = bytes.len(),
+                            "term_task_bytes_sent",
+                        );
+                    }
+                    Err(err) => {
+                        // Counter-shaped: a steady stream of
+                        // `term_task_bytes_dropped` at warn means
+                        // the daemon Term task is backed up and
+                        // the renderer is losing fidelity.
+                        tracing::warn!(
+                            target: "another_one::terminal",
+                            section = %key.section_id.store_key(),
+                            tab = %key.tab_id,
+                            bytes = bytes.len(),
+                            error = %err,
+                            "term_task_bytes_dropped",
+                        );
+                    }
                 }
             }
         }
@@ -6761,11 +6784,10 @@ impl AnotherOneApp {
     /// flag off, every call is a `daemon_spawn_enabled() == false`
     /// short-circuit and nothing else runs.
     /// Phase 5c of design 01 (#158): apply a daemon-pushed
-    /// `WorkerReply::TerminalTitle` to GPUI-side state. Mirrors
-    /// what the legacy `apply_pty_title_update` does for the
-    /// alacritty-driven path; routed here from
-    /// `drain_session_events`'s Push arm so that a flag-on viewer
-    /// (with `apply_output` skipped) still gets title updates.
+    /// `WorkerReply::TerminalTitle` / `TerminalResetTitle` to
+    /// GPUI-side state. Routed here from `drain_session_events`'s
+    /// Push arm; the daemon-canonical Term task is the sole source
+    /// of title changes post-cutover.
     fn apply_proto_terminal_title(&mut self, section_id: &str, tab_id: &str, title: Option<String>) {
         let Some(section_id) = SectionId::from_store_key(section_id) else {
             log::warn!("TerminalTitle push with malformed section_id");
@@ -6775,17 +6797,8 @@ impl AnotherOneApp {
             section_id,
             tab_id: tab_id.to_string(),
         };
-        let update = match title {
-            Some(title) => crate::terminal_runtime::TerminalRuntimeUpdate {
-                title: Some(title),
-                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
-            },
-            None => crate::terminal_runtime::TerminalRuntimeUpdate {
-                reset_title: true,
-                ..crate::terminal_runtime::TerminalRuntimeUpdate::default()
-            },
-        };
-        self.apply_pty_title_update(&key, &update);
+        let reset_title = title.is_none();
+        self.apply_pty_title_update(&key, title, reset_title);
     }
 
     /// Phase 5c: handle a daemon-pushed `WorkerReply::TerminalBell`.
@@ -6865,6 +6878,7 @@ impl AnotherOneApp {
             tab_id: tab_id.to_string(),
         };
         self.live_terminal_runtimes.remove(&key);
+        self.forget_viewer_input_sender(&key);
         self.terminal_surface_snapshots.remove(&key);
         self.in_flight_remote_launches.remove(&key);
     }
@@ -8508,15 +8522,8 @@ impl AnotherOneApp {
         // `Session::push_data` instead so the daemon's writer feeds
         // the real shell.
         if !runtime.has_local_pty() {
-            let session = self.session_handle();
-            let section_id = key.section_id.store_key();
-            let tab_id = key.tab_id.clone();
-            let payload = bytes.to_vec();
-            crate::session_host::runtime_handle().spawn(async move {
-                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
-                    log::warn!("session push_data failed: {err}");
-                }
-            });
+            let sender = self.viewer_input_sender(&key);
+            let _ = sender.send(bytes.to_vec());
             self.last_terminal_activity = Instant::now();
             return true;
         }
@@ -8525,6 +8532,63 @@ impl AnotherOneApp {
             self.last_terminal_activity = Instant::now();
         }
         wrote
+    }
+
+    /// Per-tab queue used by viewer-only runtimes to forward input
+    /// bytes over `Session::push_data`. Returns a cheap clone of the
+    /// tab's queue sender; lazily spawns the long-lived drain task
+    /// the first time a tab needs it. The drain task exits when the
+    /// sender is dropped (tab close or `forget_viewer_input_sender`).
+    fn viewer_input_sender(
+        &mut self,
+        key: &TerminalRuntimeKey,
+    ) -> tokio::sync::mpsc::UnboundedSender<Vec<u8>> {
+        if let Some(existing) = self.viewer_input_senders.get(key) {
+            return existing.clone();
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let session = self.session_handle();
+        let section_id = key.section_id.store_key();
+        let tab_id = key.tab_id.clone();
+        crate::session_host::runtime_handle().spawn(async move {
+            // Coalesce queued chunks into one push_data call when
+            // multiple keystrokes fire before the task wakes up
+            // (paste, repeat-key, mouse drag bursts). Cuts the
+            // per-byte session round-trip count when input is
+            // hotter than the daemon's drain cadence.
+            while let Some(mut buf) = rx.recv().await {
+                while let Ok(more) = rx.try_recv() {
+                    buf.extend_from_slice(&more);
+                }
+                let span = tracing::trace_span!(
+                    "terminal.viewer_input_push",
+                    section = %section_id,
+                    tab = %tab_id,
+                    bytes = buf.len(),
+                );
+                let _enter = span.enter();
+                if let Err(err) = session.push_data(&section_id, &tab_id, &buf).await {
+                    tracing::warn!(
+                        target: "another_one::terminal",
+                        section = %section_id,
+                        tab = %tab_id,
+                        bytes = buf.len(),
+                        error = %err,
+                        "viewer_input_push_data_failed",
+                    );
+                }
+            }
+        });
+        self.viewer_input_senders.insert(key.clone(), tx.clone());
+        tx
+    }
+
+    /// Tear down the viewer input queue for a tab. Called from the
+    /// runtime-removal paths (tab exited / failed / unregistered) so
+    /// the long-lived drain task wakes up on `recv()` returning
+    /// `None` and shuts down.
+    fn forget_viewer_input_sender(&mut self, key: &TerminalRuntimeKey) {
+        self.viewer_input_senders.remove(key);
     }
 
     fn send_pending_post_launch_input(&mut self, key: &TerminalRuntimeKey) -> bool {
@@ -8541,15 +8605,8 @@ impl AnotherOneApp {
         // bytes on the master-PTY writer the registry stored in
         // `state.writers` during daemon_spawn_terminal.
         if !runtime.has_local_pty() {
-            let session = self.session_handle();
-            let section_id = key.section_id.store_key();
-            let tab_id = key.tab_id.clone();
-            let payload = bytes.clone();
-            crate::session_host::runtime_handle().spawn(async move {
-                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
-                    log::warn!("post-launch session push_data failed: {err}");
-                }
-            });
+            let sender = self.viewer_input_sender(key);
+            let _ = sender.send(bytes.clone());
             self.last_terminal_activity = Instant::now();
             return true;
         }
@@ -8818,6 +8875,101 @@ impl AnotherOneApp {
                     }
                     self.scroll_to_current_search_match(cx);
                     updated = true;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+        updated
+    }
+
+    /// Step 5 of rc/terminal-hardening: dispatch a
+    /// `Control::TerminalReadScrollback` for the viewer-scroll
+    /// window currently missing from the runtime's cache. Idempotent
+    /// across overlapping scroll bursts — a single in-flight request
+    /// per tab is enough; the next viewer scroll observes the merged
+    /// cache and only requests rows still missing.
+    pub(crate) fn maybe_dispatch_scrollback_fetch(
+        &mut self,
+        key: &TerminalRuntimeKey,
+    ) -> bool {
+        if self.scrollback_in_flight.contains(key) {
+            return false;
+        }
+        let Some(runtime) = self.live_terminal_runtimes.get(key) else {
+            return false;
+        };
+        let Some(range) = runtime
+            .scrollback_fetch_window(SCROLLBACK_PAGE_LINES, SCROLLBACK_PREFETCH_CEILING)
+        else {
+            return false;
+        };
+        self.scrollback_in_flight.insert(key.clone());
+        tracing::trace!(
+            target: "another_one::terminal",
+            section = %key.section_id.store_key(),
+            tab = %key.tab_id,
+            range_start = range.start,
+            range_count = range.count,
+            "dispatch_scrollback_fetch",
+        );
+        let session = self.session_handle();
+        let reply_tx = self.terminal_scrollback_reply_tx.clone();
+        let key_for_callback = key.clone();
+        crate::session_host::dispatch_fire_and_forget(
+            session,
+            daemon_proto::Control::TerminalReadScrollback {
+                section_id: key.section_id.store_key(),
+                tab_id: key.tab_id.clone(),
+                range,
+            },
+            move |result| match result {
+                Ok(daemon_proto::WorkerReply::TerminalScrollback { reply, .. }) => {
+                    let _ = reply_tx.send((key_for_callback, reply));
+                }
+                Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
+                    log::warn!("TerminalReadScrollback err: {message}");
+                }
+                Ok(other) => {
+                    log::warn!(
+                        "TerminalReadScrollback unexpected reply: {:?}",
+                        std::mem::discriminant(&other)
+                    );
+                }
+                Err(err) => {
+                    log::warn!("TerminalReadScrollback session call failed: {err}");
+                }
+            },
+        );
+        true
+    }
+
+    /// Drain replies from `Control::TerminalReadScrollback` and merge
+    /// them into the corresponding runtime's scrollback cache. The
+    /// runtime recomposes its cached surface snapshot if the new
+    /// rows fall inside the active scroll window, so the next render
+    /// tick paints them.
+    fn drain_terminal_scrollback_replies(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut updated = false;
+        loop {
+            match self.terminal_scrollback_reply_rx.try_recv() {
+                Ok((key, reply)) => {
+                    self.scrollback_in_flight.remove(&key);
+                    if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
+                        runtime.apply_scrollback_reply(&reply);
+                        let snapshot = runtime.snapshot();
+                        self.terminal_surface_snapshots
+                            .insert(key.clone(), snapshot);
+                        // The window the reply filled may not have
+                        // covered every visible scrollback row
+                        // (`range_actual.count` clamps against
+                        // history-size). Re-issue a fetch for the
+                        // remainder so a viewer scrolled deep enough
+                        // to span two requests doesn't stop halfway.
+                        self.maybe_dispatch_scrollback_fetch(&key);
+                        cx.notify();
+                        updated = true;
+                    }
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
@@ -9164,14 +9316,8 @@ impl AnotherOneApp {
         // Session::push_data too so the daemon's tab_input lands
         // it on the master-PTY writer.
         if !runtime.has_local_pty() {
-            let session = self.session_handle();
-            let section_id = key.section_id.store_key();
-            let tab_id = key.tab_id.clone();
-            crate::session_host::runtime_handle().spawn(async move {
-                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
-                    log::warn!("mouse-event session push_data failed: {err}");
-                }
-            });
+            let sender = self.viewer_input_sender(key);
+            let _ = sender.send(payload);
         }
         true
     }
@@ -9497,6 +9643,7 @@ impl AnotherOneApp {
         let snapshot = runtime.snapshot();
         self.terminal_surface_snapshots
             .insert(key.clone(), snapshot);
+        self.maybe_dispatch_scrollback_fetch(&key);
 
         if let Some(selection) = self.terminal_selection.as_mut() {
             // Same content shifts +1 viewport row when we scroll up
@@ -9578,6 +9725,7 @@ impl AnotherOneApp {
 
         self.terminal_surface_snapshots
             .insert(key.clone(), runtime.snapshot());
+        self.maybe_dispatch_scrollback_fetch(key);
         if self
             .terminal_selection
             .as_ref()
@@ -10867,6 +11015,11 @@ impl AnotherOneApp {
             if let Some(runtime) = self.live_terminal_runtimes.remove(&old_key) {
                 self.live_terminal_runtimes.insert(new_key.clone(), runtime);
             }
+            // Drop the viewer-input drain task: its captured
+            // section_id/tab_id are now stale after the rename. The
+            // next `write_active_terminal_input` for `new_key`
+            // re-spawns one keyed on the new identifiers.
+            self.viewer_input_senders.remove(&old_key);
             if let Some(snapshot) = self.terminal_surface_snapshots.remove(&old_key) {
                 self.terminal_surface_snapshots
                     .insert(new_key.clone(), snapshot);
@@ -14037,7 +14190,7 @@ mod tests {
     };
     use crate::terminal_runtime::{
         TerminalCellSnapshot, TerminalLineSnapshot, TerminalMouseEncoding, TerminalMouseLevel,
-        TerminalMouseProtocol, TerminalRuntimeKey, TerminalRuntimeUpdate, TerminalSurfaceSnapshot,
+        TerminalMouseProtocol, TerminalRuntimeKey, TerminalSurfaceSnapshot,
     };
     use crate::theme::{dark_theme, light_theme};
     use another_one_core::clients::ClientId;
@@ -15030,24 +15183,10 @@ mod tests {
             Some("Run tests".to_string()),
         );
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: Some("cargo test".to_string()),
-                reset_title: false,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, Some("cargo test"), false);
         assert_eq!(tab.title, "Run tests");
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: None,
-                reset_title: true,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, None, true);
         assert_eq!(tab.title, "Run tests");
     }
 
@@ -15056,24 +15195,10 @@ mod tests {
         let mut tab =
             TerminalTab::with_id("tab-1".to_string(), TerminalLaunchConfig::default(), None);
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: Some("cargo test".to_string()),
-                reset_title: false,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, Some("cargo test"), false);
         assert_eq!(tab.title, "cargo test");
 
-        apply_terminal_title_update(
-            &mut tab,
-            &TerminalRuntimeUpdate {
-                title: None,
-                reset_title: true,
-                bell: false,
-            },
-        );
+        apply_terminal_title_update(&mut tab, None, true);
         assert_eq!(tab.title, "Terminal");
     }
 
@@ -17307,6 +17432,17 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
                             should_notify |= this.drain_terminal_search_replies(cx);
+                            should_notify |= this.drain_terminal_scrollback_replies(cx);
+                            // Idle prefetch: keep the focused tab's
+                            // scrollback cache warm so the next
+                            // scroll-into-history is a cache hit.
+                            // The dispatcher single-flights and
+                            // short-circuits when no fetch is
+                            // needed, so calling it every tick is
+                            // cheap (a hashset lookup).
+                            if let Some(focused) = this.active_terminal_key(cx) {
+                                this.maybe_dispatch_scrollback_fetch(&focused);
+                            }
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;

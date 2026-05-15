@@ -1536,8 +1536,9 @@ mod tests {
                         cols: 80,
                         rows: 24,
                         pixel_width: 0,
-                        pixel_height: 0,
+                    pixel_height: 0,
                     },
+                None,
                 );
                 self.tasks
                     .lock()
@@ -1593,8 +1594,9 @@ mod tests {
                 cols: 10,
                 rows: 3,
                 pixel_width: 0,
-                pixel_height: 0,
+            pixel_height: 0,
             },
+        None,
         );
         registry.install("proj-a:section-1", "7", term);
 
@@ -1645,8 +1647,9 @@ mod tests {
                 cols: 10,
                 rows: 3,
                 pixel_width: 0,
-                pixel_height: 0,
+            pixel_height: 0,
             },
+        None,
         );
         registry.install("proj-a:section-1", "7", term);
 
@@ -1722,8 +1725,9 @@ mod tests {
                 cols: 10,
                 rows: 3,
                 pixel_width: 0,
-                pixel_height: 0,
+            pixel_height: 0,
             },
+        None,
         );
         registry.install("proj-a:section-1", "7", term);
 

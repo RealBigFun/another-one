@@ -29,24 +29,43 @@ impl AnotherOneApp {
         );
     }
 
+    /// Hide the overlay until the next app launch. Persistent dismissal
+    /// (across restarts) is intentionally not exposed — the overlay
+    /// surfaces a real configuration gap, and the user should be
+    /// reminded once per session in case they fixed it.
+    pub(crate) fn dismiss_gh_check(&mut self) {
+        self.gh_check_dismissed_for_session = true;
+    }
+
     pub(crate) fn gh_check_overlay(&self, cx: &mut Context<Self>) -> AnyElement {
         // Don't paint anything until the daemon has reported a
-        // status — older daemons (or a connection that just
+        // status. Older daemons (or a connection that just
         // landed and hasn't pushed a projection yet) leave the
-        // field `None`, which we treat as "unknown, don't flash
-        // an overlay" exactly like the pre-projection version
-        // gated on `gh_check_completed`.
+        // field `None`.
         let Some(status) = self.project_store.ui.gh_auth_status.as_ref() else {
             return div().id("gh-check-overlay").into_any_element();
         };
+        // Authenticated — nothing to show.
         if matches!(status, GhAuthStatusWire::Authenticated) {
+            return div().id("gh-check-overlay").into_any_element();
+        }
+        // Checking — don't surface anything; the previous status
+        // was either Authenticated (nothing to show), or one of the
+        // failure states (the user has the overlay context already).
+        // Avoids the alarming "GitHub CLI not found" flash every
+        // time the probe re-runs.
+        if matches!(status, GhAuthStatusWire::Checking) {
+            return div().id("gh-check-overlay").into_any_element();
+        }
+        // User dismissed for this session — stay quiet until next
+        // app launch.
+        if self.gh_check_dismissed_for_session {
             return div().id("gh-check-overlay").into_any_element();
         }
 
         let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
-        let checking = matches!(status, GhAuthStatusWire::Checking);
         let (title, body, hint) = match status {
-            GhAuthStatusWire::GhMissing | GhAuthStatusWire::Checking => (
+            GhAuthStatusWire::GhMissing => (
                 "GitHub CLI not found",
                 "AnotherOne uses the GitHub CLI (gh) for pull-request workflows. Install it, then click Recheck.",
                 "Install from https://cli.github.com or run: brew install gh",
@@ -56,12 +75,13 @@ impl AnotherOneApp {
                 "AnotherOne found gh but it isn't signed in. Authenticate, then click Recheck.",
                 "Run: gh auth login",
             ),
-            GhAuthStatusWire::Authenticated => unreachable!(),
+            GhAuthStatusWire::Checking | GhAuthStatusWire::Authenticated => unreachable!(),
         };
 
-        let button_label = if checking { "Checking..." } else { "Recheck" };
         let overlay_rest = app_theme.overlay_rest;
         let overlay_hover_strong = app_theme.overlay_hover_strong;
+        let muted_rest = app_theme.sunken_bg;
+        let muted_hover = app_theme.overlay_hover;
 
         div()
             .id("gh-check-overlay")
@@ -110,7 +130,33 @@ impl AnotherOneApp {
                             .child(hint),
                     )
                     .child(
-                        div().flex().flex_row().justify_end().gap(px(8.)).child(
+                        div().flex().flex_row().justify_end().gap(px(8.))
+                            .child(
+                                div()
+                                    .id("gh-check-dismiss")
+                                    .px(px(16.))
+                                    .py(px(6.))
+                                    .rounded(px(8.))
+                                    .bg(muted_rest)
+                                    .border_1()
+                                    .border_color(app_theme.border)
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(muted_hover))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                            this.dismiss_gh_check();
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(rems(12. / 16.))
+                                            .text_color(app_theme.text_secondary)
+                                            .child("Dismiss"),
+                                    ),
+                            )
+                            .child(
                             div()
                                 .id("gh-check-recheck")
                                 .px(px(16.))
@@ -132,7 +178,7 @@ impl AnotherOneApp {
                                     div()
                                         .text_size(rems(12. / 16.))
                                         .text_color(app_theme.text_primary)
-                                        .child(button_label),
+                                        .child("Recheck"),
                                 ),
                         ),
                     ),

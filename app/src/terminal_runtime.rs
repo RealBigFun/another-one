@@ -1,14 +1,7 @@
-use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Point};
-use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::color::Colors;
-use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
-use alacritty_terminal::vte::ansi::{self, Color, CursorShape, NamedColor, Rgb};
+use alacritty_terminal::vte::ansi::Rgb;
 #[cfg(test)]
 use gpui::rgb;
 use gpui::{font, px, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
@@ -161,29 +154,6 @@ struct PendingPositionedRun {
     style: TextRun,
 }
 
-#[derive(Default)]
-pub(crate) struct TerminalRuntimeUpdate {
-    pub title: Option<String>,
-    pub reset_title: bool,
-    /// True when the running TUI rang the terminal bell (`\x07`) during
-    /// this drain pass. The host briefly flashes the pane to surface it.
-    pub bell: bool,
-}
-
-#[derive(Clone)]
-struct RuntimeEventProxy {
-    queue: Arc<Mutex<VecDeque<Event>>>,
-}
-
-impl EventListener for RuntimeEventProxy {
-    fn send_event(&self, event: Event) {
-        match self.queue.lock() {
-            Ok(mut queue) => queue.push_back(event),
-            Err(error) => eprintln!("failed to queue terminal runtime event: {error}"),
-        }
-    }
-}
-
 /// Local PTY backing for a `LiveTerminalRuntime`. Present when the
 /// renderer owns the PTY directly (desktop's `spawn_terminal_launch`
 /// path); `None` when the renderer is a viewer of a remote PTY (mobile
@@ -200,63 +170,73 @@ pub(crate) struct LocalPty {
 }
 
 pub(crate) struct LiveTerminalRuntime {
-    term: Term<RuntimeEventProxy>,
-    parser: ansi::Processor,
     /// `Some` for locally-spawned PTYs (desktop); `None` for
     /// session-attached viewers (mobile). When `None`, input must
     /// route through `daemon_transport::Session::push_data` and
     /// resize requests must travel as `Control::TabResize`.
     local_pty: Option<LocalPty>,
-    event_queue: Arc<Mutex<VecDeque<Event>>>,
     size: TerminalGridSize,
     dirty: bool,
+    /// Live (un-scrolled) surface composed from the latest
+    /// `ingest_frame`. Renderer reads this when `viewer_scroll_offset`
+    /// is 0; non-zero offsets compose a fresh `TerminalSurfaceSnapshot`
+    /// on the fly using `scrollback_cache`.
     cached_snapshot: TerminalSurfaceSnapshot,
+    /// Latest live `GridSnapshot` retained from `ingest_frame` so
+    /// the viewer can recompose the visible rows on the fly when
+    /// `viewer_scroll_offset > 0`. `None` until the first frame is
+    /// ingested.
+    live_snapshot: Option<Arc<ProtoGridSnapshot>>,
+    /// Lines of scrollback the daemon currently retains. Read from
+    /// the most recent `ingest_frame`'s `history_lines` so the viewer
+    /// can clamp scroll requests without an extra round-trip.
+    history_lines: u32,
+    /// Lines the viewer has scrolled up from the live screen. `0`
+    /// means "viewing the live screen". Bounded by `history_lines`.
+    viewer_scroll_offset: u32,
+    /// Cached scrollback rows fetched via `Control::TerminalReadScrollback`.
+    /// Keyed by the `start` value the daemon's `read_scrollback` uses
+    /// (`1` = `Line(-1)` = one row above the live screen, increasing
+    /// into the past). `start = 0` is the topmost live row and lives
+    /// in `live_snapshot.viewport[0]`, so the cache stores entries for
+    /// `start >= 1` only.
+    scrollback_cache: std::collections::BTreeMap<u32, daemon_proto::GridRow>,
 }
 
 impl LiveTerminalRuntime {
     pub fn from_prepared(prepared: PreparedTerminalRuntime) -> Self {
-        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
-        let event_proxy = RuntimeEventProxy {
-            queue: event_queue.clone(),
-        };
-        let term = Term::new(Config::default(), &prepared.size, event_proxy);
         Self {
-            term,
-            parser: ansi::Processor::default(),
             local_pty: Some(LocalPty {
                 master: prepared.master,
                 writer: Arc::new(Mutex::new(prepared.writer)),
                 child_killer: prepared.child_killer,
                 output_broadcast: prepared.output_broadcast,
             }),
-            event_queue,
             size: prepared.size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
+            live_snapshot: None,
+            history_lines: 0,
+            viewer_scroll_offset: 0,
+            scrollback_cache: std::collections::BTreeMap::new(),
         }
     }
 
     /// Construct a viewer-only runtime backed by a remote PTY (i.e.
-    /// the daemon owns the actual shell process; this side just
-    /// applies bytes pushed via `SessionEvent::PtyBytes` into a local
-    /// VT grid). Input must be routed through
-    /// `daemon_transport::Session::push_data` by the caller — the
-    /// runtime's `write_input` is a no-op when there is no local PTY.
-    #[allow(dead_code)] // only constructed on cfg(target_os = "android")
+    /// the daemon owns the actual shell process). Input must be
+    /// routed through `daemon_transport::Session::push_data` by the
+    /// caller — the runtime's `write_input` is a no-op when there is
+    /// no local PTY.
     pub fn from_remote(size: TerminalGridSize) -> Self {
-        let event_queue = Arc::new(Mutex::new(VecDeque::new()));
-        let event_proxy = RuntimeEventProxy {
-            queue: event_queue.clone(),
-        };
-        let term = Term::new(Config::default(), &size, event_proxy);
         Self {
-            term,
-            parser: ansi::Processor::default(),
             local_pty: None,
-            event_queue,
             size,
             dirty: true,
             cached_snapshot: TerminalSurfaceSnapshot::default(),
+            live_snapshot: None,
+            history_lines: 0,
+            viewer_scroll_offset: 0,
+            scrollback_cache: std::collections::BTreeMap::new(),
         }
     }
 
@@ -283,61 +263,21 @@ impl LiveTerminalRuntime {
         if let Some(local) = self.local_pty.as_mut() {
             local.master.resize(size.as_pty_size())?;
         }
-        self.term.resize(size);
         self.size = size;
+        // Invalidate any cached scrollback rows: they were captured
+        // at the old column count and would render mangled in the
+        // new viewport. The daemon Term task replays its byte ring
+        // through a fresh Term at the new size (see
+        // `daemon::terminal::task::TerminalTask::resize`); the next
+        // `Control::TerminalReadScrollback` fetches the reflowed
+        // rows. Reset `viewer_scroll_offset` to 0 so the user lands
+        // on the live screen — holding an old offset across a
+        // resize is rarely what they want anyway, and avoids a
+        // brief blank-row flash while the cache rewarms.
+        self.scrollback_cache.clear();
+        self.viewer_scroll_offset = 0;
         self.dirty = true;
         Ok(true)
-    }
-
-    /// Apply raw PTY bytes to the GPUI-thread Term + Processor.
-    ///
-    /// **Deprecated** (design 01 / #158): VT parsing moves to the
-    /// daemon's per-tab Term task. The GPUI viewer becomes a
-    /// snapshot consumer in Phase 5a (`ingest_frame`); this method
-    /// retires when the desktop cutover removes the legacy
-    /// `drain_terminal_launch_replies` and byte-cap mitigations
-    /// (Phase 5d).
-    #[deprecated(
-        since = "0.2.2",
-        note = "VT parsing moves daemon-side; viewers consume snapshots. Design 01 / #158, Phase 5."
-    )]
-    pub fn apply_output(&mut self, bytes: &[u8]) -> TerminalRuntimeUpdate {
-        self.parser.advance(&mut self.term, bytes);
-        self.dirty = true;
-
-        let mut update = TerminalRuntimeUpdate::default();
-        let mut pty_writes = Vec::new();
-
-        if let Ok(mut queue) = self.event_queue.lock() {
-            while let Some(event) = queue.pop_front() {
-                match event {
-                    Event::Title(title) => update.title = Some(title),
-                    Event::ResetTitle => update.reset_title = true,
-                    Event::PtyWrite(text) => pty_writes.push(text.into_bytes()),
-                    Event::ColorRequest(index, formatter) => {
-                        let color = resolve_color_request(index, self.term.colors());
-                        pty_writes.push(formatter(color).into_bytes());
-                    }
-                    Event::TextAreaSizeRequest(formatter) => {
-                        pty_writes.push(formatter(window_size_from_grid(self.size)).into_bytes());
-                    }
-                    Event::Bell => update.bell = true,
-                    Event::Wakeup
-                    | Event::MouseCursorDirty
-                    | Event::CursorBlinkingChange
-                    | Event::ClipboardStore(_, _)
-                    | Event::ClipboardLoad(_, _)
-                    | Event::Exit
-                    | Event::ChildExit(_) => {}
-                }
-            }
-        }
-
-        for bytes in pty_writes {
-            let _ = self.write_input(&bytes);
-        }
-
-        update
     }
 
     pub fn write_input(&self, bytes: &[u8]) -> io::Result<()> {
@@ -358,19 +298,17 @@ impl LiveTerminalRuntime {
     }
 
     pub fn paste_text(&self, text: &str) -> io::Result<()> {
-        let bracketed = self
-            .term
-            .mode()
-            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
-        let payload = encode_paste_payload(text, bracketed);
+        let payload = encode_paste_payload(text, self.bracketed_paste());
         self.write_input(payload.as_bytes())
     }
 
-    /// Current scrollback offset (`0` = bottom / live screen). Lifted
-    /// to the host so the search overlay can map grid-coord matches
-    /// onto the visible viewport.
+    /// Lines the viewer has scrolled up from the live screen. `0` =
+    /// viewing the live bottom; positive values walk into history.
+    /// Drives the search-overlay's grid-coord → viewport-row mapping
+    /// (formerly read from `self.term.grid().display_offset()` before
+    /// the daemon-canonical cutover).
     pub fn display_offset(&self) -> usize {
-        self.term.grid().display_offset()
+        self.viewer_scroll_offset as usize
     }
 
     /// Current grid dimensions. Phase 5b uses this when spawning a
@@ -381,32 +319,51 @@ impl LiveTerminalRuntime {
     }
 
     pub fn screen_lines(&self) -> usize {
-        self.term.grid().screen_lines()
+        // Authoritative source post-cutover is the latest ingested
+        // snapshot; fall back to the runtime's announced size when
+        // no frame has landed yet.
+        self.live_snapshot
+            .as_ref()
+            .map(|s| s.rows as usize)
+            .unwrap_or(self.size.rows as usize)
     }
 
+    /// Total scrollback lines the daemon currently retains. Sourced
+    /// from the most recent `ingest_frame`; viewers use it to clamp
+    /// `viewer_scroll_lines` without an extra round-trip.
+    #[allow(dead_code)]
+    pub fn history_lines(&self) -> u32 {
+        self.history_lines
+    }
+
+    /// True when the running TUI has switched to the alternate
+    /// screen (vim, less, htop, …). Read from the most recent
+    /// `ingest_frame`'s `mode.alt_screen`.
     pub fn is_alternate_screen(&self) -> bool {
-        self.term
-            .mode()
-            .contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
+        self.live_snapshot
+            .as_ref()
+            .map(|s| s.mode.alt_screen)
+            .unwrap_or(false)
     }
 
     /// Inspect the active mouse-tracking mode, if any. Returns `None` when
     /// the application has not enabled mouse reporting — in which case the
     /// host should treat mouse events as native (selection, link click).
+    /// Sourced from the daemon-pushed `GridSnapshot::mode` flags.
     pub fn mouse_protocol(&self) -> Option<TerminalMouseProtocol> {
-        let mode = self.term.mode();
-        let level = if mode.contains(alacritty_terminal::term::TermMode::MOUSE_MOTION) {
+        let mode = self.live_snapshot.as_ref().map(|s| s.mode)?;
+        let level = if mode.mouse_motion {
             TerminalMouseLevel::AnyMotion
-        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_DRAG) {
+        } else if mode.mouse_drag {
             TerminalMouseLevel::ButtonDrag
-        } else if mode.contains(alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK) {
+        } else if mode.mouse_click {
             TerminalMouseLevel::ClickOnly
         } else {
             return None;
         };
-        let encoding = if mode.contains(alacritty_terminal::term::TermMode::SGR_MOUSE) {
+        let encoding = if mode.sgr_mouse {
             TerminalMouseEncoding::Sgr
-        } else if mode.contains(alacritty_terminal::term::TermMode::UTF8_MOUSE) {
+        } else if mode.utf8_mouse {
             TerminalMouseEncoding::Utf8
         } else {
             TerminalMouseEncoding::Default
@@ -414,29 +371,45 @@ impl LiveTerminalRuntime {
         Some(TerminalMouseProtocol { level, encoding })
     }
 
+    /// Whether the running TUI has enabled DECSET 2004 (bracketed
+    /// paste). Sourced from the latest daemon frame's mode flags.
+    fn bracketed_paste(&self) -> bool {
+        self.live_snapshot
+            .as_ref()
+            .map(|s| s.mode.bracketed_paste)
+            .unwrap_or(false)
+    }
+
     pub fn request_soft_redraw(&self) -> io::Result<()> {
         self.write_input(b"\x0c")
     }
 
     /// Ingest a daemon-canonical [`TerminalFrame`] into the cached
-    /// surface snapshot. Phase 5a of design 01 (#158): the snapshot
-    /// path lands alongside the legacy `apply_output` so the
-    /// renderer can switch over in Phase 5b–5c without disturbing
-    /// shipped builds.
+    /// surface snapshot. `Full` frames replace the cache wholesale.
+    /// `Diff` is reserved for Phase 8 of the design (deferred);
+    /// receiving one here logs and discards.
     ///
-    /// `Full` frames replace the cache wholesale. `Diff` is
-    /// reserved for Phase 8 of the design (deferred); receiving
-    /// one here logs and discards — the daemon doesn't emit `Diff`
-    /// in Phase 2/3, so reaching that arm in production indicates
-    /// a viewer racing ahead of the implementation.
+    /// On `Full` ingest the runtime also refreshes its `history_lines`
+    /// hint and (when `viewer_scroll_offset > 0`) recomposes the
+    /// visible surface so any newly-arrived live rows or cleared
+    /// scrollback land before the next `snapshot()` call.
     pub fn ingest_frame(&mut self, frame: &TerminalFrame) {
         match frame {
-            TerminalFrame::Full { snapshot, .. } => {
-                self.cached_snapshot = build_surface_snapshot_from_proto(snapshot);
-                // The cache is now authoritative for snapshot reads.
-                // Clear `dirty` so a subsequent `snapshot()` call
-                // doesn't immediately overwrite us with a stale
-                // alacritty rebuild during the dual-write window.
+            TerminalFrame::Full { seq, snapshot } => {
+                let span = tracing::trace_span!(
+                    "terminal.ingest_frame",
+                    seq = *seq,
+                    cols = snapshot.cols,
+                    rows = snapshot.rows,
+                    history = snapshot.history_lines,
+                );
+                let _enter = span.enter();
+                self.live_snapshot = Some(Arc::clone(snapshot));
+                self.history_lines = snapshot.history_lines;
+                if self.viewer_scroll_offset > self.history_lines {
+                    self.viewer_scroll_offset = self.history_lines;
+                }
+                self.recompute_cached_snapshot();
                 self.dirty = false;
             }
             TerminalFrame::Diff { seq, .. } => {
@@ -448,27 +421,256 @@ impl LiveTerminalRuntime {
     }
 
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
-        if self.dirty {
-            // The local alacritty `self.term` is only fed bytes
-            // while the legacy dual-write path is in effect (i.e.
-            // when this runtime owns a `local_pty`). Once the
-            // canonical state is the daemon's Term task, the
-            // local Term is empty and rebuilding from it would
-            // clobber the proto-derived `cached_snapshot` with a
-            // blank grid — visible as the screen flashing empty
-            // on resize / theme invalidate. Skip the rebuild and
-            // keep the last frame until the next `ingest_frame`.
-            //
-            // Goes away with the dual-write path itself: when no
-            // client drives a local Term, this whole branch is
-            // dead code and `dirty` becomes a pure invalidation
-            // hint to wait for the next daemon frame.
-            if self.local_pty.is_some() {
-                self.cached_snapshot = build_surface_snapshot(&self.term, self.size);
-            }
-            self.dirty = false;
-        }
+        // Daemon-canonical (design 01 / #158, Phase 5b): the cached
+        // snapshot is authoritative. `ingest_frame` and viewer
+        // scroll changes both refresh it via `recompute_cached_snapshot`;
+        // `dirty` becomes a pure invalidation hint here.
+        self.dirty = false;
         self.cached_snapshot.clone()
+    }
+
+    /// Recompose `cached_snapshot` from `live_snapshot` overlaid with
+    /// any cached scrollback rows in view at the current
+    /// `viewer_scroll_offset`.
+    fn recompute_cached_snapshot(&mut self) {
+        let Some(live) = self.live_snapshot.as_ref() else {
+            self.cached_snapshot = TerminalSurfaceSnapshot::default();
+            return;
+        };
+        if self.viewer_scroll_offset == 0 {
+            self.cached_snapshot = build_surface_snapshot(live);
+            return;
+        }
+        let composed = self.compose_scrolled_snapshot(live);
+        self.cached_snapshot = build_surface_snapshot(&composed);
+    }
+
+    /// Build a `ProtoGridSnapshot` whose `viewport` is the visible
+    /// rows for the current `viewer_scroll_offset`. Missing
+    /// scrollback rows are filled with `GridRow::default()` (blank
+    /// rows) until the corresponding `Control::TerminalReadScrollback`
+    /// reply lands and `apply_scrollback_reply` extends the cache.
+    ///
+    /// Row mapping (with viewer offset `N`, live screen `rows` tall):
+    /// viewer row `k` corresponds to grid line `k - N`. Non-negative
+    /// lines come from `live.viewport[line]`; negative lines
+    /// (`-1`, `-2`, …) come from the scrollback cache at daemon
+    /// offsets `1`, `2`, … respectively. Top of viewer = oldest row
+    /// in window; bottom of viewer = `rows - 1 - N` lines above the
+    /// live bottom.
+    fn compose_scrolled_snapshot(&self, live: &ProtoGridSnapshot) -> ProtoGridSnapshot {
+        let rows = live.rows as usize;
+        let offset = self.viewer_scroll_offset as i64;
+        let mut viewport = Vec::with_capacity(rows);
+        for k in 0..rows {
+            let line = k as i64 - offset;
+            let row = if line >= 0 {
+                live
+                    .viewport
+                    .get(line as usize)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                let daemon_offset = (-line) as u32;
+                self.scrollback_cache
+                    .get(&daemon_offset)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            viewport.push(row);
+        }
+        // Hide the cursor when the viewer is scrolled off the live
+        // bottom — typical terminal UX (xterm, kitty, alacritty all
+        // do this), and avoids painting a stale caret position over
+        // historical content.
+        let mut cursor = live.cursor;
+        cursor.visible = false;
+        ProtoGridSnapshot {
+            cols: live.cols,
+            rows: live.rows,
+            viewport,
+            backbuffer: Vec::new(),
+            cursor,
+            mode: live.mode,
+            scroll_offset: self.viewer_scroll_offset,
+            history_lines: live.history_lines,
+        }
+    }
+
+    /// The current viewer scrollback offset. `0` = viewing the live
+    /// screen.
+    #[allow(dead_code)]
+    pub fn viewer_scroll_offset(&self) -> u32 {
+        self.viewer_scroll_offset
+    }
+
+    /// Adjust the viewer scroll offset by `delta` lines (positive =
+    /// scroll up into history, negative = scroll back down toward the
+    /// live bottom). Clamps to `[0, history_lines]`. Returns `true`
+    /// when the offset moved.
+    pub fn viewer_scroll_lines(&mut self, delta: i32) -> bool {
+        if delta == 0 {
+            return false;
+        }
+        let current = self.viewer_scroll_offset as i64;
+        let max = self.history_lines as i64;
+        let next = (current + delta as i64).clamp(0, max) as u32;
+        if next == self.viewer_scroll_offset {
+            return false;
+        }
+        self.viewer_scroll_offset = next;
+        self.recompute_cached_snapshot();
+        true
+    }
+
+    /// Scroll the viewer to a specific absolute offset (clamped).
+    /// Returns `true` when the offset moved.
+    pub fn viewer_set_scroll_offset(&mut self, offset: u32) -> bool {
+        let next = offset.min(self.history_lines);
+        if next == self.viewer_scroll_offset {
+            return false;
+        }
+        self.viewer_scroll_offset = next;
+        self.recompute_cached_snapshot();
+        true
+    }
+
+    /// Compute the smallest contiguous scrollback range the viewer is
+    /// missing for the current scroll offset, or `None` when no fetch
+    /// is needed (cache covers the visible window, or viewer is on
+    /// the live bottom). Caller dispatches
+    /// `Control::TerminalReadScrollback` with the returned range and
+    /// feeds the reply through `apply_scrollback_reply`.
+    pub fn missing_scrollback_window(&self) -> Option<daemon_proto::ScrollbackRange> {
+        if self.viewer_scroll_offset == 0 {
+            return None;
+        }
+        let rows = self
+            .live_snapshot
+            .as_ref()
+            .map(|s| s.rows as u32)
+            .unwrap_or(self.size.rows as u32);
+        if rows == 0 {
+            return None;
+        }
+        // Scrollback rows visible at the current offset have daemon
+        // offsets `[1..=offset]` when offset < rows (top portion is
+        // the rest of live). When offset >= rows, they're
+        // `[offset - rows + 1 ..= offset]`. Deduplicate by walking
+        // the closed range and finding the first/last missing entry.
+        let lo = if self.viewer_scroll_offset >= rows {
+            self.viewer_scroll_offset - (rows - 1)
+        } else {
+            1
+        };
+        let hi = self.viewer_scroll_offset;
+        if lo > hi {
+            return None;
+        }
+        let mut first_missing: Option<u32> = None;
+        let mut last_missing: Option<u32> = None;
+        for s in lo..=hi {
+            if !self.scrollback_cache.contains_key(&s) {
+                first_missing.get_or_insert(s);
+                last_missing = Some(s);
+            }
+        }
+        let (start, end) = (first_missing?, last_missing?);
+        Some(daemon_proto::ScrollbackRange {
+            start,
+            count: end - start + 1,
+        })
+    }
+
+    /// Highest cached daemon-offset row, or `0` if the cache is
+    /// empty. (`0` is reserved for the topmost live row, so a
+    /// zero return value means "no scrollback rows cached yet".)
+    fn scrollback_cache_top(&self) -> u32 {
+        self.scrollback_cache.keys().copied().next_back().unwrap_or(0)
+    }
+
+    /// Compute the next range to fetch, padding the visible-window
+    /// fetch up to `page_lines` and falling through to an idle
+    /// prefetch above the cache top when the visible window is
+    /// already covered. Returns `None` when nothing is worth
+    /// fetching given the current cache state and `ceiling_lines`
+    /// soft memory cap.
+    ///
+    /// The padding part: a tight scroll burst that exposes only one
+    /// uncached row at the top of the viewport otherwise pays a
+    /// round-trip per row. Padding to a page means subsequent
+    /// scrolls within the page hit the cache.
+    ///
+    /// The prefetch part: once the user is scrolled into history,
+    /// they're likely to keep scrolling. Walk the cache forward by
+    /// `page_lines` per tick until we hit `ceiling_lines` or
+    /// `history_lines`. Caller calls this every render tick; the
+    /// single-flight gate (`scrollback_in_flight`) prevents duplicate
+    /// requests.
+    pub fn scrollback_fetch_window(
+        &self,
+        page_lines: u32,
+        ceiling_lines: u32,
+    ) -> Option<daemon_proto::ScrollbackRange> {
+        if self.history_lines == 0 || page_lines == 0 {
+            return None;
+        }
+        // 1. Visible-window first — the user is waiting on these.
+        if let Some(visible) = self.missing_scrollback_window() {
+            // Pad up to `page_lines` while staying inside
+            // history_lines. Padding extends *past* the visible
+            // upper bound (oldest row) since that's the direction
+            // the user is most likely to scroll next.
+            let padded_count = page_lines.max(visible.count);
+            let max_count =
+                self.history_lines.saturating_sub(visible.start - 1);
+            let count = padded_count.min(max_count);
+            return Some(daemon_proto::ScrollbackRange {
+                start: visible.start,
+                count,
+            });
+        }
+        // 2. Idle prefetch — nothing visible is missing; pull a page
+        //    above the cache top so the next scroll is instant.
+        let top = self.scrollback_cache_top();
+        // Stop prefetching once we have the entire history
+        // (`top == history_lines`) or we've passed the soft cap.
+        if top >= self.history_lines || top >= ceiling_lines {
+            return None;
+        }
+        let start = top + 1;
+        let upper_bound = self.history_lines.min(ceiling_lines);
+        let end = (start + page_lines - 1).min(upper_bound);
+        if end < start {
+            return None;
+        }
+        Some(daemon_proto::ScrollbackRange {
+            start,
+            count: end - start + 1,
+        })
+    }
+
+    /// Merge a `Control::TerminalReadScrollback` reply into the
+    /// viewer-side cache and re-compose the visible surface if the
+    /// new rows fall inside the current scroll window.
+    pub fn apply_scrollback_reply(&mut self, reply: &daemon_proto::TerminalScrollbackReply) {
+        let actual = reply.range_actual;
+        // The reply is oldest-first relative to the requested range:
+        // index 0 -> daemon offset `actual.start`, index 1 -> `start + 1`, …
+        for (i, row) in reply.rows.iter().enumerate() {
+            let key = actual.start + i as u32;
+            // Skip start=0 — that's the topmost live row (already in
+            // `live_snapshot.viewport[0]`). Caching it would just
+            // duplicate live state and risk drifting out of sync
+            // when the next frame ingests.
+            if key == 0 {
+                continue;
+            }
+            self.scrollback_cache.insert(key, row.clone());
+        }
+        if self.viewer_scroll_offset > 0 {
+            self.recompute_cached_snapshot();
+        }
     }
 
     /// Force the next snapshot to rebuild even if the terminal grid has not
@@ -485,65 +687,39 @@ impl LiveTerminalRuntime {
         self.dirty
     }
 
-    /// Walk the full alacritty grid (history + viewport) and return all
-    /// matches of `query`. Empty queries yield an empty list. Search is
-    /// always case-insensitive — matches the typical "Cmd-F" UX where
-    /// users don't think about case.
-    ///
-    /// Match positions are reported in alacritty grid coordinates: `line`
-    /// is `Line.0` (negative for scrollback rows, 0..=screen_lines-1 for
-    /// viewport), and `[start_col, end_col)` is a half-open cell range.
-    /// Multi-byte UTF-8 chars occupy a single cell so column ranges line
-    /// up with cell positions, not UTF-8 byte offsets.
-    /// Phase 5f of design 01 (#158): superseded by
-    /// `Control::TerminalSearch`. Kept compiled for tests +
-    /// future viewer-side fallback; not called by production paths.
-    #[allow(dead_code)]
-    pub fn search_scrollback(&self, query: &str) -> Vec<TerminalScrollbackMatch> {
-        search_scrollback_in_term(&self.term, query)
-    }
-
-    /// Adjust `display_offset` so the given match lies near the vertical
-    /// middle of the viewport. No-op if the match is already visible
-    /// without scrolling.
+    /// Adjust the viewer scroll offset so the given match lies near
+    /// the vertical middle of the viewport. No-op if the match is
+    /// already visible without scrolling. Returns `true` when the
+    /// offset changed.
     pub fn scroll_to_match(&mut self, target: &TerminalScrollbackMatch) -> bool {
-        let grid = self.term.grid();
-        let screen_lines = grid.screen_lines() as i32;
-        let history_size = grid.history_size() as i32;
-        let current = grid.display_offset() as i32;
-        // Viewport with offset D shows grid lines [-D - screen_lines + 1 ..= -D].
-        // The match at row R inside the viewport satisfies:
-        //   R = target.line + screen_lines - 1 + D
-        // so to land R = screen_lines / 2 (vertical middle):
-        //   D = screen_lines/2 - target.line - screen_lines + 1
-        let top = -current - screen_lines + 1;
-        let bot = -current;
+        let screen_lines = self.screen_lines() as i32;
+        if screen_lines == 0 {
+            return false;
+        }
+        let history = self.history_lines as i32;
+        let current = self.viewer_scroll_offset as i32;
+        // Visible lines at offset `current` span `[-current, rows - 1 - current]`
+        // (matches the alacritty `display_offset` math the legacy
+        // implementation used). Skip the scroll if the match is
+        // already on screen.
+        let top = -current;
+        let bot = (screen_lines - 1) - current;
         if target.line >= top && target.line <= bot {
             return false;
         }
-        let centered = (screen_lines / 2) - target.line - screen_lines + 1;
-        let target_offset = centered.clamp(0, history_size);
-        let delta = target_offset - current;
-        if delta == 0 {
-            return false;
-        }
-        self.term.scroll_display(Scroll::Delta(delta));
-        self.dirty = true;
-        true
+        // Land the match at viewer row `screen_lines / 2`. Solving
+        // `target.line = (screen_lines / 2) - offset` gives:
+        let centered = (screen_lines / 2) - target.line;
+        let target_offset = centered.clamp(0, history);
+        self.viewer_set_scroll_offset(target_offset as u32)
     }
 
+    /// Move the viewer's scroll offset by `lines` (positive = scroll
+    /// up into history). Daemon-canonical replacement for the
+    /// legacy `term.scroll_display(Scroll::Delta)`. Returns `true`
+    /// when the offset moved.
     pub fn scroll_display(&mut self, lines: i32) -> bool {
-        if lines == 0 {
-            return false;
-        }
-
-        let old_display_offset = self.term.grid().display_offset();
-        self.term.scroll_display(Scroll::Delta(lines));
-        let changed = self.term.grid().display_offset() != old_display_offset;
-        if changed {
-            self.dirty = true;
-        }
-        changed
+        self.viewer_scroll_lines(lines)
     }
 
     pub fn kill(&mut self) {
@@ -597,89 +773,6 @@ pub(crate) fn encode_paste_payload(text: &str, bracketed: bool) -> String {
     format!("\u{1b}[200~{}\u{1b}[201~", sanitized)
 }
 
-/// Walk the full alacritty grid (history + viewport) and return all
-/// case-insensitive substring matches of `query`. Empty queries yield
-/// an empty list. Match positions are in alacritty grid coordinates:
-/// `line` is `Line.0` (negative for scrollback rows, 0..=screen_lines-1
-/// is in viewport), `[start_col, end_col)` is a half-open cell range.
-/// Phase 5f of design 01 (#158): superseded by daemon-side
-/// search via `Control::TerminalSearch`. Kept for tests + as a
-/// reference impl while the daemon-side path matures.
-#[allow(dead_code)]
-pub(crate) fn search_scrollback_in_term<T: EventListener>(
-    term: &Term<T>,
-    query: &str,
-) -> Vec<TerminalScrollbackMatch> {
-    let query = query.trim_end_matches('\0');
-    if query.is_empty() {
-        return Vec::new();
-    }
-    // Lowercase the query into a Vec<char> so we can compare
-    // char-by-char without re-walking UTF-8 bytes. Some chars
-    // lowercase to multi-char sequences; flatten those eagerly.
-    let needle_chars: Vec<char> = query.chars().flat_map(|ch| ch.to_lowercase()).collect();
-    if needle_chars.is_empty() {
-        return Vec::new();
-    }
-    let mut matches = Vec::new();
-    let grid = term.grid();
-    let columns = grid.columns();
-    let topmost = grid.topmost_line().0;
-    let bottommost = grid.bottommost_line().0;
-
-    for line in topmost..=bottommost {
-        let mut chars: Vec<char> = Vec::with_capacity(columns);
-        let mut cols: Vec<usize> = Vec::with_capacity(columns);
-        for col in 0..columns {
-            let cell = &grid[alacritty_terminal::index::Line(line)]
-                [alacritty_terminal::index::Column(col)];
-            if cell
-                .flags
-                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-            {
-                continue;
-            }
-            chars.push(cell.c);
-            cols.push(col);
-        }
-        if chars.len() < needle_chars.len() {
-            continue;
-        }
-        // Naive O(n·m) scan — terminal rows are short (≤ ~500 cols)
-        // and the typical needle is 1–20 chars, so this stays fast
-        // even on a 100k-row scrollback.
-        'outer: for start in 0..=chars.len() - needle_chars.len() {
-            for (offset, needle_ch) in needle_chars.iter().copied().enumerate() {
-                let row_ch = chars[start + offset];
-                let row_lowered = row_ch.to_lowercase().next().unwrap_or(row_ch);
-                if row_lowered != needle_ch {
-                    continue 'outer;
-                }
-            }
-            let start_col = cols[start];
-            let last_char = start + needle_chars.len() - 1;
-            // Account for wide chars (CJK etc): the cell after the
-            // anchor-cell is a `WIDE_CHAR_SPACER` and was filtered out
-            // of `cols`, so the bare `cols[last] + 1` highlight would
-            // only cover the left half of a 2-cell glyph.
-            let last_col = cols[last_char];
-            let last_anchor_cell = &grid[alacritty_terminal::index::Line(line)]
-                [alacritty_terminal::index::Column(last_col)];
-            let last_cell_width = if last_anchor_cell.flags.contains(Flags::WIDE_CHAR) {
-                2
-            } else {
-                1
-            };
-            let end_col = last_col + last_cell_width;
-            matches.push(TerminalScrollbackMatch {
-                line,
-                start_col,
-                end_col,
-            });
-        }
-    }
-    matches
-}
 
 /// Build a [`TerminalSurfaceSnapshot`] from a daemon-canonical
 /// [`ProtoGridSnapshot`]. Mirrors the alacritty-driven
@@ -692,7 +785,7 @@ pub(crate) fn search_scrollback_in_term<T: EventListener>(
 /// hyperlink resolution are deferred — they cost a renderer
 /// round-trip the wire frame doesn't carry today and the
 /// renderer falls back gracefully when those slices are empty.
-fn build_surface_snapshot_from_proto(snapshot: &ProtoGridSnapshot) -> TerminalSurfaceSnapshot {
+fn build_surface_snapshot(snapshot: &ProtoGridSnapshot) -> TerminalSurfaceSnapshot {
     let columns = snapshot.cols as usize;
     let rows = snapshot.rows as usize;
     let cursor_pos = snapshot
@@ -733,398 +826,9 @@ fn build_surface_snapshot_from_proto(snapshot: &ProtoGridSnapshot) -> TerminalSu
 
             let is_cursor =
                 cursor_pos.is_some_and(|(line, col)| line == row_idx && col == column);
-            let mut cell_style = proto_resolve_cell_style(cell);
+            let mut cell_style = resolve_cell_style(cell);
             let has_explicit_background =
-                proto_effective_background_color(cell) != ProtoGridColor::Default;
-            let chunk = proto_cell_display_text(cell);
-            let copy_text = proto_cell_copy_text(cell);
-            let cell_width = proto_terminal_cell_width(cell);
-            if chunk.is_empty() {
-                continue;
-            }
-
-            maybe_push_background_span(
-                &mut background_spans,
-                column,
-                cell_width,
-                cell_style.background,
-                has_explicit_background,
-            );
-            cells.push(TerminalCellSnapshot {
-                column,
-                width: cell_width,
-                text: chunk.clone(),
-                copy_text,
-                hyperlink: None,
-            });
-
-            if is_cursor {
-                if let Some(snap) = cursor_snapshot_from_proto(
-                    row_idx,
-                    column,
-                    cell_width,
-                    snapshot.cursor.shape,
-                ) {
-                    if snap.kind == TerminalCursorKind::Block {
-                        cell_style.foreground = default_background_color();
-                    }
-                    cursor_snapshot = Some(snap);
-                }
-            }
-
-            let positioned_style = text_run_from_style(cell_style.clone());
-            if !proto_cell_is_render_blank(cell) {
-                append_positioned_run(
-                    &mut pending_positioned_run,
-                    &mut positioned_runs,
-                    row_idx,
-                    column,
-                    cell_width,
-                    chunk.clone(),
-                    positioned_style,
-                );
-            } else if let Some(batch) = pending_positioned_run.take() {
-                positioned_runs.push(TerminalPositionedRunSnapshot {
-                    line: batch.line,
-                    column: batch.column,
-                    cell_count: batch.cell_count,
-                    text: batch.text,
-                    style: batch.style,
-                });
-            }
-
-            if proto_cell_is_trimmable_blank(cell) && !is_cursor {
-                pending_blank_run.text.push_str(&chunk);
-                pending_blank_run.len += chunk.len();
-                pending_blank_run.style = Some(cell_style);
-                continue;
-            }
-
-            if pending_blank_run.len > 0 {
-                text.push_str(&pending_blank_run.text);
-                push_text_run(
-                    &mut runs,
-                    pending_blank_run.len,
-                    text_run_from_style(
-                        pending_blank_run
-                            .style
-                            .clone()
-                            .unwrap_or_else(default_cell_style),
-                    ),
-                );
-                pending_blank_run = PendingTextRun::default();
-            }
-
-            text.push_str(&chunk);
-            push_text_run(&mut runs, chunk.len(), text_run_from_style(cell_style));
-        }
-
-        if text.is_empty() {
-            text.push('\u{00a0}');
-            push_text_run(
-                &mut runs,
-                text.len(),
-                text_run_from_style(default_cell_style()),
-            );
-        }
-
-        if pending_blank_run.len > 0 {
-            text.push_str(&pending_blank_run.text);
-            push_text_run(
-                &mut runs,
-                pending_blank_run.len,
-                text_run_from_style(
-                    pending_blank_run
-                        .style
-                        .clone()
-                        .unwrap_or_else(default_cell_style),
-                ),
-            );
-        }
-
-        if let Some(batch) = pending_positioned_run.take() {
-            positioned_runs.push(TerminalPositionedRunSnapshot {
-                line: batch.line,
-                column: batch.column,
-                cell_count: batch.cell_count,
-                text: batch.text,
-                style: batch.style,
-            });
-        }
-
-        lines.push(TerminalLineSnapshot {
-            text,
-            cells,
-            runs,
-            background_spans,
-        });
-    }
-
-    let surface_text = lines
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Cursor on an empty/out-of-range cell: synthesize a block at the
-    // reported position so the renderer still draws a caret.
-    if cursor_snapshot.is_none() {
-        if let Some((line, column)) = cursor_pos {
-            cursor_snapshot = cursor_snapshot_from_proto(line, column, 1, snapshot.cursor.shape);
-        }
-    }
-
-    TerminalSurfaceSnapshot {
-        text: surface_text,
-        columns,
-        lines,
-        positioned_runs,
-        cursor: cursor_snapshot,
-    }
-}
-
-// ───────── proto-frame cell helpers (mirror alacritty siblings) ─────────
-
-fn proto_cell_display_text(cell: &ProtoGridCell) -> String {
-    let ch = if cell.flags.contains(ProtoGridCellFlags::HIDDEN)
-        || cell.ch == ' '
-        || cell.ch == '\0'
-    {
-        '\u{00a0}'
-    } else {
-        cell.ch
-    };
-    ch.to_string()
-}
-
-fn proto_cell_copy_text(cell: &ProtoGridCell) -> String {
-    if cell.flags.contains(ProtoGridCellFlags::HIDDEN) {
-        return " ".to_string();
-    }
-    let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
-    ch.to_string()
-}
-
-fn proto_cell_is_render_blank(cell: &ProtoGridCell) -> bool {
-    if cell.ch != ' ' && cell.ch != '\0' {
-        return false;
-    }
-    if cell.bg != ProtoGridColor::Default {
-        return false;
-    }
-    if cell.flags.0
-        & (ProtoGridCellFlags::UNDERLINE
-            | ProtoGridCellFlags::DOUBLE_UNDERLINE
-            | ProtoGridCellFlags::UNDERCURL
-            | ProtoGridCellFlags::DOTTED_UNDERLINE
-            | ProtoGridCellFlags::DASHED_UNDERLINE
-            | ProtoGridCellFlags::INVERSE
-            | ProtoGridCellFlags::STRIKEOUT)
-        != 0
-    {
-        return false;
-    }
-    true
-}
-
-fn proto_cell_is_trimmable_blank(cell: &ProtoGridCell) -> bool {
-    cell.flags.contains(ProtoGridCellFlags::HIDDEN) || cell.ch == ' ' || cell.ch == '\0'
-}
-
-fn proto_terminal_cell_width(cell: &ProtoGridCell) -> usize {
-    if cell.flags.contains(ProtoGridCellFlags::WIDE_CHAR) {
-        2
-    } else {
-        1
-    }
-}
-
-fn proto_effective_background_color(cell: &ProtoGridCell) -> ProtoGridColor {
-    if cell.flags.contains(ProtoGridCellFlags::INVERSE) {
-        cell.fg
-    } else {
-        cell.bg
-    }
-}
-
-fn proto_resolve_cell_style(cell: &ProtoGridCell) -> ResolvedCellStyle {
-    let raw_foreground = cell.fg;
-    let mut foreground = resolve_grid_color(cell.fg, cell.flags, true);
-    let mut background = resolve_grid_color(cell.bg, cell.flags, false);
-
-    if cell.flags.contains(ProtoGridCellFlags::INVERSE) {
-        std::mem::swap(&mut foreground, &mut background);
-    }
-
-    if cell.flags.contains(ProtoGridCellFlags::HIDDEN) {
-        foreground = background;
-    } else {
-        foreground = ensure_light_terminal_foreground_contrast(
-            foreground,
-            background,
-            matches!(raw_foreground, ProtoGridColor::Rgb { .. }),
-            crate::theme::current_terminal_theme(),
-        );
-    }
-
-    ResolvedCellStyle {
-        foreground,
-        background,
-        font: proto_terminal_font(cell.flags),
-        underline: proto_underline_style(cell, foreground),
-        strikethrough: cell
-            .flags
-            .contains(ProtoGridCellFlags::STRIKEOUT)
-            .then(|| StrikethroughStyle {
-                thickness: px(1.),
-                color: Some(foreground),
-            }),
-    }
-}
-
-fn proto_terminal_font(flags: ProtoGridCellFlags) -> gpui::Font {
-    let mut font = font("Lilex Nerd Font Mono");
-    if flags.contains(ProtoGridCellFlags::BOLD) {
-        font.weight = FontWeight::BOLD;
-    }
-    if flags.contains(ProtoGridCellFlags::ITALIC) {
-        font = font.italic();
-    }
-    font
-}
-
-fn proto_underline_style(cell: &ProtoGridCell, foreground: Hsla) -> Option<UnderlineStyle> {
-    let any_underline = cell.flags.0
-        & (ProtoGridCellFlags::UNDERLINE
-            | ProtoGridCellFlags::DOUBLE_UNDERLINE
-            | ProtoGridCellFlags::UNDERCURL
-            | ProtoGridCellFlags::DOTTED_UNDERLINE
-            | ProtoGridCellFlags::DASHED_UNDERLINE)
-        != 0;
-    if !any_underline {
-        return None;
-    }
-    Some(UnderlineStyle {
-        thickness: px(if cell.flags.contains(ProtoGridCellFlags::DOUBLE_UNDERLINE) {
-            2.
-        } else {
-            1.
-        }),
-        color: Some(foreground),
-        wavy: cell.flags.contains(ProtoGridCellFlags::UNDERCURL),
-    })
-}
-
-/// Resolve a wire-format `GridColor` to an `Hsla`, applying the same
-/// dim/bold-on-named promotion the alacritty `resolve_color` does.
-/// `Default` colors snap to the active theme's terminal default fg/bg;
-/// `Indexed` colors fall through to the same xterm 256-color cube
-/// `default_indexed_color` builds; `Rgb` is taken verbatim.
-fn resolve_grid_color(color: ProtoGridColor, flags: ProtoGridCellFlags, is_foreground: bool) -> Hsla {
-    match color {
-        ProtoGridColor::Default => {
-            if is_foreground {
-                if flags.contains(ProtoGridCellFlags::DIM) {
-                    let rgb = current_terminal_palette().dim_foreground;
-                    gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
-                } else {
-                    default_foreground_color()
-                }
-            } else {
-                default_background_color()
-            }
-        }
-        ProtoGridColor::Rgb { r, g, b } => {
-            gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
-        }
-        ProtoGridColor::Indexed { index } => {
-            let mut idx = index;
-            // Bold promotes the low-8 ANSI palette to its bright
-            // counterpart for foreground only, matching alacritty's
-            // `NamedColor::to_bright`. Dim demotes; for indexed we
-            // do not have a dim palette so leave as-is.
-            if is_foreground && flags.contains(ProtoGridCellFlags::BOLD) && idx < 8 {
-                idx += 8;
-            }
-            let rgb = default_indexed_color(idx);
-            gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
-        }
-    }
-}
-
-fn cursor_snapshot_from_proto(
-    line: usize,
-    column: usize,
-    width: usize,
-    shape: daemon_proto::CursorShape,
-) -> Option<TerminalCursorSnapshot> {
-    use daemon_proto::CursorShape as Shape;
-    let kind = match shape {
-        Shape::Underline | Shape::UnderlineBlinking => TerminalCursorKind::Underline,
-        Shape::Beam | Shape::BeamBlinking => TerminalCursorKind::Beam,
-        _ => TerminalCursorKind::Block,
-    };
-    Some(TerminalCursorSnapshot {
-        line,
-        column,
-        width,
-        kind,
-        color: crate::theme::terminal_default_cursor(),
-        blinking: matches!(
-            shape,
-            Shape::BlockBlinking | Shape::UnderlineBlinking | Shape::BeamBlinking
-        ),
-    })
-}
-
-fn build_surface_snapshot<T: EventListener>(
-    term: &Term<T>,
-    size: TerminalGridSize,
-) -> TerminalSurfaceSnapshot {
-    let renderable = term.renderable_content();
-    let display_offset = renderable.display_offset;
-    let cursor = (renderable.cursor.shape != CursorShape::Hidden)
-        .then(|| point_to_viewport(display_offset, renderable.cursor.point))
-        .flatten();
-    // `RenderableCursor` only carries `shape`; `blinking` is on the full
-    // `CursorStyle` returned by `term.cursor_style()`. Pull it once here
-    // and thread through to the snapshot.
-    let cursor_blinking = term.cursor_style().blinking;
-    let mut lines = Vec::with_capacity(size.rows as usize);
-    let mut positioned_runs = Vec::new();
-    let mut cursor_snapshot = None;
-
-    for viewport_line in 0..size.rows as usize {
-        let point = viewport_to_point(display_offset, Point::new(viewport_line, Column(0)));
-        let grid_line = &term.grid()[point.line];
-        let mut text = String::new();
-        let mut cells = Vec::new();
-        let mut runs = Vec::new();
-        let mut background_spans = Vec::new();
-        let mut pending_blank_run = PendingTextRun::default();
-        let mut pending_positioned_run: Option<PendingPositionedRun> = None;
-        let mut previous_cell_had_zero_width = false;
-
-        for column in 0..size.cols as usize {
-            let cell = &grid_line[Column(column)];
-            if cell
-                .flags
-                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-            {
-                continue;
-            }
-            if cell.c == ' ' && previous_cell_had_zero_width {
-                previous_cell_had_zero_width = false;
-                continue;
-            }
-            previous_cell_had_zero_width =
-                matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
-
-            let is_cursor = cursor
-                .is_some_and(|cursor| cursor.line == viewport_line && cursor.column.0 == column);
-            let mut cell_style = resolve_cell_style(cell, renderable.colors);
-            let has_explicit_background =
-                effective_background_color(cell) != Color::Named(NamedColor::Background);
+                effective_background_color(cell) != ProtoGridColor::Default;
             let chunk = cell_display_text(cell);
             let copy_text = cell_copy_text(cell);
             let cell_width = terminal_cell_width(cell);
@@ -1144,38 +848,32 @@ fn build_surface_snapshot<T: EventListener>(
                 width: cell_width,
                 text: chunk.clone(),
                 copy_text,
-                hyperlink: cell.hyperlink().map(|link| link.uri().to_string()),
+                hyperlink: cell.hyperlink.clone(),
             });
 
             if is_cursor {
-                if let Some(snapshot) = cursor_snapshot_from_cell(
-                    viewport_line,
+                if let Some(snap) = cursor_snapshot_for_cell(
+                    row_idx,
                     column,
                     cell_width,
-                    renderable.cursor.shape,
-                    cursor_blinking,
+                    snapshot.cursor.shape,
                 ) {
-                    if snapshot.kind == TerminalCursorKind::Block {
+                    if snap.kind == TerminalCursorKind::Block {
                         cell_style.foreground = default_background_color();
                     }
-                    cursor_snapshot = Some(snapshot);
+                    cursor_snapshot = Some(snap);
                 }
             }
 
             let positioned_style = text_run_from_style(cell_style.clone());
             if !cell_is_render_blank(cell) {
-                let mut char_text = String::new();
-                char_text.push(cell.c);
-                for zero_width in cell.zerowidth().into_iter().flatten() {
-                    char_text.push(*zero_width);
-                }
                 append_positioned_run(
                     &mut pending_positioned_run,
                     &mut positioned_runs,
-                    viewport_line,
+                    row_idx,
                     column,
                     cell_width,
-                    char_text,
+                    chunk.clone(),
                     positioned_style,
                 );
             } else if let Some(batch) = pending_positioned_run.take() {
@@ -1255,19 +953,258 @@ fn build_surface_snapshot<T: EventListener>(
         });
     }
 
-    let text = lines
+    let surface_text = lines
         .iter()
         .map(|line| line.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
 
+    // Cursor on an empty/out-of-range cell: synthesize a block at the
+    // reported position so the renderer still draws a caret.
+    if cursor_snapshot.is_none() {
+        if let Some((line, column)) = cursor_pos {
+            cursor_snapshot = cursor_snapshot_for_cell(line, column, 1, snapshot.cursor.shape);
+        }
+    }
+
     TerminalSurfaceSnapshot {
-        text,
-        columns: size.cols as usize,
+        text: surface_text,
+        columns,
         lines,
         positioned_runs,
         cursor: cursor_snapshot,
     }
+}
+
+// ───────── cell helpers (proto-frame) ─────────
+//
+// One source of truth post-cutover: every renderer-visible cell
+// derives from the wire types in `daemon_proto`. The alacritty-grid
+// siblings retired with design 01 / #158 Phase 5b. Keep the
+// signatures unprefixed so call sites read naturally.
+
+fn cell_display_text(cell: &ProtoGridCell) -> String {
+    let ch = if cell.flags.contains(ProtoGridCellFlags::HIDDEN)
+        || cell.ch == ' '
+        || cell.ch == '\0'
+    {
+        '\u{00a0}'
+    } else {
+        cell.ch
+    };
+    let mut out = String::with_capacity(1 + cell.zero_width.len());
+    out.push(ch);
+    // Combining marks / ZWJ tail (e.g. accented letters, flag
+    // emoji, family ZWJ sequences) render over the same cell.
+    // Forward them so the renderer composes the glyph correctly.
+    for combiner in &cell.zero_width {
+        out.push(*combiner);
+    }
+    out
+}
+
+fn cell_copy_text(cell: &ProtoGridCell) -> String {
+    if cell.flags.contains(ProtoGridCellFlags::HIDDEN) {
+        return " ".to_string();
+    }
+    let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
+    let mut out = String::with_capacity(1 + cell.zero_width.len());
+    out.push(ch);
+    for combiner in &cell.zero_width {
+        out.push(*combiner);
+    }
+    out
+}
+
+fn cell_is_render_blank(cell: &ProtoGridCell) -> bool {
+    if cell.ch != ' ' && cell.ch != '\0' {
+        return false;
+    }
+    if !cell.zero_width.is_empty() {
+        return false;
+    }
+    if cell.bg != ProtoGridColor::Default {
+        return false;
+    }
+    if cell.flags.0
+        & (ProtoGridCellFlags::UNDERLINE
+            | ProtoGridCellFlags::DOUBLE_UNDERLINE
+            | ProtoGridCellFlags::UNDERCURL
+            | ProtoGridCellFlags::DOTTED_UNDERLINE
+            | ProtoGridCellFlags::DASHED_UNDERLINE
+            | ProtoGridCellFlags::INVERSE
+            | ProtoGridCellFlags::STRIKEOUT)
+        != 0
+    {
+        return false;
+    }
+    true
+}
+
+fn cell_is_trimmable_blank(cell: &ProtoGridCell) -> bool {
+    if !cell.zero_width.is_empty() {
+        return false;
+    }
+    cell.flags.contains(ProtoGridCellFlags::HIDDEN) || cell.ch == ' ' || cell.ch == '\0'
+}
+
+fn terminal_cell_width(cell: &ProtoGridCell) -> usize {
+    if cell.flags.contains(ProtoGridCellFlags::WIDE_CHAR) {
+        2
+    } else {
+        1
+    }
+}
+
+fn effective_background_color(cell: &ProtoGridCell) -> ProtoGridColor {
+    if cell.flags.contains(ProtoGridCellFlags::INVERSE) {
+        cell.fg
+    } else {
+        cell.bg
+    }
+}
+
+fn resolve_cell_style(cell: &ProtoGridCell) -> ResolvedCellStyle {
+    let raw_foreground = cell.fg;
+    let mut foreground = resolve_grid_color(cell.fg, cell.flags, true);
+    let mut background = resolve_grid_color(cell.bg, cell.flags, false);
+
+    if cell.flags.contains(ProtoGridCellFlags::INVERSE) {
+        std::mem::swap(&mut foreground, &mut background);
+    }
+
+    if cell.flags.contains(ProtoGridCellFlags::HIDDEN) {
+        foreground = background;
+    } else {
+        foreground = ensure_light_terminal_foreground_contrast(
+            foreground,
+            background,
+            matches!(raw_foreground, ProtoGridColor::Rgb { .. }),
+            crate::theme::current_terminal_theme(),
+        );
+    }
+
+    ResolvedCellStyle {
+        foreground,
+        background,
+        font: terminal_font(cell.flags),
+        underline: underline_style(cell, foreground),
+        strikethrough: cell
+            .flags
+            .contains(ProtoGridCellFlags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(foreground),
+            }),
+    }
+}
+
+fn terminal_font(flags: ProtoGridCellFlags) -> gpui::Font {
+    let mut font = font("Lilex Nerd Font Mono");
+    if flags.contains(ProtoGridCellFlags::BOLD) {
+        font.weight = FontWeight::BOLD;
+    }
+    if flags.contains(ProtoGridCellFlags::ITALIC) {
+        font = font.italic();
+    }
+    font
+}
+
+fn underline_style(cell: &ProtoGridCell, foreground: Hsla) -> Option<UnderlineStyle> {
+    let any_underline = cell.flags.0
+        & (ProtoGridCellFlags::UNDERLINE
+            | ProtoGridCellFlags::DOUBLE_UNDERLINE
+            | ProtoGridCellFlags::UNDERCURL
+            | ProtoGridCellFlags::DOTTED_UNDERLINE
+            | ProtoGridCellFlags::DASHED_UNDERLINE)
+        != 0;
+    if !any_underline {
+        return None;
+    }
+    // SGR 58 (`4:N` underline-color) rides on the cell's
+    // `underline_color` wire field. `Default` falls back to the
+    // resolved foreground so plain SGR 4 keeps painting in the text
+    // colour, matching alacritty's `cell.underline_color()` returning
+    // `None`.
+    let color = match cell.underline_color {
+        ProtoGridColor::Default => foreground,
+        other => resolve_grid_color(other, cell.flags, true),
+    };
+    Some(UnderlineStyle {
+        thickness: px(if cell.flags.contains(ProtoGridCellFlags::DOUBLE_UNDERLINE) {
+            2.
+        } else {
+            1.
+        }),
+        color: Some(color),
+        wavy: cell.flags.contains(ProtoGridCellFlags::UNDERCURL),
+    })
+}
+
+/// Resolve a wire-format `GridColor` to an `Hsla`, applying the same
+/// dim/bold-on-named promotion the alacritty `resolve_color` does.
+/// `Default` colors snap to the active theme's terminal default fg/bg;
+/// `Indexed` colors fall through to the same xterm 256-color cube
+/// `default_indexed_color` builds; `Rgb` is taken verbatim.
+fn resolve_grid_color(color: ProtoGridColor, flags: ProtoGridCellFlags, is_foreground: bool) -> Hsla {
+    match color {
+        ProtoGridColor::Default => {
+            if is_foreground {
+                if flags.contains(ProtoGridCellFlags::DIM) {
+                    let [r, g, b] = crate::theme::current_terminal_palette().dim_foreground;
+                    gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
+                } else {
+                    default_foreground_color()
+                }
+            } else {
+                default_background_color()
+            }
+        }
+        ProtoGridColor::Rgb { r, g, b } => {
+            gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
+        }
+        ProtoGridColor::Indexed { index } => {
+            let mut idx = index;
+            // Bold promotes the low-8 ANSI palette to its bright
+            // counterpart for foreground only, matching alacritty's
+            // `NamedColor::to_bright`. Dim demotes; for indexed we
+            // do not have a dim palette so leave as-is.
+            if is_foreground && flags.contains(ProtoGridCellFlags::BOLD) && idx < 8 {
+                idx += 8;
+            }
+            let rgb = default_indexed_color(idx);
+            gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
+        }
+    }
+}
+
+fn cursor_snapshot_for_cell(
+    line: usize,
+    column: usize,
+    width: usize,
+    shape: daemon_proto::CursorShape,
+) -> Option<TerminalCursorSnapshot> {
+    use daemon_proto::CursorShape as Shape;
+    let kind = match shape {
+        Shape::Underline | Shape::UnderlineBlinking => TerminalCursorKind::Underline,
+        Shape::Beam | Shape::BeamBlinking => TerminalCursorKind::Beam,
+        Shape::HollowBlock | Shape::HollowBlockBlinking => TerminalCursorKind::HollowBlock,
+        _ => TerminalCursorKind::Block,
+    };
+    Some(TerminalCursorSnapshot {
+        line,
+        column,
+        width,
+        kind,
+        color: crate::theme::terminal_default_cursor(),
+        blinking: matches!(
+            shape,
+            Shape::BlockBlinking
+                | Shape::UnderlineBlinking
+                | Shape::BeamBlinking
+                | Shape::HollowBlockBlinking
+        ),
+    })
 }
 
 fn append_positioned_run(
@@ -1332,69 +1269,6 @@ fn same_text_style(a: &TextRun, b: &TextRun) -> bool {
         && a.strikethrough == b.strikethrough
 }
 
-fn cell_display_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
-    let mut text = String::new();
-
-    let ch = if cell.flags.contains(Flags::HIDDEN) || cell.c == ' ' {
-        '\u{00a0}'
-    } else {
-        cell.c
-    };
-    text.push(ch);
-
-    for zero_width in cell.zerowidth().into_iter().flatten() {
-        text.push(*zero_width);
-    }
-
-    text
-}
-
-fn cell_is_trimmable_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
-    (cell.flags.contains(Flags::HIDDEN) || cell.c == ' ') && cell.zerowidth().is_none()
-}
-
-fn cell_copy_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
-    if cell.flags.contains(Flags::HIDDEN) {
-        return " ".to_string();
-    }
-
-    let mut text = String::new();
-    text.push(if cell.c == ' ' { ' ' } else { cell.c });
-
-    for zero_width in cell.zerowidth().into_iter().flatten() {
-        text.push(*zero_width);
-    }
-
-    text
-}
-
-fn cell_is_render_blank(cell: &alacritty_terminal::term::cell::Cell) -> bool {
-    if cell.c != ' ' {
-        return false;
-    }
-
-    if cell.bg != Color::Named(NamedColor::Background) {
-        return false;
-    }
-
-    if cell
-        .flags
-        .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
-    {
-        return false;
-    }
-
-    true
-}
-
-fn terminal_cell_width(cell: &alacritty_terminal::term::cell::Cell) -> usize {
-    if cell.flags.contains(Flags::WIDE_CHAR) {
-        2
-    } else {
-        1
-    }
-}
-
 fn maybe_push_background_span(
     spans: &mut Vec<TerminalBackgroundSpanSnapshot>,
     column: usize,
@@ -1420,77 +1294,6 @@ fn maybe_push_background_span(
     });
 }
 
-fn effective_background_color(cell: &alacritty_terminal::term::cell::Cell) -> Color {
-    if cell.flags.contains(Flags::INVERSE) {
-        cell.fg
-    } else {
-        cell.bg
-    }
-}
-
-fn cursor_snapshot_from_cell(
-    line: usize,
-    column: usize,
-    width: usize,
-    cursor_shape: CursorShape,
-    blinking: bool,
-) -> Option<TerminalCursorSnapshot> {
-    let kind = match cursor_shape {
-        CursorShape::Block => TerminalCursorKind::Block,
-        CursorShape::HollowBlock => TerminalCursorKind::HollowBlock,
-        CursorShape::Beam => TerminalCursorKind::Beam,
-        CursorShape::Underline => TerminalCursorKind::Underline,
-        CursorShape::Hidden => return None,
-    };
-
-    Some(TerminalCursorSnapshot {
-        line,
-        column,
-        width,
-        kind,
-        color: crate::theme::terminal_default_cursor(),
-        blinking,
-    })
-}
-
-fn resolve_cell_style(
-    cell: &alacritty_terminal::term::cell::Cell,
-    colors: &alacritty_terminal::term::color::Colors,
-) -> ResolvedCellStyle {
-    let raw_foreground = cell.fg;
-    let mut foreground = resolve_color(cell.fg, cell.flags, true, colors);
-    let mut background = resolve_color(cell.bg, cell.flags, false, colors);
-
-    if cell.flags.contains(Flags::INVERSE) {
-        std::mem::swap(&mut foreground, &mut background);
-    }
-
-    if cell.flags.contains(Flags::HIDDEN) {
-        foreground = background;
-    } else {
-        foreground = ensure_light_terminal_foreground_contrast(
-            foreground,
-            background,
-            matches!(raw_foreground, Color::Spec(_)),
-            crate::theme::current_terminal_theme(),
-        );
-    }
-
-    ResolvedCellStyle {
-        foreground,
-        background,
-        font: terminal_font(cell.flags),
-        underline: underline_style(cell, colors, foreground),
-        strikethrough: cell
-            .flags
-            .contains(Flags::STRIKEOUT)
-            .then(|| StrikethroughStyle {
-                thickness: px(1.),
-                color: Some(foreground),
-            }),
-    }
-}
-
 fn ensure_light_terminal_foreground_contrast(
     foreground: Hsla,
     background: Hsla,
@@ -1506,42 +1309,6 @@ fn ensure_light_terminal_foreground_contrast(
     } else {
         foreground
     }
-}
-
-fn terminal_font(flags: Flags) -> gpui::Font {
-    let mut font = font("Lilex Nerd Font Mono");
-    if flags.contains(Flags::BOLD) {
-        font.weight = FontWeight::BOLD;
-    }
-    if flags.contains(Flags::ITALIC) {
-        font = font.italic();
-    }
-    font
-}
-
-fn underline_style(
-    cell: &alacritty_terminal::term::cell::Cell,
-    colors: &alacritty_terminal::term::color::Colors,
-    foreground: Hsla,
-) -> Option<UnderlineStyle> {
-    if !cell.flags.intersects(Flags::ALL_UNDERLINES) {
-        return None;
-    }
-
-    let color = cell
-        .underline_color()
-        .map(|color| resolve_color(color, cell.flags, true, colors))
-        .unwrap_or(foreground);
-
-    Some(UnderlineStyle {
-        thickness: px(if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
-            2.
-        } else {
-            1.
-        }),
-        color: Some(color),
-        wavy: cell.flags.contains(Flags::UNDERCURL),
-    })
 }
 
 fn default_cell_style() -> ResolvedCellStyle {
@@ -1565,81 +1332,12 @@ fn text_run_from_style(style: ResolvedCellStyle) -> TextRun {
     }
 }
 
-fn resolve_color(
-    mut color: Color,
-    flags: Flags,
-    is_foreground: bool,
-    colors: &alacritty_terminal::term::color::Colors,
-) -> Hsla {
-    if is_foreground {
-        if flags.contains(Flags::DIM) {
-            if let Color::Named(named) = color {
-                color = Color::Named(named.to_dim());
-            }
-        } else if flags.contains(Flags::BOLD) {
-            if let Color::Named(named) = color {
-                color = Color::Named(named.to_bright());
-            }
-        }
-    }
-
-    let rgb = match color {
-        Color::Named(named) => resolve_named_color(named, colors),
-        Color::Spec(rgb) => rgb,
-        Color::Indexed(index) => resolve_indexed_color(index, colors),
-    };
-
-    gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
-}
-
-fn resolve_named_color(named: NamedColor, colors: &alacritty_terminal::term::color::Colors) -> Rgb {
-    colors[named].unwrap_or_else(|| default_named_color(named))
-}
-
-fn resolve_indexed_color(index: u8, colors: &alacritty_terminal::term::color::Colors) -> Rgb {
-    colors[index as usize].unwrap_or_else(|| default_indexed_color(index))
-}
-
-fn default_named_color(named: NamedColor) -> Rgb {
-    let palette = current_terminal_palette();
-    match named {
-        NamedColor::Black => palette.normal[0],
-        NamedColor::Red => palette.normal[1],
-        NamedColor::Green => palette.normal[2],
-        NamedColor::Yellow => palette.normal[3],
-        NamedColor::Blue => palette.normal[4],
-        NamedColor::Magenta => palette.normal[5],
-        NamedColor::Cyan => palette.normal[6],
-        NamedColor::White => palette.normal[7],
-        NamedColor::BrightBlack => palette.bright[0],
-        NamedColor::BrightRed => palette.bright[1],
-        NamedColor::BrightGreen => palette.bright[2],
-        NamedColor::BrightYellow => palette.bright[3],
-        NamedColor::BrightBlue => palette.bright[4],
-        NamedColor::BrightMagenta => palette.bright[5],
-        NamedColor::BrightCyan => palette.bright[6],
-        NamedColor::BrightWhite => palette.bright[7],
-        NamedColor::Foreground => palette.foreground,
-        NamedColor::Cursor => palette.cursor,
-        NamedColor::BrightForeground => palette.bright_foreground,
-        NamedColor::Background => palette.background,
-        NamedColor::DimBlack => palette.dim[0],
-        NamedColor::DimRed => palette.dim[1],
-        NamedColor::DimGreen => palette.dim[2],
-        NamedColor::DimYellow => palette.dim[3],
-        NamedColor::DimBlue => palette.dim[4],
-        NamedColor::DimMagenta => palette.dim[5],
-        NamedColor::DimCyan => palette.dim[6],
-        NamedColor::DimWhite => palette.dim[7],
-        NamedColor::DimForeground => palette.dim_foreground,
-    }
-}
 
 fn default_indexed_color(index: u8) -> Rgb {
-    let palette = current_terminal_palette();
+    let palette = crate::theme::current_terminal_palette();
     match index {
-        0..=7 => palette.normal[index as usize],
-        8..=15 => palette.bright[(index - 8) as usize],
+        0..=7 => rgb_from_triple(palette.normal[index as usize]),
+        8..=15 => rgb_from_triple(palette.bright[(index - 8) as usize]),
         16..=231 => {
             let index = index - 16;
             let red = index / 36;
@@ -1663,6 +1361,10 @@ fn default_indexed_color(index: u8) -> Rgb {
     }
 }
 
+fn rgb_from_triple([r, g, b]: [u8; 3]) -> Rgb {
+    Rgb { r, g, b }
+}
+
 fn default_background_color() -> Hsla {
     crate::theme::terminal_default_background()
 }
@@ -1671,249 +1373,36 @@ fn default_foreground_color() -> Hsla {
     crate::theme::terminal_default_foreground()
 }
 
-fn window_size_from_grid(size: TerminalGridSize) -> WindowSize {
-    WindowSize {
-        num_lines: size.rows,
-        num_cols: size.cols,
-        cell_width: if size.cols == 0 {
-            0
-        } else {
-            size.pixel_width / size.cols
-        },
-        cell_height: if size.rows == 0 {
-            0
-        } else {
-            size.pixel_height / size.rows
-        },
-    }
-}
-
-fn resolve_color_request(index: usize, colors: &Colors) -> Rgb {
-    colors[index].unwrap_or_else(|| default_color_request(index))
-}
-
-fn default_color_request(index: usize) -> Rgb {
-    if index <= u8::MAX as usize {
-        return default_indexed_color(index as u8);
-    }
-
-    match index {
-        x if x == NamedColor::Foreground as usize => default_named_color(NamedColor::Foreground),
-        x if x == NamedColor::Background as usize => default_named_color(NamedColor::Background),
-        x if x == NamedColor::Cursor as usize => default_named_color(NamedColor::Cursor),
-        x if x == NamedColor::BrightForeground as usize => {
-            default_named_color(NamedColor::BrightForeground)
-        }
-        x if x == NamedColor::DimForeground as usize => {
-            default_named_color(NamedColor::DimForeground)
-        }
-        x if x == NamedColor::DimBlack as usize => default_named_color(NamedColor::DimBlack),
-        x if x == NamedColor::DimRed as usize => default_named_color(NamedColor::DimRed),
-        x if x == NamedColor::DimGreen as usize => default_named_color(NamedColor::DimGreen),
-        x if x == NamedColor::DimYellow as usize => default_named_color(NamedColor::DimYellow),
-        x if x == NamedColor::DimBlue as usize => default_named_color(NamedColor::DimBlue),
-        x if x == NamedColor::DimMagenta as usize => default_named_color(NamedColor::DimMagenta),
-        x if x == NamedColor::DimCyan as usize => default_named_color(NamedColor::DimCyan),
-        x if x == NamedColor::DimWhite as usize => default_named_color(NamedColor::DimWhite),
-        _ => default_named_color(NamedColor::Background),
-    }
-}
-
-#[derive(Clone, Copy)]
-struct TerminalPalette {
-    background: Rgb,
-    foreground: Rgb,
-    cursor: Rgb,
-    bright_foreground: Rgb,
-    dim_foreground: Rgb,
-    normal: [Rgb; 8],
-    bright: [Rgb; 8],
-    dim: [Rgb; 8],
-}
-
-fn current_terminal_palette() -> &'static TerminalPalette {
-    terminal_palette(crate::theme::current_terminal_theme())
-}
-
-fn terminal_palette(resolved: crate::theme::ResolvedTheme) -> &'static TerminalPalette {
-    match resolved {
-        crate::theme::ResolvedTheme::Light => &AYU_LIGHT_TERMINAL,
-        crate::theme::ResolvedTheme::Dark => &AYU_DARK_TERMINAL,
-    }
-}
-
-const AYU_DARK_TERMINAL: TerminalPalette = TerminalPalette {
-    background: vte_rgb(0x0d1016),
-    foreground: vte_rgb(0xbfbdb6),
-    cursor: vte_rgb(0x5ac1fe),
-    bright_foreground: vte_rgb(0xbfbdb6),
-    dim_foreground: vte_rgb(0x85847f),
-    normal: [
-        vte_rgb(0x0d1016),
-        vte_rgb(0xef7177),
-        vte_rgb(0xaad84c),
-        vte_rgb(0xfeb454),
-        vte_rgb(0x5ac1fe),
-        vte_rgb(0x39bae5),
-        vte_rgb(0x95e5cb),
-        vte_rgb(0xbfbdb6),
-    ],
-    bright: [
-        vte_rgb(0x545557),
-        vte_rgb(0x83353b),
-        vte_rgb(0x567627),
-        vte_rgb(0x92582b),
-        vte_rgb(0x27618c),
-        vte_rgb(0x205a78),
-        vte_rgb(0x4c806f),
-        vte_rgb(0xfafafa),
-    ],
-    dim: [
-        vte_rgb(0x3a3b3c),
-        vte_rgb(0xa74f53),
-        vte_rgb(0x769735),
-        vte_rgb(0xb17d3a),
-        vte_rgb(0x3e87b1),
-        vte_rgb(0x2782a0),
-        vte_rgb(0x68a08e),
-        vte_rgb(0x85847f),
-    ],
-};
-
-const AYU_LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
-    background: vte_rgb(0xfcfcfc),
-    foreground: vte_rgb(0x5c6166),
-    cursor: vte_rgb(0x3b9ee5),
-    bright_foreground: vte_rgb(0x5c6166),
-    dim_foreground: vte_rgb(0xfcfcfc),
-    normal: [
-        vte_rgb(0x5c6166),
-        vte_rgb(0xef7271),
-        vte_rgb(0x85b304),
-        vte_rgb(0xf1ad49),
-        vte_rgb(0x3b9ee5),
-        vte_rgb(0x55b4d3),
-        vte_rgb(0x4dbf99),
-        vte_rgb(0xfcfcfc),
-    ],
-    bright: [
-        vte_rgb(0x3b9ee5),
-        vte_rgb(0xfebab6),
-        vte_rgb(0xc7d98f),
-        vte_rgb(0xfed5a3),
-        vte_rgb(0xabcdf2),
-        vte_rgb(0xb1d8e8),
-        vte_rgb(0xace0cb),
-        vte_rgb(0xffffff),
-    ],
-    dim: [
-        vte_rgb(0x9c9fa2),
-        vte_rgb(0x833538),
-        vte_rgb(0x445613),
-        vte_rgb(0x8a5227),
-        vte_rgb(0x214c76),
-        vte_rgb(0x2f5669),
-        vte_rgb(0x2a5f4a),
-        vte_rgb(0xbcbec0),
-    ],
-};
-
-const fn vte_rgb(hex: u32) -> Rgb {
-    Rgb {
-        r: ((hex >> 16) & 0xff) as u8,
-        g: ((hex >> 8) & 0xff) as u8,
-        b: (hex & 0xff) as u8,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::term::test::TermSize;
-
-    fn term_from_ansi(rows: usize, cols: usize, bytes: &[u8]) -> Term<VoidListener> {
-        let mut term = Term::new(Config::default(), &TermSize::new(cols, rows), VoidListener);
-        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
-        parser.advance(&mut term, bytes);
-        term
-    }
-
-    #[test]
-    fn search_scrollback_finds_match_in_viewport() {
-        let term = term_from_ansi(4, 32, b"hello world\r\nrust hello rust\r\n");
-        let matches = search_scrollback_in_term(&term, "hello");
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].start_col, 0);
-        assert_eq!(matches[0].end_col, 5);
-        assert_eq!(matches[1].start_col, 5);
-        assert_eq!(matches[1].end_col, 10);
-    }
-
-    #[test]
-    fn search_scrollback_is_case_insensitive() {
-        let term = term_from_ansi(4, 32, b"Hello World\r\n");
-        let m = search_scrollback_in_term(&term, "WORLD");
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].start_col, 6);
-        assert_eq!(m[0].end_col, 11);
-    }
-
-    #[test]
-    fn search_scrollback_empty_query_yields_empty() {
-        let term = term_from_ansi(4, 32, b"hello\r\n");
-        assert!(search_scrollback_in_term(&term, "").is_empty());
-        assert!(search_scrollback_in_term(&term, "\0\0").is_empty());
-    }
-
-    #[test]
-    fn search_scrollback_walks_history_above_viewport() {
-        // 4-row terminal, push 8 rows so 4 lines fall into scrollback.
-        let mut bytes: Vec<u8> = Vec::new();
-        for i in 0..8 {
-            bytes.extend_from_slice(format!("row{i}\r\n").as_bytes());
-        }
-        let term = term_from_ansi(4, 16, &bytes);
-        // "row1" should now live in scrollback (above the visible viewport).
-        let m = search_scrollback_in_term(&term, "row1");
-        assert_eq!(m.len(), 1);
-        assert!(
-            m[0].line < 0,
-            "expected scrollback (negative line), got {}",
-            m[0].line
-        );
-    }
-
-    #[test]
-    fn search_scrollback_wide_char_match_spans_two_columns() {
-        // Match anchored on a 2-cell-wide CJK glyph should report
-        // end_col one past its right cell, not its anchor cell.
-        let term = term_from_ansi(4, 16, "look 日本 here\r\n".as_bytes());
-        let m = search_scrollback_in_term(&term, "日");
-        assert_eq!(m.len(), 1);
-        // "look " takes cols 0..5, then 日 occupies cols 5+6.
-        assert_eq!(m[0].start_col, 5);
-        assert_eq!(m[0].end_col, 7, "wide-char highlight covers 2 cells");
-    }
-
-    #[test]
-    fn search_scrollback_no_match_yields_empty() {
-        let term = term_from_ansi(4, 32, b"hello world\r\n");
-        assert!(search_scrollback_in_term(&term, "zzz").is_empty());
-    }
+    use alacritty_terminal::vte::ansi;
 
     fn snapshot_from_ansi(bytes: &[u8]) -> TerminalSurfaceSnapshot {
+        // Drive the canonical pipeline end-to-end: alacritty Term
+        // → daemon_proto::GridSnapshot (via the daemon's serializer)
+        // → the unified renderer-side `build_surface_snapshot`. Tests
+        // that captured the legacy alacritty-grid builder's output
+        // before Phase 5b cutover stay green so long as both halves
+        // of the pipeline preserve the same behaviour.
+        let _termsize = TermSize::new(32, 4);
         let size = TerminalGridSize {
             cols: 32,
             rows: 4,
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut term = Term::new(Config::default(), &TermSize::new(32, 4), VoidListener);
+        let mut term = daemon::terminal::term_config::make_term(size, VoidListener);
         let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
         parser.advance(&mut term, bytes);
-        build_surface_snapshot(&term, size)
+        let frame = daemon::terminal::frame::serialize_full_frame(&term, 1);
+        match &*frame {
+            TerminalFrame::Full { snapshot, .. } => build_surface_snapshot(snapshot),
+            other => panic!("expected Full frame, got {other:?}"),
+        }
     }
 
     /// Phase 5a parity helper. Builds a synthetic
@@ -1951,6 +1440,7 @@ mod tests {
             },
             mode: ModeFlags::default(),
             scroll_offset: 0,
+            history_lines: 0,
         }
     }
 
@@ -1962,7 +1452,7 @@ mod tests {
         // and column count must match for the same logical input.
         let alacritty_surface = snapshot_from_ansi(b"hello\r\nworld");
         let proto_snapshot = proto_snapshot_from_lines(32, 4, &["hello", "world", "", ""]);
-        let proto_surface = build_surface_snapshot_from_proto(&proto_snapshot);
+        let proto_surface = build_surface_snapshot(&proto_snapshot);
 
         assert_eq!(proto_surface.columns, alacritty_surface.columns);
         assert_eq!(
@@ -1991,7 +1481,7 @@ mod tests {
     #[test]
     fn proto_cursor_uses_terminal_cursor_theme_color() {
         let proto = proto_snapshot_from_lines(16, 2, &["hi"]);
-        let surface = build_surface_snapshot_from_proto(&proto);
+        let surface = build_surface_snapshot(&proto);
         let cursor = surface.cursor.expect("visible cursor");
         assert_eq!(cursor.color, crate::theme::terminal_default_cursor());
     }
@@ -2029,40 +1519,331 @@ mod tests {
         );
     }
 
+    /// Helper: ingest a `Full` frame for a tiny viewer-only runtime.
+    fn ingest_lines(
+        runtime: &mut LiveTerminalRuntime,
+        cols: u16,
+        rows: u16,
+        lines: &[&str],
+        history_lines: u32,
+    ) {
+        let mut snapshot = proto_snapshot_from_lines(cols, rows, lines);
+        snapshot.history_lines = history_lines;
+        let frame = TerminalFrame::Full {
+            seq: 1,
+            snapshot: std::sync::Arc::new(snapshot),
+        };
+        runtime.ingest_frame(&frame);
+    }
+
+    fn proto_row_from_text(text: &str, cols: u16) -> daemon_proto::GridRow {
+        use daemon_proto::{GridCell, GridRow};
+        let cells: Vec<GridCell> = text
+            .chars()
+            .take(cols as usize)
+            .map(|c| GridCell {
+                ch: c,
+                ..GridCell::default()
+            })
+            .collect();
+        GridRow { cells }
+    }
+
     #[test]
-    fn bell_event_surfaces_in_runtime_update() {
-        // We can't drive a full LiveTerminalRuntime without a PTY, but
-        // we can verify Term raises Event::Bell on `\x07` and that our
-        // drain loop sets `update.bell = true`. Mirror the drain loop
-        // inline using a dedicated proxy so we don't need PTY plumbing.
-        use std::collections::VecDeque;
-        use std::sync::{Arc, Mutex};
+    fn viewer_scroll_lines_clamps_to_history() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        // No frame yet — nothing to scroll.
+        assert!(!runtime.viewer_scroll_lines(5));
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
 
-        let queue: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let proxy_queue = queue.clone();
-        struct Proxy {
-            queue: Arc<Mutex<VecDeque<Event>>>,
-        }
-        impl EventListener for Proxy {
-            fn send_event(&self, event: Event) {
-                self.queue.lock().unwrap().push_back(event);
-            }
-        }
-        let mut term = Term::new(
-            Config::default(),
-            &TermSize::new(8, 4),
-            Proxy { queue: proxy_queue },
+        ingest_lines(&mut runtime, 8, 2, &["top", "bot"], 3);
+
+        // Scroll up two lines is allowed (history is 3).
+        assert!(runtime.viewer_scroll_lines(2));
+        assert_eq!(runtime.viewer_scroll_offset(), 2);
+
+        // A third "up" is allowed (still <= 3); a fourth gets clamped.
+        assert!(runtime.viewer_scroll_lines(1));
+        assert_eq!(runtime.viewer_scroll_offset(), 3);
+        assert!(!runtime.viewer_scroll_lines(1));
+        assert_eq!(runtime.viewer_scroll_offset(), 3);
+
+        // Scroll back down past zero clamps at zero.
+        assert!(runtime.viewer_scroll_lines(-10));
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
+    }
+
+    #[test]
+    fn missing_scrollback_window_reports_visible_uncached_rows() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["top", "bot"], 5);
+
+        // No scroll — nothing missing.
+        assert!(runtime.missing_scrollback_window().is_none());
+
+        // Scroll up 1: only daemon-offset 1 is visible (the rest of
+        // the viewport stays in live).
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime.missing_scrollback_window().expect("window");
+        assert_eq!(win.start, 1);
+        assert_eq!(win.count, 1);
+
+        // Scroll up 4 (offset = 5 = history_lines): visible scrollback
+        // covers offsets [4, 5] (rows=2 viewport, top row at line=-5,
+        // bottom row at line=-4). lo = offset - rows + 1 = 4, hi = 5.
+        assert!(runtime.viewer_scroll_lines(4));
+        let win = runtime.missing_scrollback_window().expect("window");
+        assert_eq!(win.start, 4);
+        assert_eq!(win.count, 2);
+    }
+
+    #[test]
+    fn fetch_window_pads_visible_to_a_page() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 200);
+        // Scroll up 1 — visible-window has 1 missing row at offset 1.
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime
+            .scrollback_fetch_window(64, 4096)
+            .expect("fetch window");
+        assert_eq!(win.start, 1);
+        // Padded to the page size, clamped to history.
+        assert_eq!(win.count, 64);
+    }
+
+    #[test]
+    fn fetch_window_clamps_padding_to_history() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        // history of 5 means the largest valid daemon-offset is 5.
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 5);
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime
+            .scrollback_fetch_window(64, 4096)
+            .expect("fetch window");
+        assert_eq!(win.start, 1);
+        // Page would request 64 rows but only 5 fit in history.
+        assert_eq!(win.count, 5);
+    }
+
+    #[test]
+    fn fetch_window_prefetches_above_cache_when_visible_satisfied() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 200);
+        assert!(runtime.viewer_scroll_lines(1));
+
+        // Simulate a reply landing for offsets [1..=10] so the
+        // visible window is fully cached and the fetch helper
+        // falls through to the prefetch branch.
+        let rows: Vec<_> = (0..10)
+            .map(|i| proto_row_from_text(&format!("hist{i}"), 8))
+            .collect();
+        let reply = TerminalScrollbackReply {
+            rows,
+            range_actual: ScrollbackRange { start: 1, count: 10 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        // No visible rows missing now; expect a prefetch slab
+        // starting one past the cache top (offset 11).
+        let win = runtime
+            .scrollback_fetch_window(32, 4096)
+            .expect("prefetch window");
+        assert_eq!(win.start, 11);
+        assert_eq!(win.count, 32);
+    }
+
+    #[test]
+    fn fetch_window_stops_at_prefetch_ceiling() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 1000);
+        assert!(runtime.viewer_scroll_lines(1));
+
+        // Pre-fill cache up to offset 50.
+        let rows: Vec<_> = (0..50)
+            .map(|i| proto_row_from_text(&format!("r{i}"), 8))
+            .collect();
+        let reply = TerminalScrollbackReply {
+            rows,
+            range_actual: ScrollbackRange { start: 1, count: 50 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        // Ceiling is 50: cache is at the cap; nothing more to
+        // prefetch even though history is 1000.
+        assert!(runtime.scrollback_fetch_window(32, 50).is_none());
+        // Bumping the ceiling reopens prefetch.
+        let win = runtime.scrollback_fetch_window(32, 100).expect("window");
+        assert_eq!(win.start, 51);
+        assert_eq!(win.count, 32);
+    }
+
+    #[test]
+    fn resize_invalidates_scrollback_cache_and_resets_offset() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 100);
+        assert!(runtime.viewer_scroll_lines(3));
+
+        let reply = TerminalScrollbackReply {
+            rows: (0..3)
+                .map(|i| proto_row_from_text(&format!("r{i}"), 8))
+                .collect(),
+            range_actual: ScrollbackRange { start: 1, count: 3 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+        assert_eq!(runtime.viewer_scroll_offset(), 3);
+
+        // Resize to a different size — cached rows captured at the
+        // old column count would render mangled in the new viewport,
+        // and the user is unlikely to want to keep the historical
+        // offset on a window snap. Both reset.
+        let new_size = TerminalGridSize {
+            cols: 16,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        runtime.resize(new_size).expect("resize");
+
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
+        // Re-scrolling up triggers a fresh fetch (cache empty).
+        assert!(runtime.viewer_scroll_lines(1));
+        let win = runtime
+            .scrollback_fetch_window(64, 4096)
+            .expect("fetch window post-resize");
+        assert_eq!(
+            win.start, 1,
+            "post-resize scroll-up should re-fetch from offset 1"
         );
-        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
-        parser.advance(&mut term, b"a\x07b");
+    }
 
-        let mut update = TerminalRuntimeUpdate::default();
-        while let Some(event) = queue.lock().unwrap().pop_front() {
-            if matches!(event, Event::Bell) {
-                update.bell = true;
-            }
-        }
-        assert!(update.bell, "BEL byte should surface as update.bell");
+    #[test]
+    fn apply_scrollback_reply_composes_visible_rows() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 3,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 3, &["liveA", "liveB", "liveC"], 5);
+
+        // Scroll up 2: viewer rows top-to-bottom map to grid lines
+        // [-2, -1, 0]. So the top two rows come from scrollback at
+        // daemon offsets 2 and 1; the bottom row is liveA.
+        assert!(runtime.viewer_scroll_lines(2));
+
+        // Before the reply lands, the scrollback rows render blank
+        // (cache empty) but the live row anchored at the bottom still
+        // shows.
+        let surface = runtime.snapshot();
+        assert_eq!(surface.lines.len(), 3);
+        // surface.lines[2] is the bottom row — liveA (line index 0
+        // in live.viewport, the topmost live row).
+        assert!(
+            surface.lines[2].text.starts_with("liveA"),
+            "bottom row from live: got {:?}",
+            surface.lines[2].text
+        );
+
+        // Reply with rows for daemon offsets [1, 2]: "hist1" and "hist2".
+        let reply = TerminalScrollbackReply {
+            rows: vec![
+                proto_row_from_text("hist1", 8),
+                proto_row_from_text("hist2", 8),
+            ],
+            range_actual: ScrollbackRange { start: 1, count: 2 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        let surface = runtime.snapshot();
+        // viewer row 0 = line -2 = scrollback offset 2 = "hist2".
+        assert!(
+            surface.lines[0].text.starts_with("hist2"),
+            "top row from oldest scrollback: got {:?}",
+            surface.lines[0].text
+        );
+        // viewer row 1 = line -1 = scrollback offset 1 = "hist1".
+        assert!(
+            surface.lines[1].text.starts_with("hist1"),
+            "middle row from newer scrollback: got {:?}",
+            surface.lines[1].text
+        );
+        // viewer row 2 still = liveA.
+        assert!(
+            surface.lines[2].text.starts_with("liveA"),
+            "bottom row stays on live top: got {:?}",
+            surface.lines[2].text
+        );
+        // Cursor hidden when scrolled off the live bottom.
+        assert!(
+            surface.cursor.is_none(),
+            "cursor hidden during scrollback view"
+        );
+    }
+
+    #[test]
+    fn ingest_clamps_viewer_offset_when_history_shrinks() {
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 2,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 10);
+        assert!(runtime.viewer_scroll_lines(7));
+        assert_eq!(runtime.viewer_scroll_offset(), 7);
+
+        // Daemon clears scrollback (e.g. `clear` command). New
+        // history_lines = 0; viewer offset must clamp.
+        ingest_lines(&mut runtime, 8, 2, &["a", "b"], 0);
+        assert_eq!(runtime.viewer_scroll_offset(), 0);
     }
 
     #[test]
@@ -2224,56 +2005,56 @@ mod tests {
         assert_eq!(styled_run.color, rgb(0xaf87ff).into());
     }
 
-    fn rgb_hex(rgb: Rgb) -> u32 {
-        ((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32
+    fn triple_hex([r, g, b]: [u8; 3]) -> u32 {
+        ((r as u32) << 16) | ((g as u32) << 8) | b as u32
     }
 
-    fn rgb_hexes(colors: [Rgb; 8]) -> [u32; 8] {
-        colors.map(rgb_hex)
+    fn triple_hexes(colors: [[u8; 3]; 8]) -> [u32; 8] {
+        colors.map(triple_hex)
     }
 
     #[test]
     fn ayu_dark_terminal_palette_matches_zed() {
-        let palette = terminal_palette(crate::theme::ResolvedTheme::Dark);
+        let palette = crate::theme::terminal_palette(crate::theme::ResolvedTheme::Dark);
 
-        assert_eq!(rgb_hex(palette.background), 0x0d1016);
-        assert_eq!(rgb_hex(palette.foreground), 0xbfbdb6);
-        assert_eq!(rgb_hex(palette.cursor), 0x5ac1fe);
-        assert_eq!(rgb_hex(palette.bright_foreground), 0xbfbdb6);
-        assert_eq!(rgb_hex(palette.dim_foreground), 0x85847f);
+        assert_eq!(triple_hex(palette.background), 0x0d1016);
+        assert_eq!(triple_hex(palette.foreground), 0xbfbdb6);
+        assert_eq!(triple_hex(palette.cursor), 0x5ac1fe);
+        assert_eq!(triple_hex(palette.bright_foreground), 0xbfbdb6);
+        assert_eq!(triple_hex(palette.dim_foreground), 0x85847f);
         assert_eq!(
-            rgb_hexes(palette.normal),
+            triple_hexes(palette.normal),
             [0x0d1016, 0xef7177, 0xaad84c, 0xfeb454, 0x5ac1fe, 0x39bae5, 0x95e5cb, 0xbfbdb6,]
         );
         assert_eq!(
-            rgb_hexes(palette.bright),
+            triple_hexes(palette.bright),
             [0x545557, 0x83353b, 0x567627, 0x92582b, 0x27618c, 0x205a78, 0x4c806f, 0xfafafa,]
         );
         assert_eq!(
-            rgb_hexes(palette.dim),
+            triple_hexes(palette.dim),
             [0x3a3b3c, 0xa74f53, 0x769735, 0xb17d3a, 0x3e87b1, 0x2782a0, 0x68a08e, 0x85847f,]
         );
     }
 
     #[test]
     fn ayu_light_terminal_palette_matches_zed() {
-        let palette = terminal_palette(crate::theme::ResolvedTheme::Light);
+        let palette = crate::theme::terminal_palette(crate::theme::ResolvedTheme::Light);
 
-        assert_eq!(rgb_hex(palette.background), 0xfcfcfc);
-        assert_eq!(rgb_hex(palette.foreground), 0x5c6166);
-        assert_eq!(rgb_hex(palette.cursor), 0x3b9ee5);
-        assert_eq!(rgb_hex(palette.bright_foreground), 0x5c6166);
-        assert_eq!(rgb_hex(palette.dim_foreground), 0xfcfcfc);
+        assert_eq!(triple_hex(palette.background), 0xfcfcfc);
+        assert_eq!(triple_hex(palette.foreground), 0x5c6166);
+        assert_eq!(triple_hex(palette.cursor), 0x3b9ee5);
+        assert_eq!(triple_hex(palette.bright_foreground), 0x5c6166);
+        assert_eq!(triple_hex(palette.dim_foreground), 0xfcfcfc);
         assert_eq!(
-            rgb_hexes(palette.normal),
+            triple_hexes(palette.normal),
             [0x5c6166, 0xef7271, 0x85b304, 0xf1ad49, 0x3b9ee5, 0x55b4d3, 0x4dbf99, 0xfcfcfc,]
         );
         assert_eq!(
-            rgb_hexes(palette.bright),
+            triple_hexes(palette.bright),
             [0x3b9ee5, 0xfebab6, 0xc7d98f, 0xfed5a3, 0xabcdf2, 0xb1d8e8, 0xace0cb, 0xffffff,]
         );
         assert_eq!(
-            rgb_hexes(palette.dim),
+            triple_hexes(palette.dim),
             [0x9c9fa2, 0x833538, 0x445613, 0x8a5227, 0x214c76, 0x2f5669, 0x2a5f4a, 0xbcbec0,]
         );
     }
@@ -2308,8 +2089,8 @@ mod tests {
 
     #[test]
     fn default_indexed_color_includes_xterm_gray_ramp() {
-        assert_eq!(default_indexed_color(232), vte_rgb(0x080808));
-        assert_eq!(default_indexed_color(244), vte_rgb(0x808080));
-        assert_eq!(default_indexed_color(255), vte_rgb(0xeeeeee));
+        assert_eq!(default_indexed_color(232), Rgb { r: 0x08, g: 0x08, b: 0x08 });
+        assert_eq!(default_indexed_color(244), Rgb { r: 0x80, g: 0x80, b: 0x80 });
+        assert_eq!(default_indexed_color(255), Rgb { r: 0xee, g: 0xee, b: 0xee });
     }
 }
