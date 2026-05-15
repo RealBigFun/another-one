@@ -975,7 +975,7 @@ fn discover_session(
                 discover_codex_session(launch_started_at, cwd, Some(root))
             }
             DiscoveryKind::Pi { capture } => {
-                discover_pi_session(launch_started_at, cwd, Some(&capture.path))
+                discover_pi_session(launch_started_at, cwd, Some(&capture.path), None)
             }
         };
         if discovered.is_some() {
@@ -1001,17 +1001,40 @@ fn discover_pi_session(
     launch_started_at: SystemTime,
     cwd: &Path,
     capture_path: Option<&Path>,
+    sessions_root: Option<&Path>,
 ) -> Option<TerminalSessionRef> {
-    match capture_path.map(|path| read_session_capture(path, TerminalSessionKind::PiSession)) {
+    let sessions_root = sessions_root
+        .map(Path::to_path_buf)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".pi/agent/sessions")));
+
+    // Fast path: the `pi-session-start-extension.ts` hook captures
+    // `ctx.sessionManager.getSessionId()` to a file we polled for.
+    // BUT pi has been observed to use a different UUID for the
+    // on-disk `.jsonl` file's `id` field than what `getSessionId()`
+    // returns at `session_start`. If we blindly persist the
+    // captured id, the next launch's `resolve_pi_session` scan can
+    // never find it on disk — every restart spawns a fresh session.
+    //
+    // Validate the captured id against the on-disk format before
+    // trusting it; on mismatch fall through to the newest-matching
+    // file scan, which keys on the file's real id + cwd.
+    let capture_state = capture_path.map(|path| read_session_capture(path, TerminalSessionKind::PiSession));
+    match capture_state {
         Some(SessionCaptureState::Ready(session)) => {
+            if pi_session_exists(cwd, &session.id, sessions_root.as_deref()) {
+                let _ = fs::remove_file(capture_path.expect("capture path should exist"));
+                return Some(session);
+            }
+            // Captured id doesn't exist as an on-disk session id.
+            // Drop the stale capture so the next discovery tick
+            // doesn't keep re-validating it, and fall through.
             let _ = fs::remove_file(capture_path.expect("capture path should exist"));
-            return Some(session);
         }
         Some(SessionCaptureState::Pending) => return None,
         Some(SessionCaptureState::Missing) | None => {}
     }
 
-    let sessions_root = dirs::home_dir()?.join(".pi/agent/sessions");
+    let sessions_root = sessions_root?;
     newest_matching_jsonl(&sessions_root, launch_started_at, |path| {
         let file = fs::File::open(path).ok()?;
         let mut first_line = String::new();
@@ -1521,12 +1544,31 @@ mod tests {
     }
 
     #[test]
-    fn pi_discovery_prefers_extension_capture_when_available() {
+    fn pi_discovery_prefers_extension_capture_when_validated_on_disk() {
+        // Capture file claims session id "pi-session"; the on-disk
+        // jsonl file's first-line `id` matches and the cwd matches
+        // — capture wins (fast path).
+        let sessions_root = temp_pi_sessions_root();
+        let session_dir = sessions_root.join("project");
+        fs::create_dir_all(&session_dir).expect("session dir should be created");
+        let session_file = session_dir.join("session.jsonl");
+        fs::write(
+            &session_file,
+            r#"{"id":"pi-session","cwd":"/tmp/proj"}
+"#,
+        )
+        .expect("session file should be writable");
+
         let path = temp_capture_path();
         fs::write(&path, r#"{"session_id":"pi-session"}"#)
             .expect("capture file should be writable");
 
-        let session = discover_pi_session(SystemTime::now(), Path::new("/tmp"), Some(&path));
+        let session = discover_pi_session(
+            SystemTime::now(),
+            Path::new("/tmp/proj"),
+            Some(&path),
+            Some(&sessions_root),
+        );
 
         assert_eq!(
             session,
@@ -1539,6 +1581,61 @@ mod tests {
             !path.exists(),
             "discovery should clean up consumed capture files"
         );
+        let _ = fs::remove_dir_all(sessions_root);
+    }
+
+    #[test]
+    fn pi_discovery_falls_back_when_capture_id_is_not_on_disk() {
+        // Pi has been observed to write a different `id` to its
+        // jsonl file than what `ctx.sessionManager.getSessionId()`
+        // returns at `session_start`. If we trust the capture
+        // blindly, the next boot's `pi_session_exists` scan can
+        // never find the captured id on disk and we lose resume.
+        //
+        // Plant a session file whose id is `actual-on-disk-id` but
+        // whose capture file claims the wrong `stale-capture-id`.
+        // Discovery must validate the captured id, drop it, and
+        // return the on-disk id from the newest-matching scan.
+        let sessions_root = temp_pi_sessions_root();
+        let session_dir = sessions_root.join("project");
+        fs::create_dir_all(&session_dir).expect("session dir should be created");
+        let session_file = session_dir.join("session.jsonl");
+        fs::write(
+            &session_file,
+            r#"{"id":"actual-on-disk-id","cwd":"/tmp/proj"}
+"#,
+        )
+        .expect("session file should be writable");
+        // Bump mtime so it's after `launch_started_at` minus the
+        // 5s recent_cutoff slop.
+        let launch_started_at = SystemTime::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap();
+
+        let path = temp_capture_path();
+        fs::write(&path, r#"{"session_id":"stale-capture-id"}"#)
+            .expect("capture file should be writable");
+
+        let session = discover_pi_session(
+            launch_started_at,
+            Path::new("/tmp/proj"),
+            Some(&path),
+            Some(&sessions_root),
+        );
+
+        assert_eq!(
+            session,
+            Some(TerminalSessionRef {
+                kind: TerminalSessionKind::PiSession,
+                id: "actual-on-disk-id".to_string(),
+            }),
+            "fallback scan should return the on-disk id"
+        );
+        assert!(
+            !path.exists(),
+            "stale capture file should be removed even when its id failed validation"
+        );
+        let _ = fs::remove_dir_all(sessions_root);
     }
 
     #[test]
