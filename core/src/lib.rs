@@ -22,6 +22,7 @@ pub mod clients;
 pub mod git_actions;
 pub mod git_operation;
 pub mod git_service;
+pub mod github;
 pub mod leakscope;
 pub mod mcp;
 pub mod open_in;

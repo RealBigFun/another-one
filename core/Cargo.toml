@@ -9,7 +9,20 @@ publish = false
 name = "another_one_core"
 
 [features]
-default = ["daemon-host"]
+default = ["daemon-host", "github-cli"]
+# `gh`-CLI-backed `GitHubProvider` implementation. Without this
+# feature `core::github::make_provider` always returns the
+# `MissingProvider` no-op and the `cli` module isn't compiled, so
+# binaries built with `--no-default-features` never reach for
+# `find_gh_cli` / spawn `gh`. PR-flavored UI surfaces (Create PR,
+# PR list, PR checks, gh-auth overlay) gracefully degrade: every
+# provider call returns `GhError::NotInstalled` and the existing
+# error-to-toast wiring shows the same string the runtime
+# CLI-missing path shows today.
+#
+# Default-on so the typical desktop build (`cargo build -p another-one`)
+# keeps the gh shell-out behaviour shipped in 0.2.x.
+github-cli = []
 # Compile in `ProjectStore::save` / `load` real bodies (filesystem
 # persistence). Pure-client binaries (mobile today, future
 # embedded web) build without this feature so the binary never
