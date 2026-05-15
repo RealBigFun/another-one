@@ -191,6 +191,10 @@ pub(crate) struct LiveTerminalRuntime {
     /// the most recent `ingest_frame`'s `history_lines` so the viewer
     /// can clamp scroll requests without an extra round-trip.
     history_lines: u32,
+    /// Monotonic marker for the scrollback offset space. Incremented
+    /// when live output pushes rows into history or history is cleared,
+    /// so stale `TerminalReadScrollback` replies can be ignored.
+    scrollback_generation: u64,
     /// Lines the viewer has scrolled up from the live screen. `0`
     /// means "viewing the live screen". Bounded by `history_lines`.
     viewer_scroll_offset: u32,
@@ -217,6 +221,7 @@ impl LiveTerminalRuntime {
             cached_snapshot: TerminalSurfaceSnapshot::default(),
             live_snapshot: None,
             history_lines: 0,
+            scrollback_generation: 0,
             viewer_scroll_offset: 0,
             scrollback_cache: std::collections::BTreeMap::new(),
         }
@@ -235,6 +240,7 @@ impl LiveTerminalRuntime {
             cached_snapshot: TerminalSurfaceSnapshot::default(),
             live_snapshot: None,
             history_lines: 0,
+            scrollback_generation: 0,
             viewer_scroll_offset: 0,
             scrollback_cache: std::collections::BTreeMap::new(),
         }
@@ -336,6 +342,10 @@ impl LiveTerminalRuntime {
         self.history_lines
     }
 
+    pub fn scrollback_generation(&self) -> u64 {
+        self.scrollback_generation
+    }
+
     /// True when the running TUI has switched to the alternate
     /// screen (vim, less, htop, …). Read from the most recent
     /// `ingest_frame`'s `mode.alt_screen`.
@@ -404,6 +414,10 @@ impl LiveTerminalRuntime {
                     history = snapshot.history_lines,
                 );
                 let _enter = span.enter();
+                let previous_snapshot = self.live_snapshot.clone();
+                if let Some(previous) = previous_snapshot.as_deref() {
+                    self.advance_scrollback_cache(previous, snapshot.history_lines);
+                }
                 self.live_snapshot = Some(Arc::clone(snapshot));
                 self.history_lines = snapshot.history_lines;
                 if self.viewer_scroll_offset > self.history_lines {
@@ -418,6 +432,45 @@ impl LiveTerminalRuntime {
                 );
             }
         }
+    }
+
+    fn advance_scrollback_cache(&mut self, previous: &ProtoGridSnapshot, new_history_lines: u32) {
+        let old_history_lines = self.history_lines;
+        if new_history_lines < old_history_lines {
+            self.scrollback_cache.clear();
+            self.scrollback_generation = self.scrollback_generation.wrapping_add(1);
+            return;
+        }
+
+        let advanced = new_history_lines - old_history_lines;
+        if advanced == 0 {
+            return;
+        }
+
+        self.scrollback_generation = self.scrollback_generation.wrapping_add(u64::from(advanced));
+
+        let mut shifted = std::collections::BTreeMap::new();
+        for (offset, row) in std::mem::take(&mut self.scrollback_cache) {
+            let Some(new_offset) = offset.checked_add(advanced) else {
+                continue;
+            };
+            if new_offset <= new_history_lines {
+                shifted.insert(new_offset, row);
+            }
+        }
+
+        let moved_live_rows = advanced.min(previous.viewport.len() as u32);
+        for row_index in 0..moved_live_rows {
+            let offset = advanced - row_index;
+            if offset == 0 || offset > new_history_lines {
+                continue;
+            }
+            if let Some(row) = previous.viewport.get(row_index as usize) {
+                shifted.insert(offset, row.clone());
+            }
+        }
+
+        self.scrollback_cache = shifted;
     }
 
     pub fn snapshot(&mut self) -> TerminalSurfaceSnapshot {
@@ -671,6 +724,89 @@ impl LiveTerminalRuntime {
         if self.viewer_scroll_offset > 0 {
             self.recompute_cached_snapshot();
         }
+    }
+
+    /// Copy a grid-coordinate selection. `line = 0` is the top of
+    /// the live viewport, negative lines address scrollback rows
+    /// above it. The viewer cache supplies scrollback rows; missing
+    /// cached rows copy as blanks, matching scrolled rendering while
+    /// an async `TerminalReadScrollback` reply is still in flight.
+    pub fn copy_text_for_grid_range(
+        &self,
+        start_line: i32,
+        start_column: usize,
+        end_line: i32,
+        end_column: usize,
+    ) -> Option<String> {
+        let live = self.live_snapshot.as_ref()?;
+        let columns = live.cols as usize;
+        if columns == 0 || live.rows == 0 || (start_line, start_column) > (end_line, end_column) {
+            return None;
+        }
+
+        let min_line = -(self.history_lines as i32);
+        let max_line = live.rows as i32 - 1;
+        let start_line = start_line.max(min_line);
+        let end_line = end_line.min(max_line);
+        if start_line > end_line {
+            return None;
+        }
+
+        let mut lines = Vec::with_capacity((end_line - start_line + 1) as usize);
+        for line in start_line..=end_line {
+            let start_column = if line == start_line {
+                start_column.min(columns.saturating_sub(1))
+            } else {
+                0
+            };
+            let end_column = if line == end_line {
+                end_column.min(columns.saturating_sub(1))
+            } else {
+                columns.saturating_sub(1)
+            };
+            lines.push(self.copy_text_for_grid_line(live, line, start_column, end_column));
+        }
+
+        Some(lines.join("\n"))
+    }
+
+    fn copy_text_for_grid_line(
+        &self,
+        live: &ProtoGridSnapshot,
+        line: i32,
+        start_column: usize,
+        end_column: usize,
+    ) -> String {
+        let row = if line >= 0 {
+            live.viewport.get(line as usize)
+        } else {
+            self.scrollback_cache.get(&((-line) as u32))
+        };
+        let columns = live.cols as usize;
+        let mut line_text = String::new();
+
+        for column in 0..columns {
+            let default_cell = ProtoGridCell::default();
+            let cell = row
+                .and_then(|row| row.cells.get(column))
+                .unwrap_or(&default_cell);
+            if cell.flags.0
+                & (ProtoGridCellFlags::WIDE_CHAR_SPACER
+                    | ProtoGridCellFlags::LEADING_WIDE_CHAR_SPACER)
+                != 0
+            {
+                continue;
+            }
+            if column > end_column {
+                break;
+            }
+            if column + terminal_cell_width(cell) <= start_column {
+                continue;
+            }
+            line_text.push_str(&cell_copy_text(cell));
+        }
+
+        line_text.trim_end_matches(' ').to_string()
     }
 
     /// Force the next snapshot to rebuild even if the terminal grid has not
@@ -1824,6 +1960,80 @@ mod tests {
         assert!(
             surface.cursor.is_none(),
             "cursor hidden during scrollback view"
+        );
+    }
+
+    #[test]
+    fn copy_text_for_grid_range_spans_cached_scrollback_and_live_rows() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 3,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 3, &["liveA", "liveB", "liveC"], 3);
+
+        let reply = TerminalScrollbackReply {
+            rows: vec![
+                proto_row_from_text("hist1", 8),
+                proto_row_from_text("hist2", 8),
+                proto_row_from_text("hist3", 8),
+            ],
+            range_actual: ScrollbackRange { start: 1, count: 3 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        let copied = runtime.copy_text_for_grid_range(-2, 1, 1, 3);
+
+        assert_eq!(copied.as_deref(), Some("ist2\nhist1\nliveA\nlive"));
+    }
+
+    #[test]
+    fn scrollback_cache_tracks_history_growth_while_scrolled() {
+        use daemon_proto::{ScrollbackRange, TerminalScrollbackReply};
+        let size = TerminalGridSize {
+            cols: 8,
+            rows: 3,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        ingest_lines(&mut runtime, 8, 3, &["live1", "live2", "live3"], 2);
+        assert!(runtime.viewer_scroll_lines(2));
+
+        let reply = TerminalScrollbackReply {
+            rows: vec![
+                proto_row_from_text("hist1", 8),
+                proto_row_from_text("hist2", 8),
+            ],
+            range_actual: ScrollbackRange { start: 1, count: 2 },
+        };
+        runtime.apply_scrollback_reply(&reply);
+
+        // One new terminal line scrolls the old top live row into
+        // history. Cached daemon offsets must move with that offset
+        // space: hist1 is now offset 2, live1 is offset 1.
+        let generation_before = runtime.scrollback_generation();
+        ingest_lines(&mut runtime, 8, 3, &["live2", "live3", "live4"], 3);
+        assert!(runtime.scrollback_generation() > generation_before);
+
+        let surface = runtime.snapshot();
+        assert!(
+            surface.lines[0].text.starts_with("hist1"),
+            "top row tracks shifted offset 2, got {:?}",
+            surface.lines[0].text
+        );
+        assert!(
+            surface.lines[1].text.starts_with("live1"),
+            "middle row is old live top at offset 1, got {:?}",
+            surface.lines[1].text
+        );
+        assert!(
+            surface.lines[2].text.starts_with("live2"),
+            "bottom row is new live top, got {:?}",
+            surface.lines[2].text
         );
     }
 

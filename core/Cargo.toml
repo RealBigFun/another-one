@@ -9,7 +9,20 @@ publish = false
 name = "another_one_core"
 
 [features]
-default = ["daemon-host"]
+default = ["daemon-host", "github-cli"]
+# `gh`-CLI-backed `GitRemoteProvider` implementation (`GhCliRemoteProvider`
+# in `core::git_remote::github_cli`). Without this feature the impl
+# isn't compiled and isn't registered, so `capability::default_registry()`
+# returns no `GitRemoteProvider` matches and binaries built with
+# `--no-default-features` never reach for `find_gh_cli` / spawn `gh`.
+# PR-flavored UI surfaces gracefully degrade: callers see "no remote
+# provider" and the existing error-to-toast wiring shows the same
+# "GitHub CLI not installed" string the runtime CLI-missing path
+# shows today.
+#
+# Default-on so the typical desktop build (`cargo build -p another-one`)
+# keeps the gh shell-out behaviour shipped in 0.2.x.
+github-cli = []
 # Compile in `ProjectStore::save` / `load` real bodies (filesystem
 # persistence). Pure-client binaries (mobile today, future
 # embedded web) build without this feature so the binary never

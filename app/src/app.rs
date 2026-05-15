@@ -193,11 +193,25 @@ struct TerminalCellPosition {
     column: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalGridCellPosition {
+    line: i32,
+    column: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalGridSelectionRange {
+    start_line: i32,
+    start_column: usize,
+    end_line: i32,
+    end_column: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TerminalSelectionState {
     key: TerminalRuntimeKey,
-    anchor: TerminalCellPosition,
-    head: TerminalCellPosition,
+    anchor: TerminalGridCellPosition,
+    head: TerminalGridCellPosition,
     dragging: bool,
     /// While dragging past the top/bottom of the viewport, the
     /// refresh tick auto-scrolls by this many lines per tick. Sign
@@ -1954,15 +1968,24 @@ pub struct AnotherOneApp {
     terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     /// `Control::TerminalReadScrollback` reply channel. The session
-    /// call callback pushes `(key, reply)` so the renderer's drain
-    /// loop can merge cached rows back into the runtime that asked
-    /// for them. See `App::dispatch_terminal_scrollback_fetch`.
-    terminal_scrollback_reply_tx: tokio::sync::mpsc::UnboundedSender<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
-    terminal_scrollback_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(TerminalRuntimeKey, daemon_proto::TerminalScrollbackReply)>,
+    /// call callback pushes `(key, generation, reply)` so the renderer's
+    /// drain loop can ignore stale rows if live output moved the
+    /// scrollback offset space while the request was in flight.
+    terminal_scrollback_reply_tx: tokio::sync::mpsc::UnboundedSender<(
+        TerminalRuntimeKey,
+        u64,
+        daemon_proto::TerminalScrollbackReply,
+    )>,
+    terminal_scrollback_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(
+        TerminalRuntimeKey,
+        u64,
+        daemon_proto::TerminalScrollbackReply,
+    )>,
     /// Tabs with a `Control::TerminalReadScrollback` request currently
-    /// in flight. Prevents duplicate fetches for the same window when
-    /// the user keeps scrolling before the previous reply lands.
-    scrollback_in_flight: HashSet<TerminalRuntimeKey>,
+    /// in flight, keyed by the runtime generation at dispatch time.
+    /// Prevents duplicate fetches for the same window when the user
+    /// keeps scrolling before the previous reply lands.
+    scrollback_in_flight: HashMap<TerminalRuntimeKey, u64>,
     /// Per-tab viewer-input queue. Each entry is a long-lived task
     /// that owns one clone of `Session::push_data`; the GPUI thread
     /// pushes keystroke bytes via `try_send` instead of spawning a
@@ -2885,6 +2908,7 @@ fn byte_to_utf16_offset(text: &str, byte_offset: usize) -> usize {
     text[..clamped].encode_utf16().count()
 }
 
+#[cfg(test)]
 fn terminal_selection_range(
     anchor: TerminalCellPosition,
     head: TerminalCellPosition,
@@ -2904,6 +2928,77 @@ fn terminal_selection_range(
         start_column: start.column,
         end_line: end.line,
         end_column: end.column,
+    })
+}
+
+fn terminal_grid_position(
+    position: TerminalCellPosition,
+    display_offset: usize,
+) -> TerminalGridCellPosition {
+    let offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
+    TerminalGridCellPosition {
+        line: (position.line as i32).saturating_sub(offset),
+        column: position.column,
+    }
+}
+
+fn terminal_grid_selection_range(
+    anchor: TerminalGridCellPosition,
+    head: TerminalGridCellPosition,
+) -> Option<TerminalGridSelectionRange> {
+    if anchor == head {
+        return None;
+    }
+
+    let (start, end) = if (anchor.line, anchor.column) <= (head.line, head.column) {
+        (anchor, head)
+    } else {
+        (head, anchor)
+    };
+
+    Some(TerminalGridSelectionRange {
+        start_line: start.line,
+        start_column: start.column,
+        end_line: end.line,
+        end_column: end.column,
+    })
+}
+
+fn terminal_viewport_selection_range(
+    selection: TerminalGridSelectionRange,
+    display_offset: usize,
+    rows: usize,
+    columns: usize,
+) -> Option<TerminalSelectionRange> {
+    if rows == 0 || columns == 0 {
+        return None;
+    }
+
+    let offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
+    let viewport_top = -offset;
+    let viewport_bottom = rows.saturating_sub(1) as i32 - offset;
+    let start_line = selection.start_line.max(viewport_top);
+    let end_line = selection.end_line.min(viewport_bottom);
+    if start_line > end_line {
+        return None;
+    }
+
+    let start_column = if start_line == selection.start_line {
+        selection.start_column
+    } else {
+        0
+    };
+    let end_column = if end_line == selection.end_line {
+        selection.end_column
+    } else {
+        columns.saturating_sub(1)
+    };
+
+    Some(TerminalSelectionRange {
+        start_line: usize::try_from(start_line + offset).unwrap_or(0),
+        start_column,
+        end_line: usize::try_from(end_line + offset).unwrap_or(rows.saturating_sub(1)),
+        end_column,
     })
 }
 
@@ -4759,6 +4854,7 @@ impl AnotherOneApp {
         let (terminal_scrollback_reply_tx, terminal_scrollback_reply_rx) =
             tokio::sync::mpsc::unbounded_channel::<(
                 TerminalRuntimeKey,
+                u64,
                 daemon_proto::TerminalScrollbackReply,
             )>();
         let expanded = if store.ui.expanded_repo_ids.is_empty() {
@@ -4906,7 +5002,7 @@ impl AnotherOneApp {
             terminal_search_reply_rx,
             terminal_scrollback_reply_tx,
             terminal_scrollback_reply_rx,
-            scrollback_in_flight: HashSet::new(),
+            scrollback_in_flight: HashMap::new(),
             viewer_input_senders: HashMap::new(),
             gh_check_dismissed_for_session: false,
             terminal_bell_at: HashMap::new(),
@@ -8893,18 +8989,19 @@ impl AnotherOneApp {
         &mut self,
         key: &TerminalRuntimeKey,
     ) -> bool {
-        if self.scrollback_in_flight.contains(key) {
+        if self.scrollback_in_flight.contains_key(key) {
             return false;
         }
         let Some(runtime) = self.live_terminal_runtimes.get(key) else {
             return false;
         };
+        let generation = runtime.scrollback_generation();
         let Some(range) = runtime
             .scrollback_fetch_window(SCROLLBACK_PAGE_LINES, SCROLLBACK_PREFETCH_CEILING)
         else {
             return false;
         };
-        self.scrollback_in_flight.insert(key.clone());
+        self.scrollback_in_flight.insert(key.clone(), generation);
         tracing::trace!(
             target: "another_one::terminal",
             section = %key.section_id.store_key(),
@@ -8925,7 +9022,7 @@ impl AnotherOneApp {
             },
             move |result| match result {
                 Ok(daemon_proto::WorkerReply::TerminalScrollback { reply, .. }) => {
-                    let _ = reply_tx.send((key_for_callback, reply));
+                    let _ = reply_tx.send((key_for_callback, generation, reply));
                 }
                 Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
                     log::warn!("TerminalReadScrollback err: {message}");
@@ -8953,22 +9050,24 @@ impl AnotherOneApp {
         let mut updated = false;
         loop {
             match self.terminal_scrollback_reply_rx.try_recv() {
-                Ok((key, reply)) => {
+                Ok((key, generation, reply)) => {
                     self.scrollback_in_flight.remove(&key);
                     if let Some(runtime) = self.live_terminal_runtimes.get_mut(&key) {
-                        runtime.apply_scrollback_reply(&reply);
-                        let snapshot = runtime.snapshot();
-                        self.terminal_surface_snapshots
-                            .insert(key.clone(), snapshot);
+                        if runtime.scrollback_generation() == generation {
+                            runtime.apply_scrollback_reply(&reply);
+                            let snapshot = runtime.snapshot();
+                            self.terminal_surface_snapshots
+                                .insert(key.clone(), snapshot);
+                            cx.notify();
+                            updated = true;
+                        }
                         // The window the reply filled may not have
                         // covered every visible scrollback row
                         // (`range_actual.count` clamps against
-                        // history-size). Re-issue a fetch for the
-                        // remainder so a viewer scrolled deep enough
-                        // to span two requests doesn't stop halfway.
+                        // history-size), or it may have gone stale
+                        // while output advanced. Re-issue a fetch
+                        // for any rows still missing.
                         self.maybe_dispatch_scrollback_fetch(&key);
-                        cx.notify();
-                        updated = true;
                     }
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
@@ -9219,7 +9318,19 @@ impl AnotherOneApp {
             return None;
         }
 
-        terminal_selection_range(selection.anchor, selection.head)
+        let grid_selection = terminal_grid_selection_range(selection.anchor, selection.head)?;
+        let snapshot = self.terminal_surface_snapshots.get(key)?;
+        let display_offset = self
+            .live_terminal_runtimes
+            .get(key)
+            .map(|runtime| runtime.display_offset())
+            .unwrap_or(0);
+        terminal_viewport_selection_range(
+            grid_selection,
+            display_offset,
+            snapshot.lines.len(),
+            snapshot.columns,
+        )
     }
 
     fn terminal_panel_metrics_for_key(
@@ -9349,25 +9460,37 @@ impl AnotherOneApp {
                 .and_then(|snapshot| terminal_line_selection_range(snapshot, position)),
         };
 
+        let display_offset = self
+            .live_terminal_runtimes
+            .get(&key)
+            .map(|runtime| runtime.display_offset())
+            .unwrap_or(0);
         self.terminal_selection = if let Some(selection) = selection_range {
             Some(TerminalSelectionState {
                 key: metrics.key,
-                anchor: TerminalCellPosition {
-                    line: selection.start_line,
-                    column: selection.start_column,
-                },
-                head: TerminalCellPosition {
-                    line: selection.end_line,
-                    column: selection.end_column,
-                },
+                anchor: terminal_grid_position(
+                    TerminalCellPosition {
+                        line: selection.start_line,
+                        column: selection.start_column,
+                    },
+                    display_offset,
+                ),
+                head: terminal_grid_position(
+                    TerminalCellPosition {
+                        line: selection.end_line,
+                        column: selection.end_column,
+                    },
+                    display_offset,
+                ),
                 dragging: false,
                 autoscroll_dir: 0,
             })
         } else {
+            let grid_position = terminal_grid_position(position, display_offset);
             Some(TerminalSelectionState {
                 key: metrics.key,
-                anchor: position,
-                head: position,
+                anchor: grid_position,
+                head: grid_position,
                 dragging: true,
                 autoscroll_dir: 0,
             })
@@ -9395,11 +9518,7 @@ impl AnotherOneApp {
                 .get(key)
                 .and_then(|snapshot| terminal_link_at_position(snapshot, cell))
         });
-        let selected_text = self.terminal_selection_for(key).and_then(|selection| {
-            self.terminal_surface_snapshots
-                .get(key)
-                .and_then(|snapshot| terminal_selected_text(snapshot, selection))
-        });
+        let selected_text = self.selected_terminal_text_for_key(key);
         let state = TerminalContextMenuState {
             key: key.clone(),
             anchor_x: f32::from(position.x),
@@ -9584,6 +9703,11 @@ impl AnotherOneApp {
         };
 
         let position = terminal_cell_position_from_mouse(ev.position, &metrics);
+        let display_offset = self
+            .live_terminal_runtimes
+            .get(&selection_key)
+            .map(|runtime| runtime.display_offset())
+            .unwrap_or(0);
         let Some(selection) = self.terminal_selection.as_mut() else {
             return false;
         };
@@ -9595,7 +9719,7 @@ impl AnotherOneApp {
         // band reaches the edge while the tick scrolls more in.
         let new_head = if autoscroll_dir == 0 {
             match position {
-                Some(p) => p,
+                Some(p) => terminal_grid_position(p, display_offset),
                 None => return true,
             }
         } else {
@@ -9605,7 +9729,7 @@ impl AnotherOneApp {
             } else {
                 metrics.rows.saturating_sub(1)
             };
-            TerminalCellPosition { line, column }
+            terminal_grid_position(TerminalCellPosition { line, column }, display_offset)
         };
         if selection.head == new_head {
             return true;
@@ -9640,29 +9764,32 @@ impl AnotherOneApp {
             // tick will retry — cheap and harmless.
             return false;
         }
+        let display_offset = runtime.display_offset();
         let snapshot = runtime.snapshot();
         self.terminal_surface_snapshots
             .insert(key.clone(), snapshot);
         self.maybe_dispatch_scrollback_fetch(&key);
 
         if let Some(selection) = self.terminal_selection.as_mut() {
-            // Same content shifts +1 viewport row when we scroll up
-            // by 1, and -1 when scrolling down. Track the anchor by
-            // the same delta so the highlighted region keeps the
-            // original grid content under it. Clamp to the viewport
-            // so off-screen anchors degrade to "selection from the
-            // visible edge" rather than panicking.
             let rows = self
                 .terminal_surface_snapshots
                 .get(&key)
                 .map(|snap| snap.lines.len())
                 .unwrap_or(0);
             let max_line = rows.saturating_sub(1);
-            let shifted = (selection.anchor.line as i32) + velocity;
-            selection.anchor.line = shifted.clamp(0, max_line as i32) as usize;
-            // Pin head to the leading edge so the band keeps reaching
-            // the boundary the user is dragging past.
-            selection.head.line = if dir > 0 { 0 } else { max_line };
+            // Selection endpoints are stored in terminal grid
+            // coordinates, so the anchor remains stable while the
+            // viewport scrolls. Only move the dragged head to the
+            // visible edge in the new offset space.
+            let viewport_line = if dir > 0 { 0 } else { max_line };
+            selection.head.line = terminal_grid_position(
+                TerminalCellPosition {
+                    line: viewport_line,
+                    column: selection.head.column,
+                },
+                display_offset,
+            )
+            .line;
         }
 
         cx.notify();
@@ -9686,11 +9813,32 @@ impl AnotherOneApp {
         true
     }
 
+    fn selected_terminal_text_for_key(&self, key: &TerminalRuntimeKey) -> Option<String> {
+        let selection = self.terminal_selection.as_ref()?;
+        if selection.key != *key {
+            return None;
+        }
+
+        let grid_selection = terminal_grid_selection_range(selection.anchor, selection.head)?;
+        if let Some(text) = self.live_terminal_runtimes.get(key).and_then(|runtime| {
+            runtime.copy_text_for_grid_range(
+                grid_selection.start_line,
+                grid_selection.start_column,
+                grid_selection.end_line,
+                grid_selection.end_column,
+            )
+        }) {
+            return Some(text);
+        }
+
+        let visible_selection = self.terminal_selection_for(key)?;
+        let snapshot = self.terminal_surface_snapshots.get(key)?;
+        terminal_selected_text(snapshot, visible_selection)
+    }
+
     pub(crate) fn selected_terminal_text(&self, cx: &App) -> Option<String> {
         let key = self.active_terminal_key(cx)?;
-        let selection = self.terminal_selection_for(&key)?;
-        let snapshot = self.terminal_surface_snapshots.get(&key)?;
-        terminal_selected_text(snapshot, selection)
+        self.selected_terminal_text_for_key(&key)
     }
 
     pub(crate) fn scroll_terminal(
@@ -14170,13 +14318,15 @@ mod tests {
         reconcile_projected_section_state, remove_terminal_runtime_state,
         resolve_new_task_shortcut_target, root_project_navigation_targets, select_active_section,
         should_apply_cross_client_focus_to_workspace, sidebar_task_navigation_targets,
-        terminal_line_selection_range, terminal_link_at_position, terminal_link_ranges,
-        terminal_open_link_modifier_held, terminal_scroll_lines, terminal_selected_text,
-        terminal_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
+        terminal_grid_position, terminal_grid_selection_range, terminal_line_selection_range,
+        terminal_link_at_position, terminal_link_ranges, terminal_open_link_modifier_held,
+        terminal_scroll_lines, terminal_selected_text, terminal_selection_range,
+        terminal_viewport_selection_range, terminal_word_selection_range, ActiveToolbarGitAction,
         AnotherOneApp, AppToast, DrainedGitAction, GitActionReply, NavigationDirection,
         NewTaskShortcutTarget, SectionId, SectionState, TabCloseScope, TerminalCellPosition,
-        TerminalLinkRange, TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers,
-        TerminalSelectionRange, TerminalTab, ToastKind, TOAST_VISIBLE_MESSAGE_LIMIT,
+        TerminalGridCellPosition, TerminalGridSelectionRange, TerminalLinkRange,
+        TerminalMouseAction, TerminalMouseButton, TerminalMouseModifiers, TerminalSelectionRange,
+        TerminalTab, ToastKind, TOAST_VISIBLE_MESSAGE_LIMIT,
     };
     use crate::agents::{
         agent_output_indicates_missing_session, AgentProviderKind, TerminalLaunchConfig,
@@ -16246,6 +16396,57 @@ mod tests {
                 start_column: 2,
                 end_line: 3,
                 end_column: 8,
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_grid_position_accounts_for_scrolled_viewport() {
+        assert_eq!(
+            terminal_grid_position(TerminalCellPosition { line: 1, column: 4 }, 3),
+            TerminalGridCellPosition { line: -2, column: 4 }
+        );
+    }
+
+    #[test]
+    fn terminal_viewport_selection_range_clips_grid_selection_to_visible_rows() {
+        let selection = terminal_viewport_selection_range(
+            TerminalGridSelectionRange {
+                start_line: -8,
+                start_column: 2,
+                end_line: 8,
+                end_column: 3,
+            },
+            5,
+            10,
+            12,
+        );
+
+        assert_eq!(
+            selection,
+            Some(TerminalSelectionRange {
+                start_line: 0,
+                start_column: 0,
+                end_line: 9,
+                end_column: 11,
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_grid_selection_range_preserves_offscreen_extent() {
+        let selection = terminal_grid_selection_range(
+            TerminalGridCellPosition { line: 9, column: 5 },
+            TerminalGridCellPosition { line: -5, column: 1 },
+        );
+
+        assert_eq!(
+            selection,
+            Some(TerminalGridSelectionRange {
+                start_line: -5,
+                start_column: 1,
+                end_line: 9,
+                end_column: 5,
             })
         );
     }

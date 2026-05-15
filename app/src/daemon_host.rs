@@ -1762,31 +1762,37 @@ pub(crate) fn spawn_gh_auth_check(
 
 fn perform_gh_auth_check() -> daemon_proto::GhAuthStatusWire {
     let cwd = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-    let Some(gh) = another_one_core::git_actions::find_gh_cli(&cwd) else {
-        // Expected on installs without gh; the renderer surfaces it.
-        log::debug!("gh auth check: gh CLI not found on PATH (cwd={})", cwd.display());
-        return daemon_proto::GhAuthStatusWire::GhMissing;
+    let scope = another_one_core::capability::system_scope();
+    // Boot-time path: we don't yet know the project's remote URL,
+    // so we ask for *any* applicable `GitRemoteProvider`. Today
+    // that's only the GitHub-via-`gh` impl. When a second provider
+    // ships (Bitbucket / GitLab), this site re-fans-out per
+    // provider so the overlay reflects each backend's auth state
+    // independently.
+    let status = match another_one_core::git_remote::resolve_any(&scope) {
+        Some(provider) => provider.probe_auth(&cwd),
+        None => another_one_core::git_remote::AuthStatus::ToolMissing,
     };
-    log::trace!("gh auth check: invoking {}", gh.display());
-    match std::process::Command::new(&gh)
-        .args(["auth", "status"])
-        .output()
-    {
-        Ok(output) if output.status.success() => daemon_proto::GhAuthStatusWire::Authenticated,
-        Ok(output) => {
-            log::debug!(
-                "gh auth check: {} auth status exited {:?}: {}",
-                gh.display(),
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
+    // Debug-level so a `RUST_LOG=another_one=debug` run surfaces
+    // every probe firing (incl. timestamps) — useful for diagnosing
+    // "overlay keeps flashing" reports where the cause is repeated
+    // probes rather than a stuck wrong-status.
+    log::debug!("gh auth check: provider reported {:?}", status);
+    match status {
+        another_one_core::git_remote::AuthStatus::Authenticated => {
+            daemon_proto::GhAuthStatusWire::Authenticated
+        }
+        another_one_core::git_remote::AuthStatus::NotAuthenticated => {
             daemon_proto::GhAuthStatusWire::NotAuthenticated
         }
-        Err(err) => {
-            // Spawn failure is unexpected even when gh is missing
-            // (we already returned `GhMissing` above on Find failure).
-            log::warn!("gh auth check: spawning {} failed: {err}", gh.display());
+        another_one_core::git_remote::AuthStatus::ToolMissing => {
             daemon_proto::GhAuthStatusWire::GhMissing
+        }
+        // The provider's `Checking` state is for in-flight
+        // RecheckGhAuth ticks; boot-time path shouldn't see it.
+        // Mirror the renderer's "treat Checking as overlay-suppress".
+        another_one_core::git_remote::AuthStatus::Checking => {
+            daemon_proto::GhAuthStatusWire::Checking
         }
     }
 }
