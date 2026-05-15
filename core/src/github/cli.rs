@@ -1,8 +1,17 @@
 //! `gh` CLI-backed [`GitHubProvider`] implementation.
 //!
-//! Stub for commit 1 of the github-provider-trait branch — every
-//! method returns `Err(GhError::Other)` until commit 2 ports the
-//! real shell-out logic from `core::git_actions`.
+//! Wraps the existing free functions in [`crate::git_actions`] so
+//! the call-site migration in commit 4 of refactor/github-provider-trait
+//! is a small, mechanical swap. Once every caller routes through
+//! the provider, the wrapped free functions can either become
+//! private helpers or be folded into the methods directly; that's
+//! follow-on cleanup.
+//!
+//! Errors from the wrapped functions translate into [`GhError`] as
+//! best the source allows: today most surface as `String`, which
+//! we treat as `GhError::Other`. A future provider revision can
+//! sniff the underlying gh exit code / stderr to distinguish
+//! `NotAuthenticated` from `NetworkError`.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -18,11 +27,6 @@ pub struct GhCliProvider {
     /// shell-out (the discovery walk also probes the user's login
     /// shell, which can be slow).
     gh_path: PathBuf,
-    /// CWD discovery anchor used when re-resolving (e.g. on
-    /// `RecheckGhAuth`). Stored so the auth-status probe can run
-    /// against the same shell-PATH the lookup used.
-    #[allow(dead_code)] // wired into commit 2 helpers
-    cwd: PathBuf,
 }
 
 impl GhCliProvider {
@@ -33,10 +37,7 @@ impl GhCliProvider {
     pub fn new(cwd: &Path) -> Self {
         let gh_path = crate::git_actions::find_gh_cli(cwd)
             .expect("GhCliProvider::new called without gh on PATH");
-        Self {
-            gh_path,
-            cwd: cwd.to_path_buf(),
-        }
+        Self { gh_path }
     }
 }
 
@@ -51,29 +52,48 @@ pub fn is_gh_available(cwd: &Path) -> bool {
 
 impl GitHubProvider for GhCliProvider {
     fn probe_auth(&self) -> AuthStatus {
-        // Wired in commit 2.
-        let _ = &self.gh_path;
-        AuthStatus::Checking
+        // Direct shell-out: doesn't need a wrapped free function.
+        // Mirrors what `app::daemon_host::perform_gh_auth_check`
+        // does today; commit 5 retires the duplicate.
+        match std::process::Command::new(&self.gh_path)
+            .args(["auth", "status"])
+            .output()
+        {
+            Ok(output) if output.status.success() => AuthStatus::Authenticated,
+            Ok(_) => AuthStatus::NotAuthenticated,
+            // Spawn failure is unexpected here — we already verified
+            // gh exists at construction time. Surface as GhMissing
+            // so the renderer's overlay logic stays simple (any
+            // “can't reach gh” state → same UX).
+            Err(_) => AuthStatus::GhMissing,
+        }
     }
 
     fn find_pull_request(
         &self,
-        _repo: &Path,
-        _head_branch: &str,
+        repo: &Path,
+        head_branch: &str,
     ) -> Result<Option<crate::git_actions::PullRequestStatus>, GhError> {
-        Err(GhError::Other(
-            "GhCliProvider::find_pull_request not yet wired (commit 2)".into(),
+        // Existing free function returns `Option<PullRequestStatus>`,
+        // collapsing every failure mode (gh missing, gh exited
+        // non-zero, parse failure) to `None`. We can't recover the
+        // distinction without rewriting it, so commit 2 preserves
+        // the existing semantics: `Ok(None)` covers both “no PR”
+        // and “gh failed”. The migration in commit 4 keeps the
+        // existing user-facing behaviour (no toast on this path),
+        // and a follow-on can split the cases when needed.
+        Ok(crate::git_actions::find_latest_pull_request_status(
+            repo,
+            head_branch,
         ))
     }
 
     fn pull_request_checks(
         &self,
-        _repo: &Path,
-        _number: Option<u64>,
+        repo: &Path,
+        number: Option<u64>,
     ) -> Result<Option<Vec<crate::git_actions::PullRequestCheck>>, GhError> {
-        Err(GhError::Other(
-            "GhCliProvider::pull_request_checks not yet wired (commit 2)".into(),
-        ))
+        crate::git_actions::find_pull_request_checks(repo, number).map_err(GhError::Other)
     }
 
     fn create_pull_request(
@@ -81,19 +101,36 @@ impl GitHubProvider for GhCliProvider {
         _repo: &Path,
         _args: CreatePrArgs,
     ) -> Result<CreatePrOutcome, GhError> {
+        // Wired in commit 4. The legacy entry point
+        // (`run_create_pull_request`) takes toolbar-plumbing args
+        // (`GitActionSettings`, `&mut on_progress`,
+        // `ToolbarActionOutcome`) that don't map cleanly to the
+        // provider's typed surface; commit 4 splits the gh-call
+        // portion out and migrates the toolbar caller in one go.
         Err(GhError::Other(
-            "GhCliProvider::create_pull_request not yet wired (commit 2)".into(),
+            "GhCliProvider::create_pull_request not yet wired (commit 4)".into(),
         ))
     }
 
     fn list_pull_requests(
         &self,
-        _repo: &Path,
-        _filter: PrFilter,
-        _limit: usize,
+        repo: &Path,
+        filter: PrFilter,
+        limit: usize,
     ) -> Result<Vec<crate::git_actions::ProjectPagePullRequest>, GhError> {
-        Err(GhError::Other(
-            "GhCliProvider::list_pull_requests not yet wired (commit 2)".into(),
-        ))
+        // Legacy signature is `(repo, filter_index: usize, query:
+        // Option<&str>)` and ignores any explicit limit (the gh
+        // command caps internally at 100). For commit 2 we
+        // preserve that: pass the equivalent filter_index, ignore
+        // the limit. Commit 4 either threads `limit` through or
+        // documents that gh's internal cap is the floor.
+        let _ = limit;
+        let filter_index = match filter {
+            PrFilter::AllOpen => 0,
+            PrFilter::ReviewRequested => 1,
+            PrFilter::Author => 2,
+        };
+        crate::git_actions::find_project_pull_requests(repo, filter_index, None)
+            .map_err(GhError::Other)
     }
 }
