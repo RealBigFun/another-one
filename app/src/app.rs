@@ -6720,13 +6720,30 @@ impl AnotherOneApp {
     ) {
         if let Ok(state) = self.registry_state.lock() {
             if let Some(task) = state.term_tasks.get(key) {
-                if let Err(err) = task
-                    .try_send(daemon::terminal::TerminalCommand::Bytes(bytes.to_vec()))
-                {
-                    log::trace!(
-                        "term task try_send for {:?} failed: {err:?}",
-                        key
-                    );
+                match task.try_send(daemon::terminal::TerminalCommand::Bytes(bytes.to_vec())) {
+                    Ok(()) => {
+                        tracing::trace!(
+                            target: "another_one::terminal",
+                            section = %key.section_id.store_key(),
+                            tab = %key.tab_id,
+                            bytes = bytes.len(),
+                            "term_task_bytes_sent",
+                        );
+                    }
+                    Err(err) => {
+                        // Counter-shaped: a steady stream of
+                        // `term_task_bytes_dropped` at warn means
+                        // the daemon Term task is backed up and
+                        // the renderer is losing fidelity.
+                        tracing::warn!(
+                            target: "another_one::terminal",
+                            section = %key.section_id.store_key(),
+                            tab = %key.tab_id,
+                            bytes = bytes.len(),
+                            error = %err,
+                            "term_task_bytes_dropped",
+                        );
+                    }
                 }
             }
         }
@@ -8515,8 +8532,22 @@ impl AnotherOneApp {
                 while let Ok(more) = rx.try_recv() {
                     buf.extend_from_slice(&more);
                 }
+                let span = tracing::trace_span!(
+                    "terminal.viewer_input_push",
+                    section = %section_id,
+                    tab = %tab_id,
+                    bytes = buf.len(),
+                );
+                let _enter = span.enter();
                 if let Err(err) = session.push_data(&section_id, &tab_id, &buf).await {
-                    log::warn!("viewer input push_data failed: {err}");
+                    tracing::warn!(
+                        target: "another_one::terminal",
+                        section = %section_id,
+                        tab = %tab_id,
+                        bytes = buf.len(),
+                        error = %err,
+                        "viewer_input_push_data_failed",
+                    );
                 }
             }
         });
@@ -8844,6 +8875,14 @@ impl AnotherOneApp {
             return false;
         };
         self.scrollback_in_flight.insert(key.clone());
+        tracing::trace!(
+            target: "another_one::terminal",
+            section = %key.section_id.store_key(),
+            tab = %key.tab_id,
+            range_start = range.start,
+            range_count = range.count,
+            "dispatch_scrollback_fetch",
+        );
         let session = self.session_handle();
         let reply_tx = self.terminal_scrollback_reply_tx.clone();
         let key_for_callback = key.clone();

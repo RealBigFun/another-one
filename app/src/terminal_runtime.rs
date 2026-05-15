@@ -383,13 +383,17 @@ impl LiveTerminalRuntime {
     /// scrollback land before the next `snapshot()` call.
     pub fn ingest_frame(&mut self, frame: &TerminalFrame) {
         match frame {
-            TerminalFrame::Full { snapshot, .. } => {
+            TerminalFrame::Full { seq, snapshot } => {
+                let span = tracing::trace_span!(
+                    "terminal.ingest_frame",
+                    seq = *seq,
+                    cols = snapshot.cols,
+                    rows = snapshot.rows,
+                    history = snapshot.history_lines,
+                );
+                let _enter = span.enter();
                 self.live_snapshot = Some(Arc::clone(snapshot));
                 self.history_lines = snapshot.history_lines;
-                // Clamp the viewer's scroll offset against the new
-                // history hint so a daemon-side `clear` (which
-                // collapses scrollback) doesn't strand the viewer at
-                // an offset that has no rows behind it.
                 if self.viewer_scroll_offset > self.history_lines {
                     self.viewer_scroll_offset = self.history_lines;
                 }
