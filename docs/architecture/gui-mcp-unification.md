@@ -136,14 +136,13 @@ session's view (ephemera).
 ## Roadmap
 
 This doc is an intentionally short reference. The unification work
-has its own beads tree under `another-one-2w5`:
+ships in stages:
 
-- `another-one-o9y` — `UiAction` enum + dispatcher (this PR's
-  starting point; foundation for bucket 2).
-- `another-one-vkq` — auto-derive MCP tools from `Control` variants
-  (closes the 18 "verb exists, tool missing" findings from
-  `9jw` in one move).
-- `another-one-afa` — migrate the 10 Control-bypassing GUI handlers
-  to dispatch through `Control`. Lands cleaner after `vkq` so the
+- `UiAction` enum + dispatcher (this PR's starting point; foundation
+  for bucket 2).
+- Auto-derive MCP tools from `Control` variants (closes the 18 "verb
+  exists, tool missing" findings in one move).
+- Migrate the 10 Control-bypassing GUI handlers to dispatch through
+  `Control`. Lands cleaner after the auto-derive step so the
   resulting MCP exposure is automatic.
-- `another-one-g9j` — this doc.
+- This doc.

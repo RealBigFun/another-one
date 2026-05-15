@@ -65,12 +65,10 @@
 //!
 //! ## Roadmap
 //!
-//! Sub-issues building on this surface are tracked in beads under
-//! [`another-one-iem`]: factory injection wiring (`9zi`), iroh impl
-//! reshape (`pqs`), daemon dispatch refactor (`7re`), typed client API
-//! (`f4r`), in-memory test transport (`44q`), UDS transport (`4l7`),
-//! mobile end-to-end smoke (`4y2`), iroh-import sweep (`3yy`),
-//! architecture doc (`l9v`).
+//! Remaining work on this surface: factory injection wiring, iroh
+//! impl reshape, daemon dispatch refactor, typed client API,
+//! in-memory test transport, UDS transport, mobile end-to-end smoke,
+//! iroh-import sweep, architecture doc.
 
 use std::pin::Pin;
 

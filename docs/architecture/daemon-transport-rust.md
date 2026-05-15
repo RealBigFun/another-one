@@ -155,18 +155,18 @@ Generator/injection split fixes it:
 
 ## Open work
 
-The remaining sub-issues under [`another-one-iem`] in beads:
+The remaining steps for this refactor:
 
-- `pqs` server-side — reshape today's `daemon::transport_iroh` so its
+- Server-side — reshape today's `daemon::transport_iroh` so its
   accept loop produces `Box<dyn ServerSession>`s the daemon dispatch
   layer drives.
-- `7re` daemon dispatch — verb dispatch moves out of
+- Daemon dispatch — verb dispatch moves out of
   `transport_iroh::handle_incoming` into a transport-agnostic
   `serve_session(session, registry)` function.
-- `4l7` UDS transport — second real impl (desktop ↔ MCP shim).
-- `4y2` mobile smoke — end-to-end verification that mobile keeps
+- UDS transport — second real impl (desktop ↔ MCP shim).
+- Mobile smoke — end-to-end verification that mobile keeps
   working over the abstract API.
-- `3yy` iroh-import sweep — find every `use iroh` outside the iroh
+- Iroh-import sweep — find every `use iroh` outside the iroh
   transport module after the dust settles. Anything left is a leak.
 
 Each lands as its own PR; this doc gets updated as they do.
