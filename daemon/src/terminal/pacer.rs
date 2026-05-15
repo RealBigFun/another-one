@@ -49,11 +49,26 @@ use tokio::task::{AbortHandle, JoinHandle};
 
 use super::TerminalSideEffect;
 
-/// Single fixed pacing interval. 60 fps matches a typical desktop
-/// refresh and is comfortably above human flicker thresholds for
-/// terminal updates. Phase 9 swaps this for per-viewer
-/// `Control::TerminalSubscribe { max_fps }` honoring.
-const PACER_INTERVAL: Duration = Duration::from_millis(16);
+/// Cap for the per-viewer `max_fps` hint. Anything above 240 is
+/// almost certainly a configuration mistake; capping prevents a
+/// runaway viewer from saturating the worker thread.
+const MAX_FPS_CEILING: u8 = 240;
+/// Floor for the per-viewer `max_fps` hint. Below this we'd emit at
+/// most a few frames per second — fine for backgrounded mobile
+/// pacers but `0` would block emission entirely, so reject it.
+const MIN_FPS_FLOOR: u8 = 1;
+/// Default frame cap when the viewer omits `max_fps` (or sends `0`).
+/// Matches the old fixed 60 fps cadence.
+const DEFAULT_FPS: u8 = 60;
+
+/// Resolve `max_fps` into the pacer's emit interval.
+fn pacer_interval_for_fps(max_fps: u8) -> Duration {
+    let fps = if max_fps == 0 { DEFAULT_FPS } else { max_fps };
+    let fps = fps.clamp(MIN_FPS_FLOOR, MAX_FPS_CEILING);
+    // 1_000_000 µs / fps — micros to keep precision at 60 fps
+    // (16_666 µs, vs the 16 ms approximation we used before).
+    Duration::from_micros(1_000_000 / fps as u64)
+}
 
 /// Subscription parameters captured from `Control::TerminalSubscribe`.
 #[derive(Clone, Debug)]
@@ -64,9 +79,10 @@ pub struct PacerConfig {
     pub viewer_id: String,
     pub section_id: String,
     pub tab_id: String,
-    /// Viewer's hint for max frames per second. Ignored in this
-    /// phase (single fixed 60 fps cap); reserved for Phase 9.
-    #[allow(dead_code)]
+    /// Viewer's hint for max frames per second. `0` falls back to
+    /// the [`DEFAULT_FPS`] (60); values above [`MAX_FPS_CEILING`]
+    /// or below [`MIN_FPS_FLOOR`] are clamped. Resolved to a
+    /// `Duration` per-pacer in `pacer_interval_for_fps`.
     pub max_fps: u8,
     /// Last seq the viewer holds. `None` for first subscription;
     /// `Some(seq)` triggers the cold-start to emit a fresh `Full`
@@ -148,6 +164,15 @@ async fn run_pacer(
     // events. Frame updates pace at 60 fps; side-channel events
     // (bell/title/reset-title) emit immediately because they're
     // low-rate and the renderer wants them out-of-band.
+    let emit_interval = pacer_interval_for_fps(config.max_fps);
+    tracing::trace!(
+        viewer = %config.viewer_id,
+        section = %config.section_id,
+        tab = %config.tab_id,
+        max_fps = config.max_fps,
+        interval_us = emit_interval.as_micros() as u64,
+        "pacer: emit interval resolved",
+    );
     let mut last_emit = tokio::time::Instant::now();
     loop {
         // Helper: a future that resolves with the next side-channel
@@ -174,7 +199,7 @@ async fn run_pacer(
                     );
                     return;
                 }
-                let next_allowed = last_emit + PACER_INTERVAL;
+                let next_allowed = last_emit + emit_interval;
                 let now = tokio::time::Instant::now();
                 if now < next_allowed {
                     tokio::time::sleep_until(next_allowed).await;
@@ -278,6 +303,30 @@ mod tests {
     use another_one_core::terminal_types::TerminalGridSize;
     use daemon_transport::SessionEvent;
     use futures_util::StreamExt;
+
+    #[test]
+    fn pacer_interval_clamps_and_defaults() {
+        // Default (0) -> 60 fps -> ~16_666 µs.
+        assert_eq!(
+            pacer_interval_for_fps(0),
+            Duration::from_micros(1_000_000 / 60)
+        );
+        // Above ceiling clamps to ceiling.
+        assert_eq!(
+            pacer_interval_for_fps(255),
+            Duration::from_micros(1_000_000 / MAX_FPS_CEILING as u64)
+        );
+        // Round-trip a typical desktop value.
+        assert_eq!(
+            pacer_interval_for_fps(120),
+            Duration::from_micros(1_000_000 / 120)
+        );
+        // Mobile / battery-saver value.
+        assert_eq!(
+            pacer_interval_for_fps(15),
+            Duration::from_micros(1_000_000 / 15)
+        );
+    }
     use std::time::Duration;
 
     fn small_size() -> TerminalGridSize {
