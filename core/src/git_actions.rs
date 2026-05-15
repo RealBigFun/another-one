@@ -1,5 +1,13 @@
 //! Background git actions for toolbar buttons.
 
+// Without the `github-cli` feature, the gh-CLI provider isn't
+// compiled, leaving the gh-specific parsing/argument helpers in
+// this module without callers. Allow them as dead code in that
+// configuration rather than #[cfg]-gating each helper individually:
+// the helpers are tiny and the attribute clutter would obscure the
+// surrounding (always-live) git logic.
+#![cfg_attr(not(feature = "github-cli"), allow(dead_code))]
+
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -342,7 +350,7 @@ pub fn find_github_repo_url(repo_path: &Path) -> Option<String> {
         .and_then(|remote| normalize_github_remote(&remote))
 }
 
-pub fn find_latest_pull_request_status(
+pub(crate) fn find_latest_pull_request_status(
     repo_path: &Path,
     head_branch: &str,
 ) -> Option<PullRequestStatus> {
@@ -381,7 +389,7 @@ pub fn find_latest_pull_request_status(
     })
 }
 
-pub fn find_pull_request_checks(
+pub(crate) fn find_pull_request_checks(
     repo_path: &Path,
     pull_request_number: Option<u64>,
 ) -> Result<Option<Vec<PullRequestCheck>>, String> {
@@ -723,11 +731,6 @@ fn create_pull_request(
     settings: &GitActionSettings,
     _on_progress: &mut dyn FnMut(String),
 ) -> Result<ToolbarActionOutcome, ToolbarActionError> {
-    let gh = find_gh_cli(repo_path).ok_or_else(|| {
-        ToolbarActionError::from_message(
-            "Create PR failed. GitHub CLI (`gh`) is not installed or not on the app PATH.",
-        )
-    })?;
     let head_branch = git_current_branch(repo_path).ok_or_else(|| {
         ToolbarActionError::from_message(
             "Create PR failed. Could not determine the current branch.",
@@ -738,35 +741,40 @@ fn create_pull_request(
             ToolbarActionError::from_message(format!("Create PR failed. {message}"))
         })?;
 
-    let mut cmd = external_command(gh, repo_path);
-    cmd.args(create_pull_request_args(
-        &head_branch,
-        draft,
-        base_branch,
-        &generated.title,
-        &generated.body,
-    ));
-
-    let output = cmd
-        .output()
-        .map_err(|err| ToolbarActionError::from_message(format!("Create PR failed: {err}")))?;
-
-    if !output.status.success() {
-        return Err(ToolbarActionError::from_message(command_failure(
-            if draft {
-                "Draft PR creation failed"
-            } else {
-                "PR creation failed"
+    let provider = crate::github::make_provider(repo_path);
+    let outcome = provider
+        .create_pull_request(
+            repo_path,
+            crate::github::CreatePrArgs {
+                head_branch: head_branch.clone(),
+                draft,
+                base_branch: base_branch.map(str::to_string),
+                title: generated.title.clone(),
+                body: generated.body.clone(),
             },
-            &output,
-        )));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let url = extract_url(&stdout);
+        )
+        .map_err(|err| match err {
+            crate::github::GhError::NotInstalled => ToolbarActionError::from_message(
+                "Create PR failed. GitHub CLI (`gh`) is not installed or not on the app PATH.",
+            ),
+            crate::github::GhError::NotAuthenticated => ToolbarActionError::from_message(
+                "Create PR failed. GitHub CLI is not signed in. Run: gh auth login",
+            ),
+            crate::github::GhError::NetworkError(msg) => ToolbarActionError::from_message(
+                format!("Create PR failed. {msg}"),
+            ),
+            crate::github::GhError::Other(msg) => ToolbarActionError::from_message(format!(
+                "{}: {msg}",
+                if draft {
+                    "Draft PR creation failed"
+                } else {
+                    "PR creation failed"
+                }
+            )),
+        })?;
 
     Ok(toolbar_action_outcome(
-        match (draft, url.as_deref(), base_branch) {
+        match (draft, outcome.url.as_deref(), base_branch) {
             (true, Some(url), Some(base_branch)) => {
                 format!("Created draft pull request into {base_branch}: {url}")
             }
@@ -789,7 +797,8 @@ fn create_pull_request(
     ))
 }
 
-fn create_pull_request_args(
+#[cfg_attr(not(feature = "github-cli"), allow(dead_code))]
+pub(crate) fn create_pull_request_args(
     head_branch: &str,
     draft: bool,
     base_branch: Option<&str>,
@@ -1528,6 +1537,7 @@ fn command_failure(prefix: &str, output: &Output) -> String {
     format!("{prefix}. {detail}")
 }
 
+#[cfg_attr(not(feature = "github-cli"), allow(dead_code))]
 fn extract_url(text: &str) -> Option<String> {
     text.split_whitespace()
         .find(|token| token.starts_with("http://") || token.starts_with("https://"))
@@ -1540,6 +1550,25 @@ fn temp_output_path(prefix: &str) -> PathBuf {
 
 fn git_command(repo_path: &Path) -> Command {
     external_command("git", repo_path)
+}
+
+/// Build a base `Command` with the app's resolved PATH applied.
+/// Public to the crate so [`crate::github::cli::GhCliProvider`] can
+/// reuse the spawn shape without duplicating the helper.
+#[cfg(feature = "github-cli")]
+pub(crate) fn external_command_for_provider(
+    program: impl AsRef<std::ffi::OsStr>,
+    cwd: &Path,
+) -> Command {
+    external_command(program, cwd)
+}
+
+/// URL extractor for `gh pr create`'s stdout. Crate-public so the
+/// provider can reuse the existing parser instead of duplicating
+/// the regex.
+#[cfg(feature = "github-cli")]
+pub(crate) fn extract_url_for_provider(text: &str) -> Option<String> {
+    extract_url(text)
 }
 
 fn external_command(program: impl AsRef<std::ffi::OsStr>, cwd: &Path) -> Command {
@@ -2079,7 +2108,7 @@ mod tests {
     }
 }
 
-pub fn find_project_pull_requests(
+pub(crate) fn find_project_pull_requests(
     repo_path: &Path,
     filter_index: usize,
     query: Option<&str>,

@@ -46,6 +46,7 @@ impl GitHubProvider for MissingProvider {
         &self,
         _repo: &Path,
         _filter: PrFilter,
+        _query: Option<&str>,
         _limit: usize,
     ) -> Result<Vec<crate::git_actions::ProjectPagePullRequest>, GhError> {
         Err(GhError::NotInstalled)
@@ -85,7 +86,7 @@ mod tests {
             GhError::NotInstalled
         );
         assert_eq!(
-            p.list_pull_requests(Path::new("/tmp"), PrFilter::AllOpen, 10)
+            p.list_pull_requests(Path::new("/tmp"), PrFilter::AllOpen, None, 10)
                 .unwrap_err(),
             GhError::NotInstalled
         );

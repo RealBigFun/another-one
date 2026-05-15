@@ -127,13 +127,20 @@ pub enum PrFilter {
     Author,
 }
 
-/// Outcome of a successful create-PR call.
+/// Outcome of a successful create-PR call. The legacy gh path
+/// only parses the URL out of stdout; `number` is `None` until a
+/// future provider revision passes `--json number,url`. Keep the
+/// field on the surface so migrating to a structured backend
+/// (octocrab, REST) doesn't churn callers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePrOutcome {
-    /// PR number assigned by GitHub.
-    pub number: u64,
-    /// Web URL of the created PR.
-    pub url: String,
+    /// PR number assigned by GitHub. `None` when the backend
+    /// doesn't surface it (current `gh pr create` plain output).
+    pub number: Option<u64>,
+    /// Web URL of the created PR. `None` when stdout didn't
+    /// contain a URL the parser could extract — unusual but
+    /// possible (e.g. `gh` updated its output format).
+    pub url: Option<String>,
 }
 
 /// Trait every gh-touching call site goes through. Implementations
@@ -177,11 +184,14 @@ pub trait GitHubProvider: Send + Sync {
         args: CreatePrArgs,
     ) -> Result<CreatePrOutcome, GhError>;
 
-    /// List PRs matching `filter` in `repo`, capped at `limit`.
+    /// List PRs matching `filter` in `repo`, with optional text
+    /// `query` (matches title / body / author per the underlying
+    /// backend's search syntax), capped at `limit`.
     fn list_pull_requests(
         &self,
         repo: &Path,
         filter: PrFilter,
+        query: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::git_actions::ProjectPagePullRequest>, GhError>;
 }

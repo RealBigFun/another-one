@@ -1762,31 +1762,37 @@ pub(crate) fn spawn_gh_auth_check(
 
 fn perform_gh_auth_check() -> daemon_proto::GhAuthStatusWire {
     let cwd = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-    let Some(gh) = another_one_core::git_actions::find_gh_cli(&cwd) else {
-        // Expected on installs without gh; the renderer surfaces it.
-        log::debug!("gh auth check: gh CLI not found on PATH (cwd={})", cwd.display());
-        return daemon_proto::GhAuthStatusWire::GhMissing;
-    };
-    log::trace!("gh auth check: invoking {}", gh.display());
-    match std::process::Command::new(&gh)
-        .args(["auth", "status"])
-        .output()
-    {
-        Ok(output) if output.status.success() => daemon_proto::GhAuthStatusWire::Authenticated,
-        Ok(output) => {
-            log::debug!(
-                "gh auth check: {} auth status exited {:?}: {}",
-                gh.display(),
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
+    let provider = another_one_core::github::make_provider(&cwd);
+    let status = provider.probe_auth();
+    if matches!(
+        status,
+        another_one_core::github::AuthStatus::GhMissing
+            | another_one_core::github::AuthStatus::NotAuthenticated
+    ) {
+        // Expected on installs without gh / signed-out gh; the
+        // renderer surfaces the overlay. Trace-level so production
+        // logs stay quiet but RUST_LOG=trace can resurrect the
+        // diagnostic.
+        log::trace!("gh auth check: provider reported {:?}", status);
+    }
+    match status {
+        another_one_core::github::AuthStatus::Authenticated => {
+            daemon_proto::GhAuthStatusWire::Authenticated
+        }
+        another_one_core::github::AuthStatus::NotAuthenticated => {
             daemon_proto::GhAuthStatusWire::NotAuthenticated
         }
-        Err(err) => {
-            // Spawn failure is unexpected even when gh is missing
-            // (we already returned `GhMissing` above on Find failure).
-            log::warn!("gh auth check: spawning {} failed: {err}", gh.display());
+        another_one_core::github::AuthStatus::GhMissing => {
             daemon_proto::GhAuthStatusWire::GhMissing
+        }
+        // The provider's `Checking` state is for in-flight
+        // RecheckGhAuth ticks where the renderer-side flag is set
+        // before the worker thread runs; the boot-time path
+        // shouldn't see it. Map to GhMissing as the safest fallback
+        // (the renderer treats Checking the same way for the
+        // purposes of suppressing the alarming overlay).
+        another_one_core::github::AuthStatus::Checking => {
+            daemon_proto::GhAuthStatusWire::Checking
         }
     }
 }

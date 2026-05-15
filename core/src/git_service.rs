@@ -22,10 +22,9 @@ use std::thread;
 use tokio::sync::broadcast;
 
 use crate::git_actions::{
-    execute_toolbar_git_action, find_github_repo_url, find_latest_pull_request_status,
-    find_project_pull_requests, find_pull_request_checks, GitActionSettings,
-    ProjectPagePullRequest, PullRequestCheck, PullRequestStatus, ToolbarActionError,
-    ToolbarActionOutcome, ToolbarGitAction,
+    execute_toolbar_git_action, find_github_repo_url, GitActionSettings, ProjectPagePullRequest,
+    PullRequestCheck, PullRequestStatus, ToolbarActionError, ToolbarActionOutcome,
+    ToolbarGitAction,
 };
 use crate::project_store::{
     fetch_project_git_state, read_changed_file_diff, read_project_branch_commit_state,
@@ -279,7 +278,11 @@ pub struct ProjectPullRequestReply {
     pub pull_request: Option<PullRequestStatus>,
 }
 
-/// Look up the latest pull-request status for a branch.
+/// Look up the latest pull-request status for a branch. Routed
+/// through [`crate::github::make_provider`] so installs without
+/// `gh` (or builds without the `github-cli` feature) get the
+/// `MissingProvider` no-op and surface `Ok(None)` — same observable
+/// outcome as the pre-trait "gh-missing means no PR" behaviour.
 pub fn spawn_pull_request_lookup(
     sender: broadcast::Sender<ProjectPullRequestReply>,
     lookup_key: String,
@@ -287,7 +290,15 @@ pub fn spawn_pull_request_lookup(
     branch_name: String,
 ) {
     thread::spawn(move || {
-        let pull_request = find_latest_pull_request_status(&project_path, &branch_name);
+        let provider = crate::github::make_provider(&project_path);
+        // Provider returns Result<Option<...>, GhError>; the legacy
+        // free function collapsed every failure to `None`, so we
+        // preserve that here. A future revision can pipe GhError
+        // back to the renderer for richer UX.
+        let pull_request = provider
+            .find_pull_request(&project_path, &branch_name)
+            .ok()
+            .flatten();
         let _ = sender.send(ProjectPullRequestReply {
             lookup_key,
             pull_request,
@@ -303,7 +314,10 @@ pub struct ProjectPagePullRequestsReply {
     pub result: Result<Vec<ProjectPagePullRequest>, String>,
 }
 
-/// Query the project-page PR list (filter + text search).
+/// Query the project-page PR list (filter + text search). Routes
+/// through [`crate::github::make_provider`] so the
+/// `MissingProvider` fallback returns the typed `NotInstalled`
+/// error rather than spawning gh.
 pub fn spawn_project_page_pull_requests(
     sender: broadcast::Sender<ProjectPagePullRequestsReply>,
     project_id: String,
@@ -312,7 +326,15 @@ pub fn spawn_project_page_pull_requests(
     query: String,
 ) {
     thread::spawn(move || {
-        let result = find_project_pull_requests(&project_path, filter_index, Some(&query));
+        let provider = crate::github::make_provider(&project_path);
+        let filter = match filter_index {
+            1 => crate::github::PrFilter::ReviewRequested,
+            2 => crate::github::PrFilter::Author,
+            _ => crate::github::PrFilter::AllOpen,
+        };
+        let result = provider
+            .list_pull_requests(&project_path, filter, Some(&query), 100)
+            .map_err(|err| err.to_string());
         let _ = sender.send(ProjectPagePullRequestsReply {
             project_id,
             filter_index,
@@ -328,7 +350,8 @@ pub struct ProjectCheckRunsReply {
     pub result: Result<Option<Vec<PullRequestCheck>>, String>,
 }
 
-/// Fetch the GitHub check-runs (CI status) for a PR.
+/// Fetch the GitHub check-runs (CI status) for a PR. Routes
+/// through [`crate::github::make_provider`].
 pub fn spawn_check_runs_lookup(
     sender: broadcast::Sender<ProjectCheckRunsReply>,
     lookup_key: String,
@@ -336,7 +359,10 @@ pub fn spawn_check_runs_lookup(
     pull_request_number: Option<u64>,
 ) {
     thread::spawn(move || {
-        let result = find_pull_request_checks(&project_path, pull_request_number);
+        let provider = crate::github::make_provider(&project_path);
+        let result = provider
+            .pull_request_checks(&project_path, pull_request_number)
+            .map_err(|err| err.to_string());
         let _ = sender.send(ProjectCheckRunsReply { lookup_key, result });
     });
 }

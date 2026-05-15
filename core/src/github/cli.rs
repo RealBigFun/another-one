@@ -98,24 +98,48 @@ impl GitHubProvider for GhCliProvider {
 
     fn create_pull_request(
         &self,
-        _repo: &Path,
-        _args: CreatePrArgs,
+        repo: &Path,
+        args: CreatePrArgs,
     ) -> Result<CreatePrOutcome, GhError> {
-        // Wired in commit 4. The legacy entry point
-        // (`run_create_pull_request`) takes toolbar-plumbing args
-        // (`GitActionSettings`, `&mut on_progress`,
-        // `ToolbarActionOutcome`) that don't map cleanly to the
-        // provider's typed surface; commit 4 splits the gh-call
-        // portion out and migrates the toolbar caller in one go.
-        Err(GhError::Other(
-            "GhCliProvider::create_pull_request not yet wired (commit 4)".into(),
-        ))
+        let mut cmd = crate::git_actions::external_command_for_provider(&self.gh_path, repo);
+        cmd.args(crate::git_actions::create_pull_request_args(
+            &args.head_branch,
+            args.draft,
+            args.base_branch.as_deref(),
+            &args.title,
+            &args.body,
+        ));
+        let output = cmd
+            .output()
+            .map_err(|err| GhError::Other(format!("gh pr create spawn failed: {err}")))?;
+        if !output.status.success() {
+            // Approximate legacy toast wording: stderr trimmed, or
+            // a fallback when stderr is empty. The legacy
+            // `command_failure` helper prefixes "PR creation
+            // failed:" / "Draft PR creation failed:" — the call
+            // site (still in `git_actions::create_pull_request`)
+            // wraps the GhError message with that prefix when
+            // building the `ToolbarActionError`, so we don't
+            // duplicate it here.
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let trimmed = stderr.trim();
+            let body = if trimmed.is_empty() {
+                format!("gh pr create exited {:?}", output.status.code())
+            } else {
+                trimmed.to_string()
+            };
+            return Err(GhError::Other(body));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let url = crate::git_actions::extract_url_for_provider(&stdout);
+        Ok(CreatePrOutcome { number: None, url })
     }
 
     fn list_pull_requests(
         &self,
         repo: &Path,
         filter: PrFilter,
+        query: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::git_actions::ProjectPagePullRequest>, GhError> {
         // Legacy signature is `(repo, filter_index: usize, query:
@@ -130,7 +154,7 @@ impl GitHubProvider for GhCliProvider {
             PrFilter::ReviewRequested => 1,
             PrFilter::Author => 2,
         };
-        crate::git_actions::find_project_pull_requests(repo, filter_index, None)
+        crate::git_actions::find_project_pull_requests(repo, filter_index, query)
             .map_err(GhError::Other)
     }
 }
