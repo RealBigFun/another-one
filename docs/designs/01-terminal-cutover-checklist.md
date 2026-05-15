@@ -1,5 +1,32 @@
 # Phase 5 cutover — legacy alacritty-on-GPUI deletion checklist
 
+**Status (RC branch `rc/terminal-hardening`, 2026-05-14):** sections A,
+B, C-renderer-helpers, D-renderer-side, and E-test-scaffolding are
+landed. PTY-spawn-in-daemon (design 01 Phase 4) and the
+`alacritty_terminal` dep removal from `app/` remain open.
+
+| Section | Status | Lands in |
+|---|---|---|
+| A. Term/Processor/event-queue/local-PTY | ✅ deleted (renderer side) | Step 7 |
+| B. Surface-builder + alacritty-cell helpers | ✅ deleted | Step 3 |
+| C. Renderer-side `scroll_display` / `scroll_to_match` | ✅ viewer-side replacement | Step 5 |
+| C. `search_scrollback` / `search_scrollback_in_term` | ✅ deleted (use `Control::TerminalSearch`) | Step 7 |
+| D. `apply_output` / `DRAIN_OUTPUT_BYTE_CAP` / dual-write | ✅ deleted | Step 7 |
+| D. `apply_pty_title_update` / `TerminalRuntimeUpdate` | ✅ deleted | Step 7 |
+| E. `alacritty_terminal` dep on the renderer | ⚠️ still pulls `Rgb` at the colour boundary; full drop is a follow-on |  |
+| (Step 2 wire-additive) `underline_color`, `hyperlink`, `zero_width`, `HollowBlock`, `history_lines` | ✅ landed | Step 2 |
+| (Step 4) palette out of `terminal_runtime.rs` into `theme.rs` | ✅ landed | Step 4 |
+| (Step 6) per-tab viewer-input drain task | ✅ landed | Step 6 |
+| (Step 8) pacer honours `max_fps` | ✅ landed | Step 8 |
+| (Step 9) single `make_term` helper | ✅ landed (`daemon::terminal::term_config`) | Step 9 |
+| (Step 10) tracing on cutover hot paths | ✅ landed | Step 10 |
+
+The section-by-section checklist below stays as historical reference;
+for the live inventory of what's still on the renderer side, run the
+verification grep at the bottom of this file.
+
+---
+
 Step 1 of the terminal-hardening plan ([RC branch](../../README.md):
 `rc/terminal-hardening`). Inventory of every legacy surface that the
 daemon-canonical cutover (design 01 / #158, Phase 5) replaces. The

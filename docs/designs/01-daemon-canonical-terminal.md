@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted
+Accepted. **Phase 5 (renderer cutover) shipped on RC branch
+`rc/terminal-hardening` (2026-05-14):** the GPUI app no longer parses
+VT bytes; the daemon's per-tab Term task is the sole VT state owner;
+viewers consume `TerminalFrame::Full` snapshots and fetch scrollback
+via `Control::TerminalReadScrollback`. See
+[[01-terminal-cutover-checklist]] for the section-by-section status
+and the verification grep. **Phase 4 (PTY spawn in the daemon) and
+Phase 8 (`Diff` emission) remain open.**
 
 ## Decision Summary
 
