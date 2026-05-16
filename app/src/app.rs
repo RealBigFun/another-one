@@ -5958,7 +5958,7 @@ impl AnotherOneApp {
                 request.size.cols,
                 request.size.rows
             );
-            let mut runtime = LiveTerminalRuntime::from_remote(request.size);
+            let mut runtime = LiveTerminalRuntime::from_daemon_frames(request.size);
             self.terminal_surface_snapshots
                 .insert(request.key.clone(), runtime.snapshot());
             self.live_terminal_runtimes
@@ -6916,7 +6916,7 @@ impl AnotherOneApp {
     /// Phase 5d-ii of design 01 (#158): handle a daemon-pushed
     /// `WorkerReply::TerminalLaunched` for a desktop-issued
     /// `Control::LaunchTab`. Builds a viewer-only
-    /// `LiveTerminalRuntime::from_remote(size)` and inserts it into
+    /// `LiveTerminalRuntime::from_daemon_frames(size)` and inserts it into
     /// `live_terminal_runtimes` so the next render tick's
     /// `ensure_active_terminal_runtime` finds it and opens a
     /// `TerminalSubscribe` (Phase 5b-iii).
@@ -6954,7 +6954,7 @@ impl AnotherOneApp {
         // follow-up tightens the push payload.
         self.terminal_manager.mark_launch_succeeded(key.clone(), None);
         self.clear_terminal_recent_output(&key);
-        let runtime = crate::terminal_runtime::LiveTerminalRuntime::from_remote(size);
+        let runtime = crate::terminal_runtime::LiveTerminalRuntime::from_daemon_frames(size);
         self.terminal_surface_snapshots
             .insert(key.clone(), Default::default());
         self.live_terminal_runtimes.insert(key, runtime);

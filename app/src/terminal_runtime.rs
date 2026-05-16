@@ -232,7 +232,7 @@ impl LiveTerminalRuntime {
     /// routed through `daemon_transport::Session::push_data` by the
     /// caller — the runtime's `write_input` is a no-op when there is
     /// no local PTY.
-    pub fn from_remote(size: TerminalGridSize) -> Self {
+    pub fn from_daemon_frames(size: TerminalGridSize) -> Self {
         Self {
             local_pty: None,
             size,
@@ -1633,7 +1633,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         let proto = proto_snapshot_from_lines(16, 2, &["hi", "there"]);
         let frame = TerminalFrame::Full {
             seq: 1,
@@ -1693,7 +1693,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         // No frame yet — nothing to scroll.
         assert!(!runtime.viewer_scroll_lines(5));
         assert_eq!(runtime.viewer_scroll_offset(), 0);
@@ -1723,7 +1723,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 2, &["top", "bot"], 5);
 
         // No scroll — nothing missing.
@@ -1753,7 +1753,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 200);
         // Scroll up 1 — visible-window has 1 missing row at offset 1.
         assert!(runtime.viewer_scroll_lines(1));
@@ -1773,7 +1773,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         // history of 5 means the largest valid daemon-offset is 5.
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 5);
         assert!(runtime.viewer_scroll_lines(1));
@@ -1794,7 +1794,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 200);
         assert!(runtime.viewer_scroll_lines(1));
 
@@ -1828,7 +1828,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 1000);
         assert!(runtime.viewer_scroll_lines(1));
 
@@ -1860,7 +1860,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 100);
         assert!(runtime.viewer_scroll_lines(3));
 
@@ -1906,7 +1906,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 3, &["liveA", "liveB", "liveC"], 5);
 
         // Scroll up 2: viewer rows top-to-bottom map to grid lines
@@ -1972,7 +1972,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 3, &["liveA", "liveB", "liveC"], 3);
 
         let reply = TerminalScrollbackReply {
@@ -1999,7 +1999,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 3, &["live1", "live2", "live3"], 2);
         assert!(runtime.viewer_scroll_lines(2));
 
@@ -2045,7 +2045,7 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let mut runtime = LiveTerminalRuntime::from_remote(size);
+        let mut runtime = LiveTerminalRuntime::from_daemon_frames(size);
         ingest_lines(&mut runtime, 8, 2, &["a", "b"], 10);
         assert!(runtime.viewer_scroll_lines(7));
         assert_eq!(runtime.viewer_scroll_offset(), 7);
