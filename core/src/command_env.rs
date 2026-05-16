@@ -97,6 +97,15 @@ pub(crate) fn find_executable(command: &str, cwd: &Path, fallbacks: &[PathBuf]) 
     fallbacks.iter().find(|path| path.is_file()).cloned()
 }
 
+/// Prewarm the shell PATH discovery cache on a blocking thread at daemon
+/// startup so the first `LaunchTab` finds the result already cached and
+/// doesn't stall a tokio worker for up to 2 seconds.
+pub fn prewarm_shell_path_cache() {
+    shell_initialized_path_dirs(
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
+    );
+}
+
 fn shell_initialized_path_dirs(cwd: &Path) -> Vec<PathBuf> {
     static SHELL_INITIALIZED_PATH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 

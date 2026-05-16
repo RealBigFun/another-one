@@ -16,7 +16,7 @@
 //! zero-intra-crate-dep files.
 
 mod command_env;
-pub use command_env::login_shell;
+pub use command_env::{login_shell, prewarm_shell_path_cache};
 
 pub mod agents;
 pub mod capability;
