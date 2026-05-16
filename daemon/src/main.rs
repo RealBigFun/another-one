@@ -6,7 +6,7 @@
 //!   - Optional WebSocket on `ws://127.0.0.1:5617/pty` — legacy,
 //!     unauthenticated, and disabled by default.
 //!   - Iroh QUIC on ALPN `anotherone/pty/1` — the main path; the
-//!     mobile app and `iroh-client` smoke test both dial it.
+//!     mobile app dials it using the pairing URL/QR printed on startup.
 //!
 //! The library crate (`daemon::run_endpoint`) powers the
 //! iroh side. The desktop app links the same library and supplies
@@ -122,7 +122,7 @@ fn insecure_ws_enabled() -> bool {
 }
 
 /// Drop the pairing URL into `/tmp/daemon-sandbox.ticket` for
-/// `iroh-client` / external tooling, and publish the token-bearing QR
+/// external tooling, and publish the token-bearing QR
 /// PNG into a private per-user sandbox-data directory with restrictive
 /// permissions. Also echoes the URL on stdout for humans.
 ///
@@ -153,9 +153,8 @@ fn publish_sandbox_artifacts(handle: &EndpointHandle) -> PublishedArtifacts {
         }
     }
 
-    // Legacy hint file — iroh-client still checks this path when no
-    // .ticket is present. Writing the raw EndpointId keeps that
-    // fallback working.
+    // Legacy hint file — writing the raw EndpointId keeps external
+    // tooling that reads this path working.
     let nodeid_path = std::env::temp_dir().join("daemon-sandbox.nodeid");
     let _ = std::fs::write(&nodeid_path, &handle.endpoint_id);
     artifacts

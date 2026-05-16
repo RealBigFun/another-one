@@ -1091,12 +1091,3 @@ pub trait DaemonRegistry: Send + Sync + 'static {
     }
 }
 
-/// A registry implementation suitable for the standalone sandbox
-/// binary. Spawns one bash PTY per `attach_tab` call and treats the
-/// single tab as the only tab that exists. Useful for smoke-testing
-/// the iroh endpoint + mobile UI without the full desktop app
-/// running; the desktop uses a different impl.
-#[allow(dead_code)]
-pub fn sandbox_registry() -> Arc<dyn DaemonRegistry> {
-    Arc::new(crate::sandbox::SandboxRegistry::new())
-}

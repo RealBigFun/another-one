@@ -13,8 +13,8 @@
 //!   ignored by clients so older clients keep working as we add
 //!   workers.
 //!
-//! Used by both the server ([`super::transport_iroh`]) and the client
-//! smoke test (`bin/iroh-client.rs`). See [[docs/architecture/transport-abstraction]].
+//! Used by the server ([`super::transport_iroh`]) and any clients that
+//! dial the daemon. See [[docs/architecture/transport-abstraction]].
 
 // TerminalRestoreStatus is defined below; core re-exports it from here.
 
