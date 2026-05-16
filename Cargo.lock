@@ -179,7 +179,6 @@ dependencies = [
 name = "another-one"
 version = "0.2.5"
 dependencies = [
- "alacritty_terminal",
  "android-activity",
  "android_logger",
  "another-one-core",

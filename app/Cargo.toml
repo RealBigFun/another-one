@@ -47,7 +47,6 @@ test-harness = ["another-one-core/test-harness"]
 # whole workspace must agree on it. Rebump only in lockstep with gpui-mobile.
 [dependencies]
 include_dir = "0.7"
-alacritty_terminal = "0.26.0"
 another-one-core = { path = "../core" }
 anyhow = "1"
 daemon = { path = "../daemon" }
