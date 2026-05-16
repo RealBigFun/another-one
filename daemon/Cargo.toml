@@ -38,6 +38,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 urlencoding = "2"
 rand = "0.9"
 dirs = "5"
+hex = "0.4"
 # For the MCP UDS hardening path: umask(2) during bind so the socket
 # is never world-accessible; geteuid(2) for a hostile-`$USER`-safe
 # per-user socket path fallback when `$XDG_RUNTIME_DIR` is absent.

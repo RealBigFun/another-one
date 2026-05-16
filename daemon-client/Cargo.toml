@@ -10,6 +10,7 @@ name = "daemon_client"
 
 [dependencies]
 anyhow = "1"
+hex = "0.4"
 # Wire types live here. Server and client deserialize the same
 # definitions; no hand-mirrored protocol module to drift.
 daemon-proto = { path = "../daemon-proto" }
