@@ -451,11 +451,15 @@ pub fn build_command(
     agent_launch_args: &[String],
 ) -> anyhow::Result<(CommandBuilder, TerminalLaunchConfig, Option<DiscoveryKind>)> {
     if launch_config.mode == TerminalLaunchMode::RawShell {
-        return Ok((CommandBuilder::new_default_prog(), launch_config, None));
+        let mut cmd = CommandBuilder::new_default_prog();
+        cmd.env("SHELL", crate::command_env::login_shell());
+        return Ok((cmd, launch_config, None));
     }
 
     let Some(provider) = launch_config.provider else {
-        return Ok((CommandBuilder::new_default_prog(), launch_config, None));
+        let mut cmd = CommandBuilder::new_default_prog();
+        cmd.env("SHELL", crate::command_env::login_shell());
+        return Ok((cmd, launch_config, None));
     };
 
     let combined_agent_launch_args =

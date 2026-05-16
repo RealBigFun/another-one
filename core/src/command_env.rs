@@ -182,6 +182,35 @@ fn kill_process_group(pid: u32) {
     }
 }
 
+/// Returns the user's login shell for spawning interactive terminal sessions.
+///
+/// Prefers the passwd database (`pw_shell`) so the result is correct even when
+/// `$SHELL` is stale (e.g. set to a previous shell before the user switched).
+/// Falls back to `$SHELL`, then to `"sh"`.
+pub fn login_shell() -> String {
+    #[cfg(unix)]
+    {
+        use std::ffi::CStr;
+        let ent = unsafe { libc::getpwuid(libc::getuid()) };
+        if !ent.is_null() {
+            let pw_shell = unsafe { CStr::from_ptr((*ent).pw_shell) };
+            if let Ok(s) = pw_shell.to_str() {
+                if !s.is_empty() && std::path::Path::new(s).exists() {
+                    return s.to_owned();
+                }
+            }
+        }
+    }
+
+    if let Some(shell) = std::env::var_os("SHELL").filter(|s| !s.is_empty()) {
+        if let Some(s) = shell.to_str() {
+            return s.to_owned();
+        }
+    }
+
+    "sh".to_owned()
+}
+
 fn user_shell_path() -> Option<OsString> {
     if let Some(shell) = std::env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
         return Some(shell);
