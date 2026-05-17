@@ -9226,6 +9226,18 @@ impl AnotherOneApp {
         let Some(runtime) = self.live_terminal_runtimes.get(&key) else {
             return false;
         };
+        if !runtime.has_local_pty() {
+            let session = self.session_handle();
+            let section_id = key.section_id.store_key();
+            let tab_id = key.tab_id.clone();
+            let payload = runtime.paste_payload(text);
+            crate::session_host::runtime_handle().spawn(async move {
+                if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                    log::warn!("session paste push_data failed: {err}");
+                }
+            });
+            return true;
+        }
         runtime.paste_text(text).is_ok()
     }
 
@@ -9591,11 +9603,24 @@ impl AnotherOneApp {
             self.dismiss_terminal_context_menu(cx);
             return false;
         };
-        let pasted = self
-            .live_terminal_runtimes
-            .get(&key)
-            .map(|runtime| runtime.paste_text(&text).is_ok())
-            .unwrap_or(false);
+        let pasted = if let Some(runtime) = self.live_terminal_runtimes.get(&key) {
+            if !runtime.has_local_pty() {
+                let session = self.session_handle();
+                let section_id = key.section_id.store_key();
+                let tab_id = key.tab_id.clone();
+                let payload = runtime.paste_payload(&text);
+                crate::session_host::runtime_handle().spawn(async move {
+                    if let Err(err) = session.push_data(&section_id, &tab_id, &payload).await {
+                        log::warn!("session context-menu paste push_data failed: {err}");
+                    }
+                });
+                true
+            } else {
+                runtime.paste_text(&text).is_ok()
+            }
+        } else {
+            false
+        };
         self.dismiss_terminal_context_menu(cx);
         pasted
     }
