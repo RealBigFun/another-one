@@ -5167,6 +5167,10 @@ impl AnotherOneApp {
         })
         .detach();
 
+        // Populate the panel's snapshot immediately so the first render
+        // shows content rather than an empty placeholder.
+        app.sync_right_sidebar_snapshot(cx);
+
         cx.observe_window_bounds(window, |this, window, cx| {
             let viewport_size = window.viewport_size();
             if this.last_viewport_size == viewport_size {
@@ -13346,7 +13350,7 @@ impl AnotherOneApp {
                     .overflow_hidden()
                     .child(
                         AnyView::from(self.right_sidebar_panel.clone())
-                            .cached(gpui::StyleRefinement::default()),
+                            .cached(gpui::StyleRefinement::default().size_full()),
                     ),
             )
     }
@@ -17646,7 +17650,7 @@ impl AnotherOneApp {
                 .child(self.narrow_changed_files_strip(window, cx))
                 .child(
                     AnyView::from(self.right_sidebar_panel.clone())
-                        .cached(gpui::StyleRefinement::default()),
+                        .cached(gpui::StyleRefinement::default().size_full()),
                 )
                 .into_any_element(),
         };
