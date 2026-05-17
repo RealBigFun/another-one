@@ -84,6 +84,7 @@ toml_edit = "0.22"
 # with its synchronous `send` / `try_recv` surface. No runtime is
 # constructed in core; broadcast's send + try_recv do not require one.
 tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

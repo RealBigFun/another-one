@@ -20,6 +20,8 @@ use daemon_proto::{
 use crate::platform::{CurrentPlatform, HeadlessPlatform};
 use crate::process::{RawProcessSample, TrackedProcess};
 
+use tracing::{debug, trace};
+
 /// Older CPU samples than this are dropped — extending the integration
 /// window past ~15s lets a single rare big-tick event skew %CPU for
 /// minutes. The sampler returns `0%` for the affected pid until the
@@ -54,12 +56,14 @@ impl ResourceUsageSampler {
         app_pid: u32,
         tracked_processes: &[TrackedProcess],
     ) -> DaemonResourceUsageWire {
-        self.sample_at(
-            Instant::now(),
-            app_pid,
-            tracked_processes,
-            CurrentPlatform::read_process_samples(app_pid, tracked_processes),
-        )
+        let now = Instant::now();
+        let raw = CurrentPlatform::read_process_samples(app_pid, tracked_processes);
+        let elapsed_ms = now.elapsed().as_millis();
+        trace!(elapsed_ms, tracked = tracked_processes.len(), "resource sample I/O");
+        if elapsed_ms > 100 {
+            tracing::warn!(elapsed_ms, tracked = tracked_processes.len(), "resource sample took >100ms");
+        }
+        self.sample_at(now, app_pid, tracked_processes, raw)
     }
 
     fn sample_at(
@@ -138,6 +142,7 @@ fn build_resource_usage_snapshot(
     for tracked in tracked_processes {
         let tree = collect_process_tree(tracked.pid, &children_by_pid, &process_by_pid);
         if tree.is_empty() {
+            debug!(pid = tracked.pid, session = %tracked.key, "tracked process absent from sample — likely exited");
             continue;
         }
 
@@ -336,56 +341,36 @@ impl TaskBuilder {
 }
 
 fn sort_projects(projects: &mut [DaemonResourceUsageProjectWire]) {
-    projects.sort_by(|left, right| {
-        compare_usage_rows(
-            right.memory_bytes,
-            left.memory_bytes,
-            right.cpu_percent,
-            left.cpu_percent,
-            &left.label,
-            &right.label,
-        )
+    projects.sort_by(|a, b| {
+        compare_usage_rows(a.memory_bytes, b.memory_bytes, a.cpu_percent, b.cpu_percent, &a.label, &b.label)
     });
 }
 
 fn sort_tasks(tasks: &mut [DaemonResourceUsageTaskWire]) {
-    tasks.sort_by(|left, right| {
-        compare_usage_rows(
-            right.memory_bytes,
-            left.memory_bytes,
-            right.cpu_percent,
-            left.cpu_percent,
-            &left.label,
-            &right.label,
-        )
+    tasks.sort_by(|a, b| {
+        compare_usage_rows(a.memory_bytes, b.memory_bytes, a.cpu_percent, b.cpu_percent, &a.label, &b.label)
     });
 }
 
 fn sort_sessions(sessions: &mut [DaemonResourceUsageSessionWire]) {
-    sessions.sort_by(|left, right| {
-        compare_usage_rows(
-            right.memory_bytes,
-            left.memory_bytes,
-            right.cpu_percent,
-            left.cpu_percent,
-            &left.label,
-            &right.label,
-        )
+    sessions.sort_by(|a, b| {
+        compare_usage_rows(a.memory_bytes, b.memory_bytes, a.cpu_percent, b.cpu_percent, &a.label, &b.label)
     });
 }
 
+/// Descending by memory, then descending by CPU, then ascending by label.
 fn compare_usage_rows(
-    left_memory_bytes: u64,
-    right_memory_bytes: u64,
-    left_cpu_percent: f32,
-    right_cpu_percent: f32,
-    left_label: &str,
-    right_label: &str,
+    memory_bytes_a: u64,
+    memory_bytes_b: u64,
+    cpu_percent_a: f32,
+    cpu_percent_b: f32,
+    label_a: &str,
+    label_b: &str,
 ) -> std::cmp::Ordering {
-    left_memory_bytes
-        .cmp(&right_memory_bytes)
-        .then_with(|| left_cpu_percent.total_cmp(&right_cpu_percent))
-        .then_with(|| right_label.cmp(left_label))
+    memory_bytes_b
+        .cmp(&memory_bytes_a)
+        .then_with(|| cpu_percent_b.total_cmp(&cpu_percent_a))
+        .then_with(|| label_a.cmp(label_b))
 }
 
 #[cfg(test)]
@@ -440,8 +425,20 @@ mod tests {
 
     #[test]
     fn formats_memory_in_human_units() {
+        // Boundaries
+        assert_eq!(format_memory(0), "0 B");
+        assert_eq!(format_memory(1), "1 B");
+        assert_eq!(format_memory(1023), "1023 B");
+        assert_eq!(format_memory(1024), "1 KB");           // exactly 1 KiB
+        assert_eq!(format_memory(1023 * 1024), "1023 KB"); // just below 1 MiB
+        assert_eq!(format_memory(1024 * 1024), "1.0 MB");  // exactly 1 MiB
+        assert_eq!(format_memory(1024 * 1024 * 1024 - 1), "1024.0 MB"); // just below 1 GiB
+        assert_eq!(format_memory(1024 * 1024 * 1024), "1.0 GB"); // exactly 1 GiB
+        // Mid-tier spot checks (pre-existing)
         assert_eq!(format_memory(1_572_864), "1.5 MB");
         assert_eq!(format_memory(3_221_225_472), "3.0 GB");
+        // Must not panic on max value
+        let _ = format_memory(u64::MAX);
     }
 
     #[test]
@@ -550,18 +547,179 @@ mod tests {
     }
 
     #[test]
-    fn cpu_percent_allows_closed_interval_with_jitter() {
+    fn cpu_percent_none_when_now_is_before_sampled_at() {
+        // Monotonicity violation or deliberate misuse in tests: must not panic, must return None.
+        let future = Instant::now() + Duration::from_secs(10);
+        let previous = CpuUsageSample { total_cpu_time_ns: 1_000_000_000, sampled_at: future };
+        let cpu = cpu_percent_between(&previous, 2_000_000_000, Instant::now());
+        assert_eq!(cpu, None);
+    }
+
+    #[test]
+    fn cpu_percent_zero_when_cpu_time_regresses() {
+        // PID reuse: new process has less accumulated CPU time than the old one.
+        // saturating_sub yields 0 ns delta → 0.0% for this tick, not a panic or negative value.
+        let previous = CpuUsageSample {
+            total_cpu_time_ns: 5_000_000_000,
+            sampled_at: Instant::now(),
+        };
+        let cpu = cpu_percent_between(
+            &previous,
+            1_000_000_000, // regressed
+            previous.sampled_at + Duration::from_secs(1),
+        );
+        assert_eq!(cpu, Some(0.0));
+    }
+
+    #[test]
+    fn cpu_percent_zero_for_zero_elapsed() {
         let previous = CpuUsageSample {
             total_cpu_time_ns: 1_000_000_000,
             sampled_at: Instant::now(),
         };
+        let cpu = cpu_percent_between(&previous, 2_000_000_000, previous.sampled_at);
+        assert_eq!(cpu, Some(0.0));
+    }
 
+    #[test]
+    fn cpu_percent_some_at_exactly_max_window() {
+        let previous = CpuUsageSample {
+            total_cpu_time_ns: 1_000_000_000,
+            sampled_at: Instant::now(),
+        };
+        // elapsed == MAX_CPU_SAMPLE_WINDOW: must be accepted (> check, not >=)
         let cpu = cpu_percent_between(
             &previous,
             2_000_000_000,
-            previous.sampled_at + Duration::from_millis(5_200),
+            previous.sampled_at + MAX_CPU_SAMPLE_WINDOW,
         );
+        assert!(cpu.is_some(), "sample at exactly the window boundary should be kept");
+    }
 
-        assert!(cpu.is_some());
+    #[test]
+    fn cpu_percent_none_one_ns_past_max_window() {
+        let previous = CpuUsageSample {
+            total_cpu_time_ns: 1_000_000_000,
+            sampled_at: Instant::now(),
+        };
+        let cpu = cpu_percent_between(
+            &previous,
+            2_000_000_000,
+            previous.sampled_at + MAX_CPU_SAMPLE_WINDOW + Duration::from_nanos(1),
+        );
+        assert_eq!(cpu, None, "sample one ns past the window must be dropped");
+    }
+
+    #[test]
+    fn sort_orders_by_memory_descending_then_cpu_descending_then_label_ascending() {
+        use daemon_proto::DaemonResourceUsageProjectWire;
+
+        let make = |label: &str, mem: u64, cpu: f32| DaemonResourceUsageProjectWire {
+            key: label.to_string(),
+            label: label.to_string(),
+            cpu_percent: cpu,
+            memory_bytes: mem,
+            tasks: vec![],
+        };
+
+        let mut rows = vec![
+            make("beta", 100, 50.0),  // same mem as alpha, higher cpu → second
+            make("alpha", 100, 80.0), // highest cpu at this mem tier → first
+            make("gamma", 200, 10.0), // highest mem → wins overall
+            make("delta", 50, 99.0),  // lowest mem → last despite highest cpu
+        ];
+
+        super::sort_projects(&mut rows);
+
+        assert_eq!(rows[0].label, "gamma");  // 200 bytes
+        assert_eq!(rows[1].label, "alpha");  // 100 bytes, 80% cpu
+        assert_eq!(rows[2].label, "beta");   // 100 bytes, 50% cpu
+        assert_eq!(rows[3].label, "delta");  // 50 bytes
+    }
+
+    #[test]
+    fn sort_breaks_ties_by_label_ascending() {
+        use daemon_proto::DaemonResourceUsageProjectWire;
+
+        let make = |label: &str| DaemonResourceUsageProjectWire {
+            key: label.to_string(),
+            label: label.to_string(),
+            cpu_percent: 0.0,
+            memory_bytes: 100,
+            tasks: vec![],
+        };
+
+        let mut rows = vec![make("zebra"), make("apple"), make("mango")];
+        super::sort_projects(&mut rows);
+
+        assert_eq!(rows[0].label, "apple");
+        assert_eq!(rows[1].label, "mango");
+        assert_eq!(rows[2].label, "zebra");
+    }
+
+    #[test]
+    fn aggregates_multi_project_multi_task_correctly() {
+        // Two projects, each with two tasks, each with one session.
+        // Project totals must equal sum of their tasks; task totals must equal their sessions.
+        let mut sampler = ResourceUsageSampler::default();
+        let tracked = [
+            TrackedProcess { pid: 11, key: "s1".into(), label: "S1".into(), project_key: "p1".into(), project_label: "P1".into(), task_key: "t1".into(), task_label: "T1".into(), icon_path: "" },
+            TrackedProcess { pid: 12, key: "s2".into(), label: "S2".into(), project_key: "p1".into(), project_label: "P1".into(), task_key: "t2".into(), task_label: "T2".into(), icon_path: "" },
+            TrackedProcess { pid: 13, key: "s3".into(), label: "S3".into(), project_key: "p2".into(), project_label: "P2".into(), task_key: "t3".into(), task_label: "T3".into(), icon_path: "" },
+            TrackedProcess { pid: 14, key: "s4".into(), label: "S4".into(), project_key: "p2".into(), project_label: "P2".into(), task_key: "t4".into(), task_label: "T4".into(), icon_path: "" },
+        ];
+        let start = Instant::now();
+        // Warm up previous_cpu_samples
+        let _ = sampler.sample_at(start, 10, &tracked, vec![
+            RawProcessSample { pid: 10, ppid: 1, total_cpu_time_ns: 0, memory_bytes: 50 },
+            RawProcessSample { pid: 11, ppid: 10, total_cpu_time_ns: 0, memory_bytes: 100 },
+            RawProcessSample { pid: 12, ppid: 10, total_cpu_time_ns: 0, memory_bytes: 200 },
+            RawProcessSample { pid: 13, ppid: 10, total_cpu_time_ns: 0, memory_bytes: 300 },
+            RawProcessSample { pid: 14, ppid: 10, total_cpu_time_ns: 0, memory_bytes: 400 },
+        ]);
+        let snapshot = sampler.sample_at(start + Duration::from_secs(1), 10, &tracked, vec![
+            RawProcessSample { pid: 10, ppid: 1,  total_cpu_time_ns: 100_000_000, memory_bytes: 50 },
+            RawProcessSample { pid: 11, ppid: 10, total_cpu_time_ns: 200_000_000, memory_bytes: 100 },
+            RawProcessSample { pid: 12, ppid: 10, total_cpu_time_ns: 300_000_000, memory_bytes: 200 },
+            RawProcessSample { pid: 13, ppid: 10, total_cpu_time_ns: 400_000_000, memory_bytes: 300 },
+            RawProcessSample { pid: 14, ppid: 10, total_cpu_time_ns: 500_000_000, memory_bytes: 400 },
+        ]);
+
+        assert_eq!(snapshot.session_count, 4);
+        assert_eq!(snapshot.projects.len(), 2);
+
+        // Find each project (HashMap ordering is not stable)
+        let p1 = snapshot.projects.iter().find(|p| p.key == "p1").expect("p1 missing");
+        let p2 = snapshot.projects.iter().find(|p| p.key == "p2").expect("p2 missing");
+
+        // Memory: p1 = 100 + 200 = 300, p2 = 300 + 400 = 700
+        assert_eq!(p1.memory_bytes, 300);
+        assert_eq!(p2.memory_bytes, 700);
+
+        // Task totals must equal their sessions
+        let t1 = p1.tasks.iter().find(|t| t.key == "t1").expect("t1 missing");
+        let t2 = p1.tasks.iter().find(|t| t.key == "t2").expect("t2 missing");
+        assert_eq!(t1.memory_bytes, 100);
+        assert_eq!(t2.memory_bytes, 200);
+        assert_eq!(p1.memory_bytes, t1.memory_bytes + t2.memory_bytes);
+        assert_eq!(p2.memory_bytes, snapshot.projects.iter().find(|p| p.key == "p2").unwrap()
+            .tasks.iter().map(|t| t.memory_bytes).sum::<u64>());
+    }
+
+    #[test]
+    fn collect_process_tree_terminates_on_cycle() {
+        // Synthetic cycle: pid 10 → 11 → 10. Must terminate with a finite result.
+        let mut process_by_pid = HashMap::new();
+        for pid in [10u32, 11] {
+            process_by_pid.insert(pid, ProcessSample { pid, ppid: 1, cpu_percent: 0.0, memory_bytes: 0 });
+        }
+        let children_by_pid = HashMap::from([
+            (10u32, vec![11u32]),
+            (11u32, vec![10u32]), // cycle back
+        ]);
+        let tree = collect_process_tree(10, &children_by_pid, &process_by_pid);
+        assert_eq!(tree.len(), 2);
+        assert!(tree.contains(&10));
+        assert!(tree.contains(&11));
     }
 }
