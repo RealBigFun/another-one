@@ -1763,6 +1763,16 @@ impl ProjectStore {
             })
     }
 
+    /// Returns `true` when `project_id` resolves to a git-backed workspace.
+    /// Checks for a `.git` entry (directory for root repos, gitfile for worktrees)
+    /// at the workspace root. Returns `false` for non-git directories or
+    /// unresolvable project IDs.
+    pub fn is_git_backed(&self, project_id: &str) -> bool {
+        self.workspace_path(project_id)
+            .map(|path| crate::git_operation::path_has_git_marker(&path))
+            .unwrap_or(false)
+    }
+
     pub fn repo_for_workspace(&self, project_id: &str) -> Option<&RepoRecord> {
         self.project(project_id)
             .and_then(|project| self.repo(&project.repo_id))

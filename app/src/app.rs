@@ -10561,6 +10561,10 @@ impl AnotherOneApp {
             return;
         }
 
+        if !self.is_project_path_git_backed(&project_path) {
+            return;
+        }
+
         let commit_limit = if self.right_sidebar_mode == RightSidebarMode::Commits {
             workspace.active_section.as_ref().and_then(|section| {
                 if section.project_id == project_id {
@@ -10588,6 +10592,10 @@ impl AnotherOneApp {
         let Some(project_path) = self.project_path(project_id) else {
             return false;
         };
+
+        if !self.is_project_path_git_backed(&project_path) {
+            return false;
+        }
 
         self.git_refresh_operation
             .start(another_one_core::git_service::spawn_refresh(
@@ -12434,29 +12442,16 @@ impl AnotherOneApp {
         );
     }
 
-    /// Lazily cached `.git`-existence check for
-    /// `request_project_pull_request_lookup` /
-    /// `request_project_page_pull_requests`. First call per path
-    /// hits `path_has_git_marker` (one stat syscall), subsequent
-    /// calls are HashSet lookups. Disabled paths are never
-    /// promoted back to enabled during a session — if the user
-    /// runs `git init` in a project, they can restart the app to
-    /// re-evaluate. That's acceptable because the alternative is
-    /// running a stat syscall on every render tick to catch a
-    /// rare user action.
-    ///
-    /// Returns `true` when the path *is* git-backed (lookups
-    /// proceed) and `false` when the cached-miss short-circuits.
     fn is_project_path_git_backed(&mut self, project_path: &std::path::Path) -> bool {
-        if self.pr_lookup_disabled_paths.contains(project_path) {
-            return false;
-        }
-        if another_one_core::git_operation::path_has_git_marker(project_path) {
-            return true;
-        }
-        self.pr_lookup_disabled_paths
-            .insert(project_path.to_path_buf());
-        false
+        check_project_path_git_backed(&mut self.pr_lookup_disabled_paths, project_path)
+    }
+
+    /// Returns `true` when a GitHub remote URL has been confirmed for this
+    /// project. `false` means either the lookup hasn't completed yet or the
+    /// project has no GitHub remote. UI features that require GitHub (PR
+    /// section, Checks tab) should gate on this.
+    pub(crate) fn has_github_remote(&self, project_id: &str) -> bool {
+        self.project_github_links.contains_key(project_id)
     }
 
     pub(crate) fn project_page_pr_query_key(
@@ -13754,6 +13749,10 @@ fn footer_branch_name_for_section(
     project_store: &ProjectStore,
     section: &SectionId,
 ) -> Option<String> {
+    if !project_store.is_git_backed(&section.project_id) {
+        return None;
+    }
+
     if let Some(task_id) = section.task_id.as_deref() {
         if let Some(task) = project_store.task(task_id) {
             return project_store
@@ -14306,12 +14305,35 @@ fn remove_terminal_runtime_state<T>(
     live_terminal_runtimes.remove(key)
 }
 
+/// Lazily cached `.git`-existence check. First call per path hits
+/// `path_has_git_marker` (one stat syscall); subsequent calls are
+/// HashSet lookups. Disabled paths are never promoted back to
+/// enabled during a session — if the user runs `git init` they
+/// must restart the app. That's acceptable because the alternative
+/// is a stat syscall on every render tick for a rare user action.
+///
+/// Returns `true` when the path is git-backed, `false` otherwise.
+fn check_project_path_git_backed(
+    disabled: &mut std::collections::HashSet<std::path::PathBuf>,
+    project_path: &std::path::Path,
+) -> bool {
+    if disabled.contains(project_path) {
+        return false;
+    }
+    if another_one_core::git_operation::path_has_git_marker(project_path) {
+        return true;
+    }
+    disabled.insert(project_path.to_path_buf());
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         active_toolbar_git_action_entry, apply_terminal_session_backfill,
-        apply_terminal_title_update, choose_initial_section, collect_drained_git_action_replies,
-        encode_terminal_mouse_event, fixed_title_for_project_action, global_tab_navigation_targets,
+        apply_terminal_title_update, check_project_path_git_backed, choose_initial_section,
+        collect_drained_git_action_replies, encode_terminal_mouse_event,
+        fixed_title_for_project_action, global_tab_navigation_targets,
         has_active_toolbar_git_action, latest_project_list_projection, new_tab_seed_agent_id,
         next_global_tab_navigation_target, next_project_navigation_target,
         next_task_navigation_target, open_in_target_path_for_project, persisted_active_section_key,
@@ -17125,6 +17147,65 @@ mod tests {
         assert_eq!(first_lines, 0);
         assert_eq!(second_lines, 1);
         assert_eq!(second_remainder, 0.0);
+    }
+
+    // ── check_project_path_git_backed ────────────────────────────────
+    //
+    // These tests guard the fix for the per-frame warning-toast flood
+    // that occurred when a project's directory was not a git repo.
+    // `maybe_schedule_active_git_refresh` and `refresh_project_git_state`
+    // now gate on this function before spawning a background git thread.
+
+    #[test]
+    fn non_git_dir_is_not_git_backed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut disabled = std::collections::HashSet::new();
+        assert!(!check_project_path_git_backed(&mut disabled, dir.path()));
+    }
+
+    #[test]
+    fn non_git_dir_is_added_to_disabled_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut disabled = std::collections::HashSet::new();
+        check_project_path_git_backed(&mut disabled, dir.path());
+        assert!(
+            disabled.contains(dir.path()),
+            "non-git path must be recorded so subsequent calls skip the stat syscall"
+        );
+    }
+
+    #[test]
+    fn cached_non_git_dir_returns_false_without_fs_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut disabled = std::collections::HashSet::new();
+        // First call: path is real, no .git → false + cached
+        assert!(!check_project_path_git_backed(&mut disabled, dir.path()));
+        // Now add .git so a fresh stat would return true — cached miss must win
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        assert!(
+            !check_project_path_git_backed(&mut disabled, dir.path()),
+            "cached disabled path must stay disabled within a session"
+        );
+    }
+
+    #[test]
+    fn git_backed_dir_is_git_backed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let mut disabled = std::collections::HashSet::new();
+        assert!(check_project_path_git_backed(&mut disabled, dir.path()));
+        assert!(
+            !disabled.contains(dir.path()),
+            "git-backed path must NOT be added to the disabled set"
+        );
+    }
+
+    #[test]
+    fn missing_path_is_not_git_backed() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-subdir");
+        let mut disabled = std::collections::HashSet::new();
+        assert!(!check_project_path_git_backed(&mut disabled, &missing));
     }
 }
 

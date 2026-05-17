@@ -971,12 +971,14 @@ impl WorkspacePane {
                                 .text_color(body_col)
                                 .child(format!("Project: {}", section_id.project_id)),
                         )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(body_col)
-                                .child(format!("Branch: {}", section_id.branch_name)),
-                        )
+                        .when(!section_id.branch_name.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(body_col)
+                                    .child(format!("Branch: {}", section_id.branch_name)),
+                            )
+                        })
                         .child(
                             gpui::div()
                                 .text_sm()
@@ -1516,12 +1518,14 @@ impl WorkspacePane {
                             .text_color(body_col)
                             .child(format!("Project: {}", section_id.project_id)),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(body_col)
-                            .child(format!("Branch: {}", section_id.branch_name)),
-                    )
+                    .when(!section_id.branch_name.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_sm()
+                                .text_color(body_col)
+                                .child(format!("Branch: {}", section_id.branch_name)),
+                        )
+                    })
                     .child(
                         gpui::div()
                             .text_sm()
