@@ -5929,6 +5929,28 @@ impl AnotherOneApp {
             // The daemon owns the PTY regardless of whether the client
             // is desktop or mobile — the only legitimate distinction
             // between clients is viewport size, not the platform binary.
+
+            // Claim the viewport before dispatching LaunchTab so the
+            // daemon opens the PTY at the pane's actual grid size
+            // rather than whatever the last claimed size was.
+            // `DESKTOP_LOCAL_VIEWER_ID` is this process's viewer id;
+            // the in-process registry applies it synchronously so the
+            // size is visible to the daemon's spawn path.
+            use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
+            if let Ok(mut state) = self.registry_state.lock() {
+                state.claim_viewport(
+                    DESKTOP_LOCAL_VIEWER_ID,
+                    request.key.clone(),
+                    request.size.cols,
+                    request.size.rows,
+                );
+            }
+            // Seed the size so apply_proto_terminal_launched can use
+            // it if TerminalLaunched arrives in the rare race where
+            // the runtime hasn't been installed yet.
+            self.in_flight_remote_launches
+                .insert(request.key.clone(), request.size);
+
             log::info!(
                 "client: ensure_active_terminal_runtime → stream-from-daemon \
                  section={} tab={} size={}x{}",
@@ -6839,11 +6861,13 @@ impl AnotherOneApp {
     /// `ensure_active_terminal_runtime` finds it and opens a
     /// `TerminalSubscribe` (Phase 5b-iii).
     ///
-    /// The size comes from `in_flight_remote_launches`, populated
-    /// when LaunchTab was dispatched. If the entry is missing
-    /// (push raced ahead of the dispatch callback or a stale
-    /// retry), fall back to the default 80x24 — the next focus
-    /// pass will reshape via the standard viewport-claim path.
+    /// The size comes from `in_flight_remote_launches`, populated by
+    /// `ensure_active_terminal_runtime` before dispatching LaunchTab.
+    /// In the normal case `ensure_active_terminal_runtime` also
+    /// pre-installs the viewer-only runtime, so this function returns
+    /// early via the `contains_key` guard below. The size fallback and
+    /// runtime install here serve the race where TerminalLaunched
+    /// arrives before the local runtime is in place.
     fn apply_proto_terminal_launched(&mut self, section_id: &str, tab_id: &str) {
         log::trace!("DBG: apply_proto_terminal_launched section={section_id} tab={tab_id}");
         let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
