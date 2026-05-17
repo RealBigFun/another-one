@@ -2390,9 +2390,18 @@ impl AnotherOneApp {
     /// need to re-render the outer frame must call `cx.notify()` separately.
     pub(crate) fn sync_right_sidebar_snapshot(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.build_right_sidebar_snapshot(cx);
-        self.right_sidebar_panel.update(cx, |panel, cx| {
-            panel.snapshot = snapshot;
-            cx.notify();
+        // RightSidebarPanel listeners reach back into AnotherOneApp via
+        // `this.app.update(cx, …)`. A direct `right_sidebar_panel.update`
+        // here would be a second lease on the panel and panic GPUI's
+        // double_lease_panic. `cx.defer` defers the inner update to after
+        // the listener's lock releases — same pattern as the workspace_pane
+        // context-menu path at ~line 9559.
+        let panel = self.right_sidebar_panel.clone();
+        cx.defer(move |cx| {
+            panel.update(cx, |panel, cx| {
+                panel.snapshot = snapshot;
+                cx.notify();
+            });
         });
     }
 }
