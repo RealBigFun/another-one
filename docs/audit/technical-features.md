@@ -86,7 +86,7 @@ This document lists the internal capabilities, platform features, and system beh
 ## 6. Terminal Runtime
 
 ### 6.1 PTY and terminal emulation
-- PTY-backed terminal support via portable-pty.
+- PTY owned and managed by the embedded daemon; raw byte streams delivered to the app over iroh QUIC.
 - Terminal emulation via alacritty_terminal.
 - Live terminal runtime abstraction.
 - Terminal grid sizing and snapshot generation.
@@ -194,3 +194,4 @@ This document lists the internal capabilities, platform features, and system beh
 - Codex session start hook support.
 - Pi session start extension support.
 - Example hook configuration docs.
+- MCP server configuration per agent (add, toggle, remove servers from Settings).

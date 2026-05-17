@@ -60,6 +60,7 @@ This document lists the features that a user of `another-one` can see, trigger, 
 - Paste into terminal sessions.
 - Preview pasted images.
 - View tab titles that reflect the current terminal or agent session.
+- Search terminal scrollback output.
 
 ## 4. Git and Branch Workflow
 
@@ -132,6 +133,15 @@ This document lists the features that a user of `another-one` can see, trigger, 
 - Reset an individual shortcut.
 - Reset all shortcuts.
 
+### 6.5 Theme
+- Toggle between dark mode and light mode.
+- Automatic OS appearance detection.
+
+### 6.6 MCP server management
+- Add MCP servers to the agent environment.
+- Toggle individual MCP servers on or off per agent.
+- Remove MCP servers from the configuration.
+
 ## 7. Open In Integrations
 
 ### 7.1 External app launching
@@ -168,3 +178,11 @@ This document lists the features that a user of `another-one` can see, trigger, 
 ### 9.3 UI feedback
 - See tooltips on interactive controls.
 - See toast notifications and temporary feedback messages.
+
+### 9.4 App updates
+- Automatic background update checks.
+- In-app install prompt when an update is available.
+
+## 10. Platform Notes
+
+This inventory covers the desktop app (macOS and Linux). The app also targets Android and iOS via a native GPUI mobile shell; mobile-specific UI surfaces are not covered here.
