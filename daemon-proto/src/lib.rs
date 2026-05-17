@@ -1744,6 +1744,7 @@ pub struct DaemonResourceUsageProjectWire {
     pub key: String,
     #[serde(default)]
     pub label: String,
+    /// Raw per-core value; divide by [`DaemonResourceUsageWire::cpu_core_count`] before display.
     #[serde(default)]
     pub cpu_percent: f32,
     #[serde(default)]
@@ -1758,6 +1759,7 @@ pub struct DaemonResourceUsageTaskWire {
     pub key: String,
     #[serde(default)]
     pub label: String,
+    /// Raw per-core value; divide by [`DaemonResourceUsageWire::cpu_core_count`] before display.
     #[serde(default)]
     pub cpu_percent: f32,
     #[serde(default)]
@@ -1777,6 +1779,7 @@ pub struct DaemonResourceUsageSessionWire {
     /// String so the wire shape stays platform-agnostic.
     #[serde(default)]
     pub icon_path: String,
+    /// Raw per-core value; divide by [`DaemonResourceUsageWire::cpu_core_count`] before display.
     #[serde(default)]
     pub cpu_percent: f32,
     #[serde(default)]

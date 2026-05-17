@@ -614,3 +614,20 @@ impl AnotherOneApp {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_cpu;
+
+    #[test]
+    fn normalize_cpu_treats_zero_core_count_as_one() {
+        // core_count=0 is the wire default; max(1) must prevent division by zero.
+        assert_eq!(normalize_cpu(100.0, 0), 100.0);
+    }
+
+    #[test]
+    fn normalize_cpu_divides_by_core_count() {
+        assert_eq!(normalize_cpu(200.0, 2), 100.0);
+        assert_eq!(normalize_cpu(400.0, 4), 100.0);
+    }
+}

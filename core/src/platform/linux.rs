@@ -192,18 +192,25 @@ fn flatpak_app_installed(app_id: &str) -> bool {
 /// Parse `MemTotal:` from `/proc/meminfo` and convert KiB to bytes.
 /// Shared with `AndroidPlatform`, which uses the same procfs layout.
 /// Result is cached — total physical RAM never changes at runtime.
+/// Only a successful read is cached; transient failures are retried on
+/// the next call rather than permanently poisoning the cache.
 pub(super) fn proc_meminfo_total_bytes() -> Option<u64> {
     use std::sync::OnceLock;
-    static CACHED: OnceLock<Option<u64>> = OnceLock::new();
-    *CACHED.get_or_init(|| {
-        let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-        let line = meminfo.lines().find(|line| line.starts_with("MemTotal:"))?;
-        let kib = line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|value| value.parse::<u64>().ok())?;
-        Some(kib.saturating_mul(1024))
-    })
+    static CACHED: OnceLock<u64> = OnceLock::new();
+    // Fast path: return cached value if already populated.
+    if let Some(&cached) = CACHED.get() {
+        return Some(cached);
+    }
+    // Slow path: read from /proc/meminfo and cache on success only.
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = meminfo.lines().find(|line| line.starts_with("MemTotal:"))?;
+    let kib = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok())?;
+    let bytes = kib.saturating_mul(1024);
+    // get_or_init: if another thread raced us here, use their result.
+    Some(*CACHED.get_or_init(|| bytes))
 }
 
 /// Sample the app PID plus tracked process trees from procfs.
@@ -460,6 +467,15 @@ mod tests {
     #[test]
     fn converts_linux_ticks_to_nanoseconds() {
         assert_eq!(ticks_to_nanos(250, 100), 2_500_000_000);
+    }
+
+    #[test]
+    fn ticks_to_nanos_preserves_sub_tick_precision() {
+        // ticks=99, clock=100 → 0 whole seconds, remainder=99
+        // expected: 99 * 1_000_000_000 / 100 = 990_000_000 ns
+        assert_eq!(ticks_to_nanos(99, 100), 990_000_000);
+        // ticks=1, clock=100 → 10_000_000 ns
+        assert_eq!(ticks_to_nanos(1, 100), 10_000_000);
     }
 
     #[test]
