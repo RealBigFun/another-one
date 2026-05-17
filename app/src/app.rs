@@ -648,14 +648,14 @@ struct TerminalRuntimeRequest {
 use another_one_core::git_service::{ChangedFilesGitMutation, ChangedFilesGitMutationReply};
 
 #[derive(Clone)]
-struct PendingChangedFilesGitMutations {
-    confirmed_files: Option<Arc<[ChangedFile]>>,
-    in_flight: Option<ChangedFilesGitMutation>,
-    queued: VecDeque<ChangedFilesGitMutation>,
+pub(crate) struct PendingChangedFilesGitMutations {
+    pub(crate) confirmed_files: Option<Arc<[ChangedFile]>>,
+    pub(crate) in_flight: Option<ChangedFilesGitMutation>,
+    pub(crate) queued: VecDeque<ChangedFilesGitMutation>,
 }
 
 impl PendingChangedFilesGitMutations {
-    fn mutations(&self) -> impl Iterator<Item = &ChangedFilesGitMutation> {
+    pub(crate) fn mutations(&self) -> impl Iterator<Item = &ChangedFilesGitMutation> {
         self.in_flight.iter().chain(self.queued.iter())
     }
 }
@@ -1838,6 +1838,10 @@ pub struct AnotherOneApp {
     /// Pending task deletion confirmation for a worktree task.
     pub(crate) sidebar_task_delete_confirm: Option<SidebarTaskDeleteConfirmState>,
     pub(crate) workspace_pane: Entity<WorkspacePane>,
+    /// Persistent right-sidebar panel entity. Renders independently of
+    /// AnotherOneApp and is notified only when git/CI state changes,
+    /// not on every terminal output tick.
+    pub(crate) right_sidebar_panel: Entity<crate::right_sidebar::RightSidebarPanel>,
     /// Cached changed-file snapshot per project.
     pub(crate) changed_files: HashMap<String, Arc<[ChangedFile]>>,
     /// Cached partitioned sidebar data derived from `changed_files`.
@@ -1852,7 +1856,7 @@ pub struct AnotherOneApp {
     /// Toolbar git actions currently running in the background, keyed by originating project id.
     pub(crate) active_git_actions: HashMap<String, ActiveToolbarGitAction>,
     /// Pending right-sidebar git mutations keyed by project id.
-    pending_changed_files_git_mutations: HashMap<String, PendingChangedFilesGitMutations>,
+    pub(crate) pending_changed_files_git_mutations: HashMap<String, PendingChangedFilesGitMutations>,
     /// Sender for background right-sidebar git mutation replies.
     changed_files_git_mutation_sender: broadcast::Sender<ChangedFilesGitMutationReply>,
     /// Receiver for background right-sidebar git mutation replies.
@@ -4358,6 +4362,7 @@ impl AnotherOneApp {
             self.mark_git_refresh_stale();
         }
         cx.stop_propagation();
+        self.sync_right_sidebar_snapshot(cx);
         cx.notify();
     }
 
@@ -4932,6 +4937,9 @@ impl AnotherOneApp {
                 section_states,
             )
         });
+        let right_sidebar_panel = cx.new(|cx| {
+            crate::right_sidebar::RightSidebarPanel::new(app_entity.clone(), cx.focus_handle())
+        });
 
         let app = Self {
             sidebar_w: initial_sidebar_w,
@@ -4965,6 +4973,7 @@ impl AnotherOneApp {
             new_task_modal: None,
             sidebar_task_rename: None,
             workspace_pane,
+            right_sidebar_panel,
             changed_files: HashMap::new(),
             changed_files_list_snapshots: HashMap::new(),
             focus_handle,
@@ -5148,6 +5157,15 @@ impl AnotherOneApp {
 
         let mut app = app;
         app.refresh_resource_usage();
+
+        // Keep the right sidebar panel's snapshot in sync whenever
+        // WorkspacePane is notified (section switch, diff open, focus
+        // change, tab rename, etc.) but NOT for terminal output bytes,
+        // which update AnotherOneApp only.
+        cx.observe(&app.workspace_pane, |this, _, cx| {
+            this.sync_right_sidebar_snapshot(cx);
+        })
+        .detach();
 
         cx.observe_window_bounds(window, |this, window, cx| {
             let viewport_size = window.viewport_size();
@@ -10163,7 +10181,7 @@ impl AnotherOneApp {
                 .is_some()
             || self.sidebar_task_delete_confirm.is_some()
             || self.project_remove_confirm.is_some()
-            || self.discard_confirm.is_some()
+            || self.right_sidebar_panel.read(cx).discard_confirm.is_some()
     }
 
     pub(crate) fn navigate_tab_shortcut(
@@ -13326,7 +13344,7 @@ impl AnotherOneApp {
                     .flex_shrink_0()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.changed_files_panel(window, cx)),
+                    .child(self.right_sidebar_panel.clone()),
             )
     }
 
@@ -17623,7 +17641,7 @@ impl AnotherOneApp {
                 .flex_col()
                 .size_full()
                 .child(self.narrow_changed_files_strip(window, cx))
-                .child(self.changed_files_panel(window, cx))
+                .child(self.right_sidebar_panel.clone())
                 .into_any_element(),
         };
         let body = div()
@@ -17856,10 +17874,16 @@ impl Render for AnotherOneApp {
                         async_cx.background_executor().timer(interval).await;
                         let next_interval = handle.update(async_cx, |this, cx| {
                             let mut should_notify = false;
-                            should_notify |= this.drain_git_actions(cx);
-                            should_notify |= this.drain_changed_files_git_mutations(cx);
+                            // sidebar_changed tracks git/CI drains whose results
+                            // appear in the RightSidebarPanel snapshot.  It is kept
+                            // separate from should_notify so that pure terminal-output
+                            // ticks do NOT push a fresh snapshot to the sidebar panel
+                            // (and therefore do NOT cause an extra panel re-render).
+                            let mut sidebar_changed = false;
+                            sidebar_changed |= this.drain_git_actions(cx);
+                            sidebar_changed |= this.drain_changed_files_git_mutations(cx);
                             should_notify |= this.drain_changed_file_diff(cx);
-                            should_notify |= this.drain_git_refresh(cx);
+                            sidebar_changed |= this.drain_git_refresh(cx);
                             should_notify |= this.drain_new_task_branch_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_branch_creation(cx);
@@ -17868,8 +17892,8 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
-                            should_notify |= this.drain_project_check_runs_lookup(cx);
-                            should_notify |= this.drain_project_issue_discovery();
+                            sidebar_changed |= this.drain_project_check_runs_lookup(cx);
+                            sidebar_changed |= this.drain_project_issue_discovery();
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
                             should_notify |= this.drain_terminal_scrollback_replies(cx);
@@ -17883,7 +17907,7 @@ impl Render for AnotherOneApp {
                             if let Some(focused) = this.active_terminal_key(cx) {
                                 this.maybe_dispatch_scrollback_fetch(&focused);
                             }
-                            should_notify |= this.drain_app_events(cx);
+                            sidebar_changed |= this.drain_app_events(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;
@@ -17916,6 +17940,13 @@ impl Render for AnotherOneApp {
                             should_notify |= this.tick_resource_usage();
                             should_notify |= this.tick_pasted_image_preview(cx);
                             this.maybe_schedule_active_git_refresh(cx);
+                            // Push a fresh snapshot to the right sidebar panel only
+                            // when git/CI data actually changed (WorkspacePane changes
+                            // are handled by the cx.observe subscription in new()).
+                            should_notify |= sidebar_changed;
+                            if sidebar_changed {
+                                this.sync_right_sidebar_snapshot(cx);
+                            }
                             if should_notify {
                                 cx.notify();
                             }
