@@ -193,22 +193,14 @@ fn kill_process_group(pid: u32) {
 
 /// Returns the user's login shell for spawning interactive terminal sessions.
 ///
-/// Prefers the passwd database (`pw_shell`) so the result is correct even when
-/// `$SHELL` is stale (e.g. set to a previous shell before the user switched).
-/// Falls back to `$SHELL`, then to `"sh"`.
+/// Prefers the passwd database (`pw_shell`) via the thread-safe `getpwuid_r`
+/// so the result is correct even when `$SHELL` is stale (e.g. set to a
+/// previous shell before the user switched). Falls back to `$SHELL`, then
+/// to `"sh"`.
 pub fn login_shell() -> String {
     #[cfg(unix)]
-    {
-        use std::ffi::CStr;
-        let ent = unsafe { libc::getpwuid(libc::getuid()) };
-        if !ent.is_null() {
-            let pw_shell = unsafe { CStr::from_ptr((*ent).pw_shell) };
-            if let Ok(s) = pw_shell.to_str() {
-                if !s.is_empty() && std::path::Path::new(s).exists() {
-                    return s.to_owned();
-                }
-            }
-        }
+    if let Some(s) = login_shell_from_passwd() {
+        return s;
     }
 
     if let Some(shell) = std::env::var_os("SHELL").filter(|s| !s.is_empty()) {
@@ -220,19 +212,59 @@ pub fn login_shell() -> String {
     "sh".to_owned()
 }
 
+/// Thread-safe passwd lookup via `getpwuid_r`.
+///
+/// Returns `Some(shell)` when the passwd database has a non-empty, existing
+/// shell entry for the current user. Returns `None` on any failure so the
+/// caller can fall back to `$SHELL`.
+#[cfg(unix)]
+fn login_shell_from_passwd() -> Option<String> {
+    use std::ffi::CStr;
+
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0u8; 2048];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+
+    // SAFETY: `getpwuid_r` is the reentrant, thread-safe variant of
+    // `getpwuid`. It writes into `pwd` and `buf` (both owned by this stack
+    // frame) and sets `result` to either `&pwd` or null. No other thread
+    // can overwrite these locals, so there is no static-buffer race.
+    let ret = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            &mut pwd,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    if ret != 0 || result.is_null() {
+        return None;
+    }
+
+    // SAFETY: result points to `pwd` which is valid for the lifetime of
+    // `buf`. `pw_shell` is a pointer into `buf`. We copy it into a `String`
+    // before `buf` drops.
+    let pw_shell = unsafe { CStr::from_ptr((*result).pw_shell) };
+    let s = pw_shell.to_str().ok()?;
+    if s.is_empty() {
+        return None;
+    }
+    if !std::path::Path::new(s).exists() {
+        return None;
+    }
+    Some(s.to_owned())
+}
+
 fn user_shell_path() -> Option<OsString> {
-    if let Some(shell) = std::env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
-        return Some(shell);
-    }
-
-    #[cfg(target_os = "macos")]
+    // Use login_shell() — which reads from passwd via getpwuid_r — so PATH
+    // discovery runs under the same shell that will actually be launched.
+    // If $SHELL is stale (e.g. /usr/sbin/zsh after switching to fish) this
+    // ensures we run fish's login profile instead of the old shell's.
+    #[cfg(unix)]
     {
-        Some(OsString::from("/bin/zsh"))
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Some(OsString::from("/bin/bash"))
+        return Some(OsString::from(login_shell()));
     }
 
     #[cfg(not(unix))]
