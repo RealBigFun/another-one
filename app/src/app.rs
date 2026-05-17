@@ -14306,11 +14306,15 @@ fn remove_terminal_runtime_state<T>(
 }
 
 /// Lazily cached `.git`-existence check. First call per path hits
-/// `path_has_git_marker` (one stat syscall); subsequent calls are
+/// `try_exists()` on `<path>/.git` (one stat syscall); subsequent calls are
 /// HashSet lookups. Disabled paths are never promoted back to
 /// enabled during a session — if the user runs `git init` they
 /// must restart the app. That's acceptable because the alternative
 /// is a stat syscall on every render tick for a rare user action.
+///
+/// Importantly, only a *confirmed absence* (`Ok(false)`) is cached.
+/// A stat/permissions error (`Err(_)`) returns `false` without caching,
+/// so the next call will retry rather than permanently blacklisting the path.
 ///
 /// Returns `true` when the path is git-backed, `false` otherwise.
 fn check_project_path_git_backed(
@@ -14320,11 +14324,14 @@ fn check_project_path_git_backed(
     if disabled.contains(project_path) {
         return false;
     }
-    if another_one_core::git_operation::path_has_git_marker(project_path) {
-        return true;
+    match project_path.join(".git").try_exists() {
+        Ok(true) => true,
+        Ok(false) => {
+            disabled.insert(project_path.to_path_buf());
+            false
+        }
+        Err(_) => false,
     }
-    disabled.insert(project_path.to_path_buf());
-    false
 }
 
 #[cfg(test)]
@@ -17206,6 +17213,23 @@ mod tests {
         let missing = dir.path().join("no-such-subdir");
         let mut disabled = std::collections::HashSet::new();
         assert!(!check_project_path_git_backed(&mut disabled, &missing));
+    }
+
+    #[test]
+    fn git_worktree_gitfile_is_git_backed() {
+        // Git worktrees have a `.git` *file* (not directory) containing
+        // "gitdir: ..." — `try_exists()` returns true for files too.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".git"), "gitdir: ../some-repo/.git/worktrees/wt\n").unwrap();
+        let mut disabled = std::collections::HashSet::new();
+        assert!(
+            check_project_path_git_backed(&mut disabled, dir.path()),
+            "worktree with .git file must be identified as git-backed"
+        );
+        assert!(
+            !disabled.contains(dir.path()),
+            "git-backed (gitfile) path must not be added to disabled set"
+        );
     }
 }
 

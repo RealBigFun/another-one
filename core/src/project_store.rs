@@ -8995,4 +8995,59 @@ Binary files a/image.png and b/image.png differ
         assert_eq!(diff.files[0].hunks[0].rows[0].kind, DiffRowKind::Added);
         assert_eq!(diff.files[0].hunks[0].rows[1].content, "two");
     }
+
+    // ── ProjectStore::is_git_backed ──────────────────────────────────
+    //
+    // These tests verify that is_git_backed correctly delegates to
+    // path_has_git_marker and handles unknown project IDs gracefully.
+
+    #[test]
+    fn is_git_backed_returns_false_for_unknown_project_id() {
+        let store = super::ProjectStore {
+            repos: HashMap::new(),
+            projects_by_id: HashMap::new(),
+            projects: Vec::new(),
+            project_order: Vec::new(),
+            tasks_by_id: HashMap::new(),
+            tasks: HashMap::new(),
+            task_ids_by_root_project: HashMap::new(),
+            terminal_sections: HashMap::new(),
+            ui: UiState::default(),
+            persistence: Arc::new(NoopPersistence::new(PathBuf::from(
+                "/tmp/test-projects.json",
+            ))),
+        };
+
+        assert!(
+            !store.is_git_backed("no-such-project"),
+            "unknown project_id must return false"
+        );
+    }
+
+    #[test]
+    fn is_git_backed_returns_true_when_workspace_has_dot_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+
+        let project = Project {
+            id: "proj-git".to_string(),
+            repo_id: "repo-git".to_string(),
+            name: "Git Project".to_string(),
+            path: dir.path().to_path_buf(),
+            kind: ProjectKind::Root,
+            archived: false,
+            checkout: ProjectCheckoutState::default(),
+            branch_settings: ProjectBranchSettings::default(),
+            actions: Vec::new(),
+            worktree_name: None,
+            repo_common_dir: None,
+        };
+
+        let store = sample_project_store(project);
+
+        assert!(
+            store.is_git_backed("proj-git"),
+            "project whose workspace has a .git directory must be git-backed"
+        );
+    }
 }
