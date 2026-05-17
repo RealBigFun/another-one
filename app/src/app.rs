@@ -17823,7 +17823,8 @@ impl Render for AnotherOneApp {
                 Self::footer_section()
                     .justify_end()
                     .pr(px(10.))
-                    .w(px(rw))
+                    .w(px(rw.max(crate::resource_indicator::RESOURCE_INDICATOR_BUTTON_W + 12.)))
+                    .flex_shrink_0()
                     .when(!supports_custom_chrome, |d| {
                         d.child(self.resource_indicator_button(window, cx))
                     }),
