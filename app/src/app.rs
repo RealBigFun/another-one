@@ -13344,7 +13344,10 @@ impl AnotherOneApp {
                     .flex_shrink_0()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.right_sidebar_panel.clone()),
+                    .child(
+                        AnyView::from(self.right_sidebar_panel.clone())
+                            .cached(gpui::StyleRefinement::default()),
+                    ),
             )
     }
 
@@ -17641,7 +17644,10 @@ impl AnotherOneApp {
                 .flex_col()
                 .size_full()
                 .child(self.narrow_changed_files_strip(window, cx))
-                .child(self.right_sidebar_panel.clone())
+                .child(
+                    AnyView::from(self.right_sidebar_panel.clone())
+                        .cached(gpui::StyleRefinement::default()),
+                )
                 .into_any_element(),
         };
         let body = div()
