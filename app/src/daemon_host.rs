@@ -25,13 +25,13 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 
 use portable_pty::MasterPty;
 use tokio::sync::broadcast;
 
-use daemon::{DaemonRegistry, EndpointHandle};
+use daemon::DaemonRegistry;
 use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsRowWire, AgentSettingsViewWire,
     AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
@@ -2552,15 +2552,14 @@ mod tests {
 }
 
 /// Bundle of handles the daemon-host thread hands back to the GUI.
-/// `endpoint_rx` carries the iroh `EndpointHandle` once the network
-/// endpoint binds (mobile clients dial this via QR pairing). `session`
-/// is the in-process client half of an `in_memory::pair()` whose
-/// server half the daemon-host drives via `serve_session` — every
-/// daemon interaction the GUI makes on desktop flows through this
-/// session so the network-vs-in-process distinction is opaque to
-/// callers (mobile holds an `IrohSession` on the same trait).
+/// `session` is the in-process client half of an `in_memory::pair()`
+/// whose server half the daemon-host drives via `serve_session` —
+/// every daemon interaction the GUI makes on desktop flows through
+/// this session so the network-vs-in-process distinction is opaque
+/// to callers (mobile holds an `IrohSession` on the same trait).
+/// The `EndpointHandle` arrives asynchronously via
+/// `AppEvent::DaemonHandleResolved` on the unified event bus.
 pub(crate) struct DaemonHostHandles {
-    pub(crate) endpoint_rx: mpsc::Receiver<anyhow::Result<EndpointHandle>>,
     pub(crate) session: Arc<dyn daemon_transport::Session>,
 }
 
@@ -2577,6 +2576,7 @@ pub(crate) struct DaemonHostHandles {
 pub(crate) fn spawn(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
+    app_event_tx: tokio::sync::mpsc::UnboundedSender<crate::app_event::AppEvent>,
 ) -> DaemonHostHandles {
     // Kick the boot-time `gh auth status` probe before we hand
     // control off to the daemon thread. Done daemon-side (#156)
@@ -2589,24 +2589,20 @@ pub(crate) fn spawn(
         let guard = registry_state.lock().unwrap_or_else(|p| p.into_inner());
         spawn_gh_auth_check(guard.gh_auth_status.clone(), guard.state_change_tx.clone());
     }
-    let (endpoint_tx, endpoint_rx) = mpsc::channel();
     // Loopback handshake: the daemon thread brings up iroh + pre-
     // allowlists the GUI client's NodeId, then sends the dial inputs
     // (pairing url + the on-disk path that pins the GUI client's
     // secret key) back here so we can dial the in-process iroh
-    // endpoint as a regular client. Replaces the `in_memory::pair`
-    // shortcut: the GUI is now an iroh client just like mobile, with
-    // the only distinction being it lives in the same process.
+    // endpoint as a regular client.
     let (loopback_tx, loopback_rx) = mpsc::sync_channel::<DesktopLoopbackHandshake>(1);
     thread::Builder::new()
         .name("another-one-daemon".into())
-        .spawn(move || run(registry_state, event_bus, endpoint_tx, loopback_tx))
+        .spawn(move || run(registry_state, event_bus, app_event_tx, loopback_tx))
         .expect("spawn daemon-host thread");
     // Block on the daemon thread's iroh bind. If the bind failed the
     // sender is dropped without sending; surface that as a hard
     // panic since the desktop has no fallback transport for its own
-    // dispatch path. (`endpoint_rx` will also yield the matching
-    // `Err` for the rest of the boot path to log.)
+    // dispatch path.
     let handshake = loopback_rx
         .recv()
         .expect("daemon thread must send loopback handshake before exit");
@@ -2620,10 +2616,7 @@ pub(crate) fn spawn(
         daemon_client::wrap_legacy_session(std::sync::Arc::new(legacy))
     });
     let session: Arc<dyn daemon_transport::Session> = Arc::from(session);
-    DaemonHostHandles {
-        endpoint_rx,
-        session,
-    }
+    DaemonHostHandles { session }
 }
 
 /// Daemon → GUI handshake describing how the GUI dials the
@@ -2639,7 +2632,7 @@ struct DesktopLoopbackHandshake {
 fn run(
     registry_state: Arc<Mutex<RegistryState>>,
     event_bus: tokio::sync::broadcast::Sender<another_one_core::clients::ClientEvent>,
-    tx: mpsc::Sender<anyhow::Result<EndpointHandle>>,
+    app_event_tx: tokio::sync::mpsc::UnboundedSender<crate::app_event::AppEvent>,
     loopback_tx: mpsc::SyncSender<DesktopLoopbackHandshake>,
 ) {
     // Four workers so a single stuck PTY write (child paused /
@@ -2656,9 +2649,9 @@ fn run(
     {
         Ok(rt) => rt,
         Err(e) => {
-            let _ = tx.send(Err(
-                anyhow::Error::new(e).context("build daemon tokio runtime")
-            ));
+            let _ = app_event_tx.send(crate::app_event::AppEvent::DaemonHandleResolved(Err(
+                format!("{:#}", anyhow::Error::new(e).context("build daemon tokio runtime")),
+            )));
             return;
         }
     };
@@ -2679,7 +2672,9 @@ fn run(
     let paths = match daemon_paths() {
         Ok(p) => p,
         Err(e) => {
-            let _ = tx.send(Err(e));
+            let _ = app_event_tx.send(crate::app_event::AppEvent::DaemonHandleResolved(Err(
+                format!("{e:#}"),
+            )));
             return;
         }
     };
@@ -2790,7 +2785,10 @@ fn run(
 
     match endpoint_result {
         Ok(handle) => {
-            if tx.send(Ok(handle)).is_err() {
+            if app_event_tx
+                .send(crate::app_event::AppEvent::DaemonHandleResolved(Ok(handle)))
+                .is_err()
+            {
                 // App dropped before we returned; abort immediately by
                 // dropping the runtime and returning.
                 return;
@@ -2806,7 +2804,9 @@ fn run(
             }
         }
         Err(e) => {
-            let _ = tx.send(Err(e));
+            let _ = app_event_tx.send(crate::app_event::AppEvent::DaemonHandleResolved(Err(
+                format!("{e:#}"),
+            )));
         }
     }
 }

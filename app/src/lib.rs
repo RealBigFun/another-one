@@ -18,6 +18,7 @@ pub mod __test_harness {
     pub use crate::daemon_host::{DesktopTerminalRegistry, RegistryState};
 }
 
+mod app_event;
 mod add_agent_modal;
 mod agent_icons;
 mod app;
