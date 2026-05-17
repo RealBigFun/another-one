@@ -1,5 +1,5 @@
 use crate::agents::TerminalLaunchConfig;
-use crate::project_store::{Project, ProjectKind, Task, TaskKind, TaskWorktreeBranchMode};
+use crate::project_store::{LinkedIssue, Project, ProjectKind, Task, TaskKind, TaskWorktreeBranchMode};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -11,6 +11,7 @@ pub enum TaskLaunchRequest {
         source_branch: String,
         launch_config: TerminalLaunchConfig,
         warm_launch_id: Option<u64>,
+        linked_issue: Option<LinkedIssue>,
     },
     Worktree {
         project_id: String,
@@ -18,6 +19,7 @@ pub enum TaskLaunchRequest {
         generated_task_name: String,
         branch_mode: TaskWorktreeBranchMode,
         launch_config: TerminalLaunchConfig,
+        linked_issue: Option<LinkedIssue>,
     },
     Review {
         project_id: String,
@@ -179,6 +181,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd,
+            linked_issue: None,
         }
     }
 

@@ -432,6 +432,14 @@ pub(crate) trait AgentHarness: Send + Sync {
     fn supports_mcp_client(&self) -> bool {
         false
     }
+
+    /// Whether this harness can receive an initial message when a task
+    /// starts. When `true`, the app may supply context (e.g. a linked
+    /// issue) as the first user turn. Defaults to `false`; each
+    /// harness opts in explicitly.
+    fn accepts_initial_message(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) struct ClaudeCodeHarness;
@@ -484,6 +492,9 @@ impl AgentHarness for ClaudeCodeHarness {
     fn supports_mcp_client(&self) -> bool {
         true
     }
+    fn accepts_initial_message(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for CursorAgentHarness {
@@ -517,6 +528,9 @@ impl AgentHarness for CursorAgentHarness {
         Ok((builder, launch_config.with_session(Some(session)), None))
     }
     fn supports_mcp_client(&self) -> bool {
+        true
+    }
+    fn accepts_initial_message(&self) -> bool {
         true
     }
 }
@@ -599,6 +613,9 @@ impl AgentHarness for PiHarness {
         };
         Ok((builder, launch_config, discovery))
     }
+    fn accepts_initial_message(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for DroidHarness {
@@ -610,6 +627,9 @@ impl AgentHarness for DroidHarness {
     }
     fn command(&self) -> &'static str {
         "droid"
+    }
+    fn accepts_initial_message(&self) -> bool {
+        true
     }
 }
 
@@ -624,6 +644,9 @@ impl AgentHarness for GeminiHarness {
         "gemini"
     }
     fn supports_mcp_client(&self) -> bool {
+        true
+    }
+    fn accepts_initial_message(&self) -> bool {
         true
     }
 }
@@ -641,6 +664,9 @@ impl AgentHarness for OpenCodeHarness {
     fn supports_mcp_client(&self) -> bool {
         true
     }
+    fn accepts_initial_message(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for AmpHarness {
@@ -656,6 +682,9 @@ impl AgentHarness for AmpHarness {
     fn supports_mcp_client(&self) -> bool {
         true
     }
+    fn accepts_initial_message(&self) -> bool {
+        true
+    }
 }
 
 impl AgentHarness for RovoDevHarness {
@@ -667,6 +696,9 @@ impl AgentHarness for RovoDevHarness {
     }
     fn command(&self) -> &'static str {
         "rovo-dev"
+    }
+    fn accepts_initial_message(&self) -> bool {
+        true
     }
 }
 
@@ -680,6 +712,9 @@ impl AgentHarness for ForgeHarness {
     fn command(&self) -> &'static str {
         "forge"
     }
+    fn accepts_initial_message(&self) -> bool {
+        true
+    }
 }
 
 /// Cross-crate entry point: dispatches the harness's missing-session
@@ -690,6 +725,13 @@ pub fn agent_output_indicates_missing_session(
     recent_output: &str,
 ) -> bool {
     harness(provider).output_indicates_missing_session(recent_output)
+}
+
+/// Whether the given provider supports receiving an initial message
+/// when a task starts (e.g. a linked issue). Delivery is handled by
+/// the framework — harnesses only declare capability.
+pub fn provider_accepts_initial_message(provider: AgentProviderKind) -> bool {
+    harness(provider).accepts_initial_message()
 }
 
 pub(crate) fn harness(kind: AgentProviderKind) -> &'static dyn AgentHarness {

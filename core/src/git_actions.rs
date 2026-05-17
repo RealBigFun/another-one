@@ -176,6 +176,36 @@ struct GitHubPullRequestRecord {
     updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubIssueRecord {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitHubRepoCapabilities {
+    #[serde(rename = "hasIssuesEnabled")]
+    has_issues_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum GitHubIssueAvailability {
+    Hidden(GitHubIssueHiddenReason),
+    Available,
+    GhMissing,
+    GhError(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitHubIssueHiddenReason {
+    NoGit,
+    NoGitHubRemote,
+    IssuesDisabled,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolbarGitAction {
     Commit,
@@ -1641,6 +1671,73 @@ pub fn find_gh_cli(repo_path: &Path) -> Option<PathBuf> {
             PathBuf::from("/usr/local/bin/gh"),
         ],
     )
+}
+
+/// Check whether the GitHub issue picker should be shown for this repo path.
+///
+/// Returns `Hidden` when the repo has no git marker, no GitHub remote, or has
+/// issues disabled; `GhMissing` / `GhError` when gh is absent or fails (these
+/// are user-actionable — the row stays visible with an error). `Available`
+/// means `gh issue list` can proceed.
+pub fn probe_github_issue_availability(repo_path: &Path) -> GitHubIssueAvailability {
+    if !crate::git_operation::path_has_git_marker(repo_path) {
+        return GitHubIssueAvailability::Hidden(GitHubIssueHiddenReason::NoGit);
+    }
+    if find_github_repo_url(repo_path).is_none() {
+        return GitHubIssueAvailability::Hidden(GitHubIssueHiddenReason::NoGitHubRemote);
+    }
+    let Some(gh) = find_gh_cli(repo_path) else {
+        return GitHubIssueAvailability::GhMissing;
+    };
+    let mut command = gh_json_command(gh, repo_path);
+    let output = match command
+        .args(["repo", "view", "--json", "hasIssuesEnabled"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) => return GitHubIssueAvailability::GhError(format!("gh failed: {err}")),
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return GitHubIssueAvailability::GhError(if stderr.is_empty() {
+            "gh repo view failed with no details.".to_string()
+        } else {
+            stderr
+        });
+    }
+    match serde_json::from_slice::<GitHubRepoCapabilities>(&output.stdout) {
+        Ok(caps) if !caps.has_issues_enabled => {
+            GitHubIssueAvailability::Hidden(GitHubIssueHiddenReason::IssuesDisabled)
+        }
+        Ok(_) => GitHubIssueAvailability::Available,
+        Err(err) => GitHubIssueAvailability::GhError(format!("could not parse gh output: {err}")),
+    }
+}
+
+/// List open GitHub issues for the repo at `repo_path` via `gh issue list`.
+pub fn find_project_open_issues(repo_path: &Path) -> Result<Vec<GitHubIssueRecord>, String> {
+    let gh = find_gh_cli(repo_path).ok_or_else(|| {
+        "GitHub CLI (`gh`) is not installed or not on the app PATH.".to_string()
+    })?;
+    let mut command = gh_json_command(gh, repo_path);
+    let output = command
+        .args([
+            "issue",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "number,title,url,updatedAt",
+        ])
+        .output()
+        .map_err(|err| format!("Could not load issues: {err}"))?;
+    if !output.status.success() {
+        return Err(command_failure("Could not load issues", &output));
+    }
+    serde_json::from_slice::<Vec<GitHubIssueRecord>>(&output.stdout)
+        .map_err(|err| format!("Could not parse issues: {err}"))
 }
 
 #[cfg_attr(test, allow(clippy::items_after_test_module))]

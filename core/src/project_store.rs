@@ -452,6 +452,16 @@ pub enum DiffRowKind {
     Deleted,
 }
 
+/// A linked external issue (GitHub, Jira, …) stored on a task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedIssue {
+    /// Free-form provider tag — e.g. `"github"`, `"jira"`.
+    pub provider: String,
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskKind {
     Direct,
@@ -470,6 +480,8 @@ pub struct Task {
     pub section_id: String,
     #[serde(default)]
     pub worktree: Option<TaskWorktree>,
+    #[serde(default)]
+    pub linked_issue: Option<LinkedIssue>,
     #[serde(skip)]
     pub worktree_project_id: Option<String>,
     #[serde(skip)]
@@ -518,6 +530,8 @@ struct PersistedTaskV4 {
     #[serde(default)]
     pub worktree: Option<TaskWorktree>,
     #[serde(default)]
+    pub linked_issue: Option<LinkedIssue>,
+    #[serde(default)]
     pub section: Option<PersistedSectionState>,
 }
 
@@ -537,6 +551,7 @@ impl PersistedTaskV4 {
             target_project_id: self.target_project_id,
             branch_name: self.branch_name,
             worktree: self.worktree,
+            linked_issue: self.linked_issue,
             worktree_project_id: None,
             tabs: Vec::new(),
             active_tab_id: String::new(),
@@ -554,6 +569,7 @@ impl PersistedTaskV4 {
             target_project_id: task.target_project_id.clone(),
             branch_name: task.branch_name.clone(),
             worktree: task.worktree.clone(),
+            linked_issue: task.linked_issue.clone(),
             section,
         }
     }
@@ -2691,6 +2707,12 @@ impl ProjectStore {
                         .worktree
                         .as_ref()
                         .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    linked_issue: task_summary.linked_issue.map(|w| LinkedIssue {
+                        provider: w.provider,
+                        number: w.number,
+                        url: w.url,
+                        title: w.title,
+                    }),
                     worktree_project_id: task_summary.worktree_project_id,
                     tabs,
                     active_tab_id: task_summary.active_tab_id,
@@ -5711,6 +5733,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         };
         let mut store = super::ProjectStore::from_projects_for_test(vec![project], vec![task]);
         store.repos.insert(
@@ -5984,6 +6007,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         });
 
         assert!(store.rename_task("task-1", "New task"));
@@ -6034,6 +6058,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         });
 
         store.update_task_branch("task-1", "worktree", "pixel-blockbuster-drifts");
@@ -6085,6 +6110,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         });
         store.set_section_state(
             "worktree::main::task-1",
@@ -6176,6 +6202,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         });
 
         // Simulate a transient git refresh that fails to detect the
@@ -6860,6 +6887,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         };
         store.insert_task(task);
         store
@@ -7003,6 +7031,7 @@ mod tests {
                         active_tab_id: "1".to_string(),
                         next_tab_id: 3,
                         cwd: Some(PathBuf::from("/tmp/root")),
+                        linked_issue: None,
                     },
                 ),
                 (
@@ -7037,6 +7066,7 @@ mod tests {
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(PathBuf::from("/tmp/wt1")),
+                        linked_issue: None,
                     },
                 ),
             ]),
@@ -7243,6 +7273,7 @@ mod tests {
                         active_tab_id: String::new(),
                         next_tab_id: 0,
                         cwd: None,
+                        linked_issue: None,
                     },
                 ),
                 (
@@ -7261,6 +7292,7 @@ mod tests {
                         active_tab_id: String::new(),
                         next_tab_id: 0,
                         cwd: None,
+                        linked_issue: None,
                     },
                 ),
             ]),
@@ -7358,6 +7390,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         });
         store.set_section_state(
             "root::main::task-1",
@@ -7552,6 +7585,7 @@ mod tests {
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(PathBuf::from("/tmp/root")),
+                        linked_issue: None,
                     },
                 ),
                 (
@@ -7582,6 +7616,7 @@ mod tests {
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(PathBuf::from("/tmp/wt")),
+                        linked_issue: None,
                     },
                 ),
             ]),
@@ -7735,6 +7770,7 @@ mod tests {
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(PathBuf::from("/tmp/root")),
+                        linked_issue: None,
                     },
                 ),
                 (
@@ -7765,6 +7801,7 @@ mod tests {
                         active_tab_id: "0".to_string(),
                         next_tab_id: 1,
                         cwd: Some(PathBuf::from("/tmp/wt")),
+                        linked_issue: None,
                     },
                 ),
             ]),
@@ -8148,6 +8185,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         };
 
         let mut store = super::ProjectStore {

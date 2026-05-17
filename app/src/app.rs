@@ -623,6 +623,7 @@ pub(crate) enum RightSidebarMode {
     WorkingTree,
     Commits,
     Checks,
+    Issue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -670,8 +671,8 @@ use another_one_core::project_service::{ProjectAddReply, TaskCreationReply};
 // another_one_core::git_service now; re-exported here so existing
 // channel-field types and drain-loop field accesses keep compiling.
 use another_one_core::git_service::{
-    ProjectCheckRunsReply, ProjectGitHubLinkReply, ProjectPagePullRequestsReply,
-    ProjectPullRequestReply,
+    ProjectCheckRunsReply, ProjectGitHubLinkReply, ProjectIssueDiscoveryReply,
+    ProjectPagePullRequestsReply, ProjectPullRequestReply,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1893,6 +1894,21 @@ pub struct AnotherOneApp {
     project_check_runs_sender: broadcast::Sender<ProjectCheckRunsReply>,
     /// Receiver for background PR check lookups.
     project_check_runs_receiver: broadcast::Receiver<ProjectCheckRunsReply>,
+    /// Sender for background GitHub issue-discovery + listing.
+    project_issue_discovery_sender: broadcast::Sender<ProjectIssueDiscoveryReply>,
+    /// Receiver for background GitHub issue-discovery + listing.
+    project_issue_discovery_receiver: broadcast::Receiver<ProjectIssueDiscoveryReply>,
+    /// Project ids for which a discovery request is in-flight.
+    pub(crate) project_issue_discovery_requests: HashSet<String>,
+    /// Cached discovery results keyed by project_id.
+    pub(crate) project_issue_discovery_cache: HashMap<
+        String,
+        another_one_core::git_service::ProjectIssueDiscoveryReply,
+    >,
+    /// Pending linked issue for a worktree task about to be inserted
+    /// (bridging the gap between submit_new_task_modal and the
+    /// task_creation drain).
+    pending_task_linked_issue: Option<another_one_core::project_store::LinkedIssue>,
     /// Sender used by background terminal launch/resume work.
     ///
     /// Bounded (`sync_channel`) so PTY reader threads experience natural
@@ -3761,12 +3777,21 @@ impl AnotherOneApp {
         self.branch_commit_states.get(&project_id)
     }
 
-    pub(crate) fn active_right_sidebar_mode(&self, _cx: &App) -> RightSidebarMode {
-        match self.right_sidebar_mode {
-            RightSidebarMode::WorkingTree => RightSidebarMode::WorkingTree,
-            RightSidebarMode::Commits => RightSidebarMode::Commits,
-            RightSidebarMode::Checks => RightSidebarMode::Checks,
+    pub(crate) fn active_right_sidebar_mode(&self, cx: &App) -> RightSidebarMode {
+        if self.right_sidebar_mode == RightSidebarMode::Issue {
+            let has_linked_issue = self
+                .workspace_pane
+                .read(cx)
+                .active_section
+                .as_ref()
+                .and_then(|section| section.task_id.as_deref())
+                .and_then(|tid| self.project_store.task(tid))
+                .is_some_and(|task| task.linked_issue.is_some());
+            if !has_linked_issue {
+                return RightSidebarMode::WorkingTree;
+            }
         }
+        self.right_sidebar_mode
     }
 
     fn clear_branch_sidebar_states_for_project_group(&mut self, project_id: &str) {
@@ -4828,6 +4853,8 @@ impl AnotherOneApp {
         let (project_page_pull_requests_sender, project_page_pull_requests_receiver) =
             broadcast::channel(64);
         let (project_check_runs_sender, project_check_runs_receiver) = broadcast::channel(64);
+        let (project_issue_discovery_sender, project_issue_discovery_receiver) =
+            broadcast::channel(64);
         let (worktree_deletion_sender, worktree_deletion_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             broadcast::channel(64);
@@ -4966,6 +4993,11 @@ impl AnotherOneApp {
             project_page_pull_requests_receiver,
             project_check_runs_sender,
             project_check_runs_receiver,
+            project_issue_discovery_sender,
+            project_issue_discovery_receiver,
+            project_issue_discovery_requests: HashSet::new(),
+            project_issue_discovery_cache: HashMap::new(),
+            pending_task_linked_issue: None,
             terminal_launch_sender,
             terminal_launch_receiver,
             warm_terminal_launch_sender,
@@ -7752,6 +7784,7 @@ impl AnotherOneApp {
             Some(req.launch_config.clone()),
             req.warm_launch_hint,
             req.client_id.clone(),
+            req.linked_issue,
             cx,
         );
 
@@ -8201,6 +8234,7 @@ impl AnotherOneApp {
                     cwd: req.cwd.as_ref().map(std::path::PathBuf::from),
                     focus_after_open: true,
                     warm_launch_hint: None,
+                    linked_issue: None,
                 },
                 cx,
             )
@@ -10667,6 +10701,7 @@ impl AnotherOneApp {
                 source_branch,
                 launch_config,
                 warm_launch_id,
+                linked_issue,
             } => {
                 // GUI submit funnels through the same client-trait
                 // verb that MCP uses; `warm_launch_hint` carries the
@@ -10690,6 +10725,7 @@ impl AnotherOneApp {
                     cwd: None,
                     focus_after_open: true,
                     warm_launch_hint: warm_launch_id,
+                    linked_issue,
                 };
                 match self.client_open_task(req, cx) {
                     Ok(response) => {
@@ -10727,6 +10763,7 @@ impl AnotherOneApp {
                 generated_task_name,
                 branch_mode,
                 launch_config,
+                linked_issue,
             } => {
                 let Some(project) = self.project_store.project(&project_id).cloned() else {
                     self.show_error_toast("Could not find the selected project.", cx);
@@ -10738,6 +10775,7 @@ impl AnotherOneApp {
                 if let Some(state) = self.new_task_modal.as_mut() {
                     state.submitting = true;
                 }
+                self.pending_task_linked_issue = linked_issue;
                 self.cancel_active_new_task_prewarm();
                 self.show_info_toast("Creating worktree task...", cx);
                 self.pending_task_launch = Some(PendingTaskLaunch::NewTaskModal);
@@ -10795,6 +10833,7 @@ impl AnotherOneApp {
                         None,
                         None,
                         ClientId::gui_desktop(),
+                        None,
                         cx,
                     );
                     self.show_success_toast(format!("Opened {}.", task_name), cx);
@@ -10836,9 +10875,11 @@ impl AnotherOneApp {
         launch_config: Option<TerminalLaunchConfig>,
         warm_launch_id: Option<u64>,
         originator: ClientId,
+        linked_issue: Option<another_one_core::project_store::LinkedIssue>,
         cx: &mut Context<Self>,
     ) -> (String, SectionId) {
         let task_id = uuid::Uuid::new_v4().to_string();
+        let linked_issue_for_launch = linked_issue.clone();
         self.apply_mutation(another_one_core::state_authority::Mutation::InsertTask {
             task: Task {
                 id: task_id.clone(),
@@ -10850,6 +10891,7 @@ impl AnotherOneApp {
                 section_id: SectionId::for_task(&target_project_id, &branch_name, &task_id)
                     .store_key(),
                 worktree: None,
+                linked_issue,
                 worktree_project_id,
                 tabs: Vec::new(),
                 active_tab_id: String::new(),
@@ -10881,6 +10923,19 @@ impl AnotherOneApp {
         self.sync_registry_project_store();
         self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
         if let (Some(key), Some(launch_config)) = (self.active_terminal_key(cx), launch_config) {
+            if let Some(issue) = &linked_issue_for_launch {
+                let provider_accepts = launch_config
+                    .provider
+                    .map_or(false, another_one_core::agents::provider_accepts_initial_message);
+                if provider_accepts {
+                    let msg = format!(
+                        "Linked issue #{}: {}\n{}\n",
+                        issue.number, issue.title, issue.url
+                    );
+                    self.pending_post_launch_input
+                        .insert(key.clone(), msg.into_bytes());
+                }
+            }
             self.attach_or_start_prewarmed_terminal(
                 warm_launch_id,
                 key,
@@ -10920,6 +10975,7 @@ impl AnotherOneApp {
             worktree_mode,
             launch_config,
             warm_launch_id,
+            linked_issue,
         ) = {
             let Some(state) = self.new_task_modal.as_mut() else {
                 return;
@@ -10931,6 +10987,7 @@ impl AnotherOneApp {
             state.branch_dropdown_open = false;
             state.branch_filter_focused = false;
             state.task_name_focused = false;
+            state.issue_dropdown_open = false;
 
             (
                 state.project_id.clone(),
@@ -10941,6 +10998,14 @@ impl AnotherOneApp {
                 state.worktree_mode,
                 terminal_launch_config_for_selected_agents(&state.selected_agents),
                 self.active_new_task_warm_launch_id,
+                state.selected_issue.as_ref().map(|issue| {
+                    another_one_core::project_store::LinkedIssue {
+                        provider: "github".to_string(),
+                        number: issue.number,
+                        url: issue.url.clone(),
+                        title: issue.title.clone(),
+                    }
+                }),
             )
         };
 
@@ -10957,6 +11022,7 @@ impl AnotherOneApp {
                     source_branch,
                     warm_launch_id,
                     launch_config,
+                    linked_issue,
                 },
                 cx,
             );
@@ -10979,6 +11045,7 @@ impl AnotherOneApp {
                     }
                 },
                 launch_config,
+                linked_issue,
             },
             cx,
         );
@@ -11122,6 +11189,7 @@ impl AnotherOneApp {
             None,
             None,
             ClientId::gui_desktop(),
+            None,
             cx,
         );
         self.create_branch_modal = None;
@@ -12047,6 +12115,7 @@ impl AnotherOneApp {
                         };
 
                         let task_id = uuid::Uuid::new_v4().to_string();
+                        let linked_issue = self.pending_task_linked_issue.take();
                         self.apply_mutation(
                             another_one_core::state_authority::Mutation::InsertTask {
                                 task: Task {
@@ -12063,6 +12132,7 @@ impl AnotherOneApp {
                                     )
                                     .store_key(),
                                     worktree: Some(worktree.clone()),
+                                    linked_issue: linked_issue.clone(),
                                     worktree_project_id: Some(worktree.id.clone()),
                                     tabs: Vec::new(),
                                     active_tab_id: String::new(),
@@ -12094,6 +12164,19 @@ impl AnotherOneApp {
                         self.prefetch_section_pull_request_and_checks(&section_id, &project_path);
                         if success.open_agent {
                             if let Some(key) = self.active_terminal_key(cx) {
+                                if let Some(issue) = &linked_issue {
+                                    let provider_accepts = launch_config
+                                        .provider
+                                        .map_or(false, another_one_core::agents::provider_accepts_initial_message);
+                                    if provider_accepts {
+                                        let msg = format!(
+                                            "Linked issue #{}: {}\n{}\n",
+                                            issue.number, issue.title, issue.url
+                                        );
+                                        self.pending_post_launch_input
+                                            .insert(key.clone(), msg.into_bytes());
+                                    }
+                                }
                                 self.attach_or_start_prewarmed_terminal(
                                     None,
                                     key,
@@ -12669,6 +12752,51 @@ impl AnotherOneApp {
             }
         }
 
+        should_notify
+    }
+
+    /// Kick off a GitHub issue discovery probe for `project_id` if one is not
+    /// already in flight and the result is not already cached.
+    pub(crate) fn request_project_issue_discovery(
+        &mut self,
+        project_id: &str,
+        project_path: &std::path::Path,
+    ) {
+        if self.project_issue_discovery_cache.contains_key(project_id)
+            || self.project_issue_discovery_requests.contains(project_id)
+        {
+            return;
+        }
+        self.project_issue_discovery_requests
+            .insert(project_id.to_string());
+        another_one_core::git_service::spawn_project_issue_discovery(
+            self.project_issue_discovery_sender.clone(),
+            project_id.to_string(),
+            project_path.to_path_buf(),
+        );
+    }
+
+    fn drain_project_issue_discovery(&mut self) -> bool {
+        let mut should_notify = false;
+        loop {
+            let reply = match self.project_issue_discovery_receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!(
+                        "project_issue_discovery drain lagged {n} messages; clearing in-flight set"
+                    );
+                    self.project_issue_discovery_requests.clear();
+                    continue;
+                }
+            };
+            self.project_issue_discovery_requests
+                .remove(&reply.project_id);
+            self.project_issue_discovery_cache
+                .insert(reply.project_id.clone(), reply);
+            should_notify = true;
+        }
         should_notify
     }
 
@@ -14470,6 +14598,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 1,
             cwd: None,
+            linked_issue: None,
         }
     }
 
@@ -17740,6 +17869,7 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
                             should_notify |= this.drain_project_check_runs_lookup(cx);
+                            should_notify |= this.drain_project_issue_discovery();
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
                             should_notify |= this.drain_terminal_scrollback_replies(cx);

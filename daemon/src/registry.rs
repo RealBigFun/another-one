@@ -14,8 +14,8 @@ use tokio::sync::broadcast;
 
 use daemon_proto::{
     ActiveGitStateWire, AgentProvider, AgentSettingsViewWire, BranchCompareFileWire,
-    ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView, McpSettingsView,
-    OpenInSettingsViewWire, ProjectActionWire, ProjectPagePullRequest,
+    ChangedFileWire, Check, EnabledAgentsViewWire, GitActionScriptsView, LinkedIssueWire,
+    McpSettingsView, OpenInSettingsViewWire, ProjectActionWire, ProjectPagePullRequest,
     ProjectSummary, PullRequestStatus, RecentCommitsWire, ResolvedBranchSettingsWire,
     ShortcutSettingsView, TaskSummary, ToolbarActionOutcome,
 };
@@ -875,6 +875,7 @@ pub trait DaemonRegistry: Send + Sync + 'static {
         _agent_ids: Vec<String>,
         _branch_mode_existing: bool,
         _worktree_mode: bool,
+        _linked_issue: Option<LinkedIssueWire>,
     ) -> RegistryFuture<'_, anyhow::Result<String>> {
         Box::pin(async { Err(anyhow::anyhow!("unsupported on this daemon")) })
     }
