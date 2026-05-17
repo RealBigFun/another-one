@@ -33,6 +33,10 @@ impl HeadlessPlatform for LinuxPlatform {
         proc_meminfo_total_bytes()
     }
 
+    fn num_logical_cpus() -> u16 {
+        sysconf_logical_cpus()
+    }
+
     fn read_process_samples(
         app_pid: u32,
         tracked_processes: &[TrackedProcess],
@@ -392,6 +396,19 @@ fn read_smaps_pss_bytes(pid: u32) -> Option<u64> {
         }
     }
     None
+}
+
+/// Number of online logical CPUs via `sysconf(_SC_NPROCESSORS_ONLN)`.
+/// Shared with `AndroidPlatform`. Returns 1 on failure so callers can divide safely.
+pub(super) fn sysconf_logical_cpus() -> u16 {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<u16> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        sysconf_u64(libc::_SC_NPROCESSORS_ONLN)
+            .and_then(|n| u16::try_from(n).ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(1)
+    })
 }
 
 pub(super) fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {

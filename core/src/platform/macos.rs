@@ -32,6 +32,10 @@ impl HeadlessPlatform for MacosPlatform {
         sysctl_hw_memsize()
     }
 
+    fn num_logical_cpus() -> u16 {
+        sysctl_hw_logicalcpu()
+    }
+
     fn read_process_samples(
         app_pid: u32,
         tracked_processes: &[TrackedProcess],
@@ -113,6 +117,35 @@ fn macos_app_candidates(app_name: &str) -> Vec<PathBuf> {
     }
 
     candidates
+}
+
+/// Query `hw.logicalcpu` via `sysctlbyname`. Shared with `IosPlatform`.
+/// Returns 1 on failure so callers can divide safely.
+pub(super) fn sysctl_hw_logicalcpu() -> u16 {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<u16> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let mut count = 0_u32;
+        let mut size = std::mem::size_of::<u32>();
+        let name = match std::ffi::CString::new("hw.logicalcpu") {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+        let result = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                (&mut count as *mut u32).cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result == 0 && count > 0 {
+            u16::try_from(count).unwrap_or(u16::MAX)
+        } else {
+            1
+        }
+    })
 }
 
 /// Query `hw.memsize` via `sysctlbyname`. Shared with `IosPlatform`,

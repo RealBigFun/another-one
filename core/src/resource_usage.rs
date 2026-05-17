@@ -207,6 +207,7 @@ fn build_resource_usage_snapshot(
         total_cpu_percent,
         total_memory_bytes,
         ram_share_percent,
+        cpu_core_count: CurrentPlatform::num_logical_cpus(),
         session_count,
         app: DaemonResourceUsageRowWire {
             // Display label is rendered client-side; the wire just
