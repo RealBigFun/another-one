@@ -1951,12 +1951,6 @@ pub struct AnotherOneApp {
     /// Active scrollback search (Cmd-F). At most one terminal at a time;
     /// opening the search on a different terminal closes any previous.
     pub(crate) terminal_search: Option<TerminalSearchState>,
-    /// Phase 5f of design 01 (#158): in-flight
-    /// `Control::TerminalSearch` reply channel. The session call
-    /// callback pushes `(query, reply)` so a stale reply for a
-    /// query the user already changed gets ignored.
-    terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
-    terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     /// `Control::TerminalReadScrollback` reply channel. The session
     /// call callback pushes `(key, generation, reply)` so the renderer's
     /// drain loop can ignore stale rows if live output moved the
@@ -4841,12 +4835,6 @@ impl AnotherOneApp {
             mpsc::sync_channel(TERMINAL_LAUNCH_QUEUE_CAP);
         let (warm_terminal_launch_sender, warm_terminal_launch_receiver) =
             mpsc::sync_channel(WARM_TERMINAL_LAUNCH_QUEUE_CAP);
-        let (terminal_search_reply_tx, terminal_search_reply_rx) =
-            tokio::sync::mpsc::unbounded_channel::<(
-                String,
-                TerminalRuntimeKey,
-                daemon_proto::TerminalSearchReply,
-            )>();
         let (terminal_scrollback_reply_tx, terminal_scrollback_reply_rx) =
             tokio::sync::mpsc::unbounded_channel::<(
                 TerminalRuntimeKey,
@@ -4992,8 +4980,6 @@ impl AnotherOneApp {
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             terminal_search: None,
-            terminal_search_reply_tx,
-            terminal_search_reply_rx,
             terminal_scrollback_reply_tx,
             terminal_scrollback_reply_rx,
             scrollback_in_flight: HashMap::new(),
@@ -17756,7 +17742,6 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_project_check_runs_lookup(cx);
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
-                            should_notify |= this.drain_terminal_search_replies(cx);
                             should_notify |= this.drain_terminal_scrollback_replies(cx);
                             // Idle prefetch: keep the focused tab's
                             // scrollback cache warm so the next

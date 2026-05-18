@@ -25,6 +25,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 
