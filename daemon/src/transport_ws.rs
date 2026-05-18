@@ -2,7 +2,7 @@
 //!
 //! Wire format:
 //! - Binary frames carry raw PTY bytes (both directions).
-//! - Text frames carry JSON control messages; currently just `resize`.
+//! - Text frames are not used; any text frame logs a warning.
 //!
 //! **Authentication: none.** This transport is an emulator-and-loopback
 //! convenience: the Flutter emulator reaches the host via `10.0.2.2`,
@@ -22,7 +22,6 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
 use crate::pty::PtySession;
@@ -35,15 +34,6 @@ fn is_loopback(addr: &SocketAddr) -> bool {
         IpAddr::V4(v4) => v4.is_loopback(),
         IpAddr::V6(v6) => v6.is_loopback(),
     }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Control {
-    // No control verbs; the legacy WS transport is opt-in and
-    // unused. Kept around as a stub so the JSON parser still
-    // succeeds + the warn!() below keeps a record of any client
-    // attempting to drive it.
 }
 
 pub async fn serve<F>(addr: SocketAddr, shutdown: F) -> anyhow::Result<()>
@@ -104,10 +94,7 @@ async fn handle_session(mut ws: WebSocket) {
                     }
                 }
                 Some(Ok(Message::Text(text))) => {
-                    match serde_json::from_str::<Control>(&text) {
-                        Ok(_) => warn!("ws transport: Control::Resize was removed; legacy WS clients no longer supported"),
-                        Err(e) => warn!(error = %e, text = %text, "bad ws control"),
-                    }
+                    warn!(text = %text, "ws transport: unexpected text frame; no control verbs are supported");
                 }
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Ok(_)) => {} // ping/pong handled by axum
