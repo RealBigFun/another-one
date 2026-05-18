@@ -1088,7 +1088,16 @@ impl AnotherOneApp {
     }
 
     pub fn titlebar_git_actions_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.active_titlebar_task_project_id(cx).is_none() {
+        let Some(active_project_id) = self.active_titlebar_task_project_id(cx) else {
+            return self.disabled_titlebar_split_button(
+                "titlebar-git-actions-trigger-disabled",
+                "Git Actions",
+                "assets/icons/icons__git-commit.svg",
+                TITLEBAR_GIT_ACTIONS_BUTTON_W,
+                TITLEBAR_GIT_ACTIONS_BUTTON_MARGIN_RIGHT,
+            );
+        };
+        if !self.project_store.is_git_backed(&active_project_id) {
             return self.disabled_titlebar_split_button(
                 "titlebar-git-actions-trigger-disabled",
                 "Git Actions",
@@ -1236,7 +1245,10 @@ impl AnotherOneApp {
             return div().id("titlebar-git-actions-overlay").into_any_element();
         }
 
-        if self.active_titlebar_task_project_id(cx).is_none() {
+        let Some(active_project_id) = self.active_titlebar_task_project_id(cx) else {
+            return div().id("titlebar-git-actions-overlay").into_any_element();
+        };
+        if !self.project_store.is_git_backed(&active_project_id) {
             return div().id("titlebar-git-actions-overlay").into_any_element();
         }
 

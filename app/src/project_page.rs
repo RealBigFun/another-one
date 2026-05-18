@@ -96,14 +96,24 @@ impl WorkspacePane {
                 app.project_page_config_dropdown,
             )
         };
-        app_entity.update(cx, |app, _cx| {
-            app.request_project_page_pull_requests(
-                project_id,
-                &project.path,
-                self.project_page_pr_filter,
-                &self.project_page_pr_query,
-            );
-        });
+        let (is_git_backed, has_github_remote) = {
+            let app = app_entity.read(cx);
+            (
+                app.project_store.is_git_backed(project_id),
+                app.has_github_remote(project_id),
+            )
+        };
+
+        if is_git_backed && has_github_remote {
+            app_entity.update(cx, |app, _cx| {
+                app.request_project_page_pull_requests(
+                    project_id,
+                    &project.path,
+                    self.project_page_pr_filter,
+                    &self.project_page_pr_query,
+                );
+            });
+        }
 
         div()
             .flex()
@@ -121,8 +131,12 @@ impl WorkspacePane {
                     .overflow_y_scroll()
                     .px(px(24.))
                     .py(px(20.))
-                    .child(self.project_page_prs_section(cx))
-                    .when_some(branch_settings.as_ref(), |container, settings| {
+                    .when(is_git_backed && has_github_remote, |container| {
+                        container.child(self.project_page_prs_section(cx))
+                    })
+                    .when_some(
+                        is_git_backed.then_some(branch_settings.as_ref()).flatten(),
+                        |container, settings| {
                         container.child(self.project_page_configuration_section(
                             &project_id_owned,
                             settings,

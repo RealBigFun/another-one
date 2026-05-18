@@ -128,6 +128,7 @@ struct SourceBranchSectionProps<'a> {
     current_branch: SharedString,
     branches: &'a [String],
     worktree_mode: bool,
+    is_git_backed: bool,
     branch_mode: NewTaskBranchMode,
     dropdown_open: bool,
     branch_filter: SharedString,
@@ -259,6 +260,7 @@ impl AnotherOneApp {
             .iter()
             .find(|project| project.id == state.project_id);
 
+        let is_git_backed = self.project_store.is_git_backed(&state.project_id);
         let available_branches = project
             .map(|project| self.project_store.branch_names(&project.id))
             .unwrap_or_default();
@@ -271,7 +273,8 @@ impl AnotherOneApp {
         let current_branch: SharedString = current_branch.into();
         let task_name: SharedString = state.task_name.clone().into();
         let generated_task_name: SharedString = state.generated_task_name.clone().into();
-        let worktree_mode = state.worktree_mode;
+        // Non-git projects can only create direct tasks (no worktrees, no branches).
+        let worktree_mode = state.worktree_mode && is_git_backed;
         let branch_mode = state.branch_mode;
         let branch_dropdown_open = state.branch_dropdown_open;
         let branch_filter: SharedString = state.branch_filter.clone().into();
@@ -332,6 +335,7 @@ impl AnotherOneApp {
                                     current_branch,
                                     branches: &available_branches,
                                     worktree_mode,
+                                    is_git_backed,
                                     branch_mode,
                                     dropdown_open: branch_dropdown_open,
                                     branch_filter,
@@ -358,7 +362,9 @@ impl AnotherOneApp {
                                 submitting,
                                 cx,
                             ))
-                            .child(Self::render_workspace_toggle(worktree_mode, submitting, cx))
+                            .when(is_git_backed, |d| {
+                                d.child(Self::render_workspace_toggle(worktree_mode, submitting, cx))
+                            })
                             .child(Self::render_advanced_options(
                                 advanced_expanded,
                                 submitting,
@@ -705,6 +711,7 @@ impl AnotherOneApp {
             current_branch,
             branches,
             worktree_mode,
+            is_git_backed,
             branch_mode,
             dropdown_open,
             branch_filter,
@@ -1113,7 +1120,7 @@ impl AnotherOneApp {
 
                 section = section.child(list.child(branch_rows));
             }
-        } else {
+        } else if is_git_backed {
             section = section
                 .child(
                     div()

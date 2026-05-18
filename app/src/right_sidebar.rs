@@ -1300,14 +1300,25 @@ impl AnotherOneApp {
             return Self::panel("Changed files", "", bg, true).into_any_element();
         };
         let project_id = active_section.project_id.clone();
+        let is_git_backed = self.project_store.is_git_backed(&project_id);
+        let has_github_remote = self.has_github_remote(&project_id);
         let sidebar_mode = self.active_right_sidebar_mode(cx);
         let commit_state = self.active_branch_commit_state(cx).cloned();
-        self.request_active_project_check_runs_lookup(cx);
+        if is_git_backed && has_github_remote {
+            self.request_active_project_check_runs_lookup(cx);
+        }
         let check_runs_state = self.active_project_check_runs_state(cx).cloned();
 
         let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
         let changed_files = self.active_changed_files(cx);
         let mut body = div().flex_1().flex().flex_col().min_h_0();
+
+        if !is_git_backed {
+            body = body.child(Self::centered_sidebar_message(
+                "Not a git repository",
+                muted_col,
+            ));
+        } else {
         match sidebar_mode {
             RightSidebarMode::WorkingTree => {
                 if !has_loaded_changed_files {
@@ -1623,6 +1634,7 @@ impl AnotherOneApp {
                 }
             },
         }
+        } // end else (is_git_backed)
 
         let commits_button = Self::git_toolbar_button(
             GitToolbarButtonProps {
@@ -1695,8 +1707,8 @@ impl AnotherOneApp {
                                 },
                                 cx,
                             ))
-                            .child(commits_button)
-                            .child(checks_button),
+                            .when(is_git_backed, |row| row.child(commits_button))
+                            .when(has_github_remote, |row| row.child(checks_button)),
                     )
                     .child(
                         div()
