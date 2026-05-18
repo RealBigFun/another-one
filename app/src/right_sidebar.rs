@@ -98,7 +98,6 @@ pub(crate) struct ChangedFilesListSnapshot {
 #[derive(Clone)]
 pub(crate) struct ActiveGitActionSnapshot {
     pub(crate) action: crate::git_actions::ToolbarGitAction,
-    pub(crate) branch_name_at_start: Option<String>,
 }
 
 /// All data RightSidebarPanel needs for rendering (clone-able, no Receiver fields).
@@ -110,7 +109,6 @@ pub(crate) struct RightSidebarSnapshot {
     pub(crate) has_github_remote: bool,
     pub(crate) linked_issue: Option<another_one_core::project_store::LinkedIssue>,
     pub(crate) active_git_diff: Option<crate::project_store::GitDiffSelection>,
-    pub(crate) keyboard_focus: WorkspaceKeyboardFocus,
     pub(crate) right_sidebar_mode: RightSidebarMode,
     pub(crate) changed_files:
         std::collections::HashMap<String, Arc<[crate::project_store::ChangedFile]>>,
@@ -137,7 +135,6 @@ impl Default for RightSidebarSnapshot {
             has_github_remote: false,
             linked_issue: None,
             active_git_diff: None,
-            keyboard_focus: WorkspaceKeyboardFocus::MainPane,
             right_sidebar_mode: RightSidebarMode::WorkingTree,
             changed_files: Default::default(),
             branch_commit_states: Default::default(),
@@ -2354,7 +2351,6 @@ impl AnotherOneApp {
             has_github_remote,
             linked_issue,
             active_git_diff: workspace.active_git_diff.clone(),
-            keyboard_focus: workspace.keyboard_focus,
             right_sidebar_mode: self.right_sidebar_mode,
             changed_files: self.changed_files.clone(),
             branch_commit_states: self.branch_commit_states.clone(),
@@ -2369,7 +2365,6 @@ impl AnotherOneApp {
                         k.clone(),
                         ActiveGitActionSnapshot {
                             action: v.action.clone(),
-                            branch_name_at_start: v.branch_name_at_start.clone(),
                         },
                     )
                 })
