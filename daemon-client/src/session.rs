@@ -74,12 +74,15 @@ fn load_or_create_client_secret_key(path: &std::path::Path) -> anyhow::Result<Se
     }
     if let Ok(content) = std::fs::read_to_string(path) {
         let trimmed = content.trim();
-        let bytes = hex_decode_32(trimmed)
+        let decoded = hex::decode(trimmed)
             .with_context(|| format!("parse iroh key at {}", path.display()))?;
+        let bytes: [u8; 32] = decoded
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("iroh key must be 32 bytes (64 hex chars)"))?;
         return Ok(SecretKey::from_bytes(&bytes));
     }
     let sk = SecretKey::generate();
-    let hex = hex_encode_32(&sk.to_bytes());
+    let hex = hex::encode(sk.to_bytes());
     std::fs::write(path, format!("{hex}\n"))
         .with_context(|| format!("write iroh key to {}", path.display()))?;
     #[cfg(unix)]
@@ -106,48 +109,6 @@ pub fn load_or_create_loopback_client_endpoint_id(
 ) -> anyhow::Result<String> {
     let sk = load_or_create_client_secret_key(path)?;
     Ok(sk.public().to_string())
-}
-
-fn hex_encode_32(bytes: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(64);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
-}
-
-fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
-    if s.len() != 64 {
-        anyhow::bail!("secret key must be 64 hex chars, got {}", s.len());
-    }
-    let mut out = [0u8; 32];
-    for (i, byte_out) in out.iter_mut().enumerate() {
-        let hi = hex_nibble(
-            s.as_bytes()
-                .get(i * 2)
-                .copied()
-                .ok_or_else(|| anyhow::anyhow!("hex index out of bounds"))?,
-        )?;
-        let lo = hex_nibble(
-            s.as_bytes()
-                .get(i * 2 + 1)
-                .copied()
-                .ok_or_else(|| anyhow::anyhow!("hex index out of bounds"))?,
-        )?;
-        *byte_out = (hi << 4) | lo;
-    }
-    Ok(out)
-}
-
-fn hex_nibble(c: u8) -> anyhow::Result<u8> {
-    match c {
-        b'0'..=b'9' => Ok(c - b'0'),
-        b'a'..=b'f' => Ok(10 + c - b'a'),
-        b'A'..=b'F' => Ok(10 + c - b'A'),
-        _ => anyhow::bail!("invalid hex digit {c:#x}"),
-    }
 }
 
 /// Events the UI may want beyond raw incoming bytes / worker replies.

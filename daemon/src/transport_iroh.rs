@@ -697,12 +697,15 @@ fn load_or_create_secret_key(path: &Path) -> anyhow::Result<SecretKey> {
     }
     if let Ok(content) = std::fs::read_to_string(path) {
         let trimmed = content.trim();
-        let bytes = hex_decode_32(trimmed)
+        let decoded = hex::decode(trimmed)
             .with_context(|| format!("parse secret key at {}", path.display()))?;
+        let bytes: [u8; 32] = decoded
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("secret key must be 32 bytes (64 hex chars)"))?;
         Ok(SecretKey::from_bytes(&bytes))
     } else {
         let sk = SecretKey::generate();
-        let hex = hex_encode_32(&sk.to_bytes());
+        let hex = hex::encode(sk.to_bytes());
         // Write-through-sync: plain `std::fs::write` lets the
         // underlying File drop without fsyncing, so a power cut
         // between write(2) and the next fsync leaves the secret
@@ -897,29 +900,6 @@ pub(crate) fn render_qr_png_bytes(text: &str) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn hex_encode_32(bytes: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(64);
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
-}
-
-fn hex_decode_32(s: &str) -> anyhow::Result<[u8; 32]> {
-    if s.len() != 64 {
-        anyhow::bail!("expected 64 hex chars, got {}", s.len());
-    }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        let hi = u8::from_str_radix(&s[i * 2..i * 2 + 1], 16).context("bad hex")?;
-        let lo = u8::from_str_radix(&s[i * 2 + 1..i * 2 + 2], 16).context("bad hex")?;
-        *byte = (hi << 4) | lo;
-    }
-    Ok(out)
-}
-
 // ── iroh stream → frame trait adapters ────────────────────────────
 //
 // Live here so `daemon::frame` stays transport-agnostic. New
@@ -974,13 +954,14 @@ mod tests {
 
     #[test]
     fn hex_roundtrips() {
-        let bytes = [
+        let bytes: [u8; 32] = [
             0xde, 0xad, 0xbe, 0xef, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
             18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
         ];
-        let s = hex_encode_32(&bytes);
+        let s = hex::encode(bytes);
         assert_eq!(s.len(), 64);
-        let back = hex_decode_32(&s).unwrap();
+        let decoded = hex::decode(&s).unwrap();
+        let back: [u8; 32] = decoded.try_into().unwrap();
         assert_eq!(back, bytes);
     }
 
