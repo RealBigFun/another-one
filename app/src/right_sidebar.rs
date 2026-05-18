@@ -6,16 +6,23 @@ use std::time::Duration;
 
 use gpui::{
     div, ease_in_out, hsla, percentage, prelude::*, px, rems, rgb, svg, Animation,
-    AnimationExt as _, AnyElement, Context, KeyDownEvent, MouseButton, MouseDownEvent,
-    SharedString, Transformation, Window,
+    AnimationExt as _, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent,
+    SharedString, Transformation, WeakEntity, Window,
 };
+
+use another_one_core::git_service::ChangedFilesGitMutation;
 
 use crate::app::{
     AnotherOneApp, CommitFileChangesState, ProjectCheckRunsState, RightSidebarMode,
     WorkspaceKeyboardFocus,
 };
 use crate::platform::PlatformServices;
+use crate::project_store::ProjectBranchCommitState;
 use crate::theme;
+
+// ---------------------------------------------------------------------------
+// Private per-row types
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChangeGroup {
@@ -83,23 +90,195 @@ pub(crate) struct ChangedFilesListSnapshot {
     unstaged_deletions: i32,
 }
 
-impl AnotherOneApp {
-    fn changed_files_list_snapshot(
-        &mut self,
-        project_id: &str,
-        changed_files: &Arc<[crate::project_store::ChangedFile]>,
-    ) -> ChangedFilesListSnapshot {
-        if let Some(snapshot) = self.changed_files_list_snapshots.get(project_id) {
-            if Arc::ptr_eq(&snapshot.files, changed_files) {
-                return snapshot.clone();
-            }
-        }
+// ---------------------------------------------------------------------------
+// Public snapshot types
+// ---------------------------------------------------------------------------
 
-        let snapshot =
-            self.build_changed_files_list_snapshot(project_id.to_string(), changed_files.clone());
-        self.changed_files_list_snapshots
-            .insert(project_id.to_string(), snapshot.clone());
-        snapshot
+/// Snapshot for the active git action (no Receiver channel).
+#[derive(Clone)]
+pub(crate) struct ActiveGitActionSnapshot {
+    pub(crate) action: crate::git_actions::ToolbarGitAction,
+    pub(crate) branch_name_at_start: Option<String>,
+}
+
+/// All data RightSidebarPanel needs for rendering (clone-able, no Receiver fields).
+#[derive(Clone)]
+pub(crate) struct RightSidebarSnapshot {
+    pub(crate) theme_mode: crate::project_store::ThemeMode,
+    pub(crate) active_section: Option<crate::app::SectionId>,
+    pub(crate) is_git_backed: bool,
+    pub(crate) has_github_remote: bool,
+    pub(crate) linked_issue: Option<another_one_core::project_store::LinkedIssue>,
+    pub(crate) active_git_diff: Option<crate::project_store::GitDiffSelection>,
+    pub(crate) keyboard_focus: WorkspaceKeyboardFocus,
+    pub(crate) right_sidebar_mode: RightSidebarMode,
+    pub(crate) changed_files:
+        std::collections::HashMap<String, Arc<[crate::project_store::ChangedFile]>>,
+    pub(crate) branch_commit_states:
+        std::collections::HashMap<String, ProjectBranchCommitState>,
+    pub(crate) project_check_runs_states:
+        std::collections::HashMap<String, ProjectCheckRunsState>,
+    pub(crate) commit_file_changes_states:
+        std::collections::HashMap<String, CommitFileChangesState>,
+    pub(crate) expanded_commit_rows: std::collections::HashSet<String>,
+    pub(crate) active_git_actions:
+        std::collections::HashMap<String, ActiveGitActionSnapshot>,
+    pub(crate) pending_changed_files_git_mutations:
+        std::collections::HashMap<String, crate::app::PendingChangedFilesGitMutations>,
+    pub(crate) collapsed_change_sections: std::collections::HashSet<String>,
+}
+
+impl Default for RightSidebarSnapshot {
+    fn default() -> Self {
+        Self {
+            theme_mode: crate::project_store::ThemeMode::default(),
+            active_section: None,
+            is_git_backed: false,
+            has_github_remote: false,
+            linked_issue: None,
+            active_git_diff: None,
+            keyboard_focus: WorkspaceKeyboardFocus::MainPane,
+            right_sidebar_mode: RightSidebarMode::WorkingTree,
+            changed_files: Default::default(),
+            branch_commit_states: Default::default(),
+            project_check_runs_states: Default::default(),
+            commit_file_changes_states: Default::default(),
+            expanded_commit_rows: Default::default(),
+            active_git_actions: Default::default(),
+            pending_changed_files_git_mutations: Default::default(),
+            collapsed_change_sections: Default::default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RightSidebarPanel entity
+// ---------------------------------------------------------------------------
+
+pub(crate) struct RightSidebarPanel {
+    pub(crate) app: WeakEntity<AnotherOneApp>,
+    pub(crate) snapshot: RightSidebarSnapshot,
+    /// Local UI state — NOT in snapshot, survives snapshot updates.
+    pub(crate) discard_confirm: Option<(String, Vec<crate::project_store::ChangedFile>)>,
+    /// Render cache: keyed by project_id.
+    pub(crate) changed_files_list_snapshots: std::collections::HashMap<String, ChangedFilesListSnapshot>,
+    pub(crate) focus_handle: FocusHandle,
+}
+
+impl RightSidebarPanel {
+    pub(crate) fn new(
+        app: WeakEntity<AnotherOneApp>,
+        focus_handle: FocusHandle,
+    ) -> Self {
+        Self {
+            app,
+            snapshot: RightSidebarSnapshot::default(),
+            discard_confirm: None,
+            changed_files_list_snapshots: Default::default(),
+            focus_handle,
+        }
+    }
+}
+
+impl gpui::Render for RightSidebarPanel {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        self.render_panel(window, cx)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// impl RightSidebarPanel — all rendering logic
+// ---------------------------------------------------------------------------
+
+impl RightSidebarPanel {
+    // -----------------------------------------------------------------------
+    // Snapshot accessors
+    // -----------------------------------------------------------------------
+
+    fn active_branch_commit_state(&self) -> Option<&ProjectBranchCommitState> {
+        let project_id = self.snapshot.active_section.as_ref()?.project_id.clone();
+        self.snapshot.branch_commit_states.get(&project_id)
+    }
+
+    fn active_project_check_runs_state(&self) -> Option<&ProjectCheckRunsState> {
+        let section = self.snapshot.active_section.as_ref()?;
+        let lookup_key = format!("{}:{}", section.project_id, section.branch_name);
+        self.snapshot.project_check_runs_states.get(&lookup_key)
+    }
+
+    fn active_changed_files(&self) -> Arc<[crate::project_store::ChangedFile]> {
+        self.snapshot
+            .active_section
+            .as_ref()
+            .and_then(|section| self.snapshot.changed_files.get(&section.project_id))
+            .cloned()
+            .unwrap_or_else(|| Arc::from(vec![]))
+    }
+
+    fn changed_files_actions_busy(&self, project_id: &str) -> bool {
+        self.snapshot.active_git_actions.contains_key(project_id)
+    }
+
+    fn changed_files_stage_all_pending(&self, project_id: &str) -> bool {
+        self.snapshot
+            .pending_changed_files_git_mutations
+            .get(project_id)
+            .is_some_and(|pending| pending.mutations().any(ChangedFilesGitMutation::stages_all))
+    }
+
+    fn changed_files_unstage_all_pending(&self, project_id: &str) -> bool {
+        self.snapshot
+            .pending_changed_files_git_mutations
+            .get(project_id)
+            .is_some_and(|pending| {
+                pending
+                    .mutations()
+                    .any(ChangedFilesGitMutation::unstages_all)
+            })
+    }
+
+    fn changed_files_file_pending(&self, project_id: &str, path: &str) -> bool {
+        self.snapshot
+            .pending_changed_files_git_mutations
+            .get(project_id)
+            .is_some_and(|pending| {
+                pending.mutations().any(|mutation| {
+                    mutation.stages_all()
+                        || mutation.unstages_all()
+                        || mutation.stages_file(path)
+                        || mutation.unstages_file(path)
+                })
+            })
+    }
+
+    fn changed_files_project_mutations_pending(&self, project_id: &str) -> bool {
+        self.snapshot
+            .pending_changed_files_git_mutations
+            .contains_key(project_id)
+    }
+
+    fn active_git_action_for_project(&self, project_id: &str) -> Option<&ActiveGitActionSnapshot> {
+        self.snapshot.active_git_actions.get(project_id)
+    }
+
+    fn commit_row_expanded(&self, project_id: &str, commit_id: &str) -> bool {
+        self.snapshot
+            .expanded_commit_rows
+            .contains(&format!("{project_id}:{commit_id}"))
+    }
+
+    fn commit_file_changes_state(
+        &self,
+        project_id: &str,
+        commit_id: &str,
+    ) -> Option<&CommitFileChangesState> {
+        self.snapshot
+            .commit_file_changes_states
+            .get(&format!("{project_id}:{commit_id}"))
     }
 
     fn changed_file_for_action(
@@ -107,7 +286,8 @@ impl AnotherOneApp {
         project_id: &str,
         file_index: usize,
     ) -> Option<crate::project_store::ChangedFile> {
-        self.changed_files
+        self.snapshot
+            .changed_files
             .get(project_id)
             .and_then(|files| files.get(file_index))
             .cloned()
@@ -118,16 +298,113 @@ impl AnotherOneApp {
         project_id: &str,
         file_indices: &[usize],
     ) -> Vec<crate::project_store::ChangedFile> {
-        let Some(files) = self.changed_files.get(project_id) else {
+        let Some(files) = self.snapshot.changed_files.get(project_id) else {
             return Vec::new();
         };
-
         file_indices
             .iter()
             .filter_map(|index| files.get(*index))
             .cloned()
             .collect()
     }
+
+    // -----------------------------------------------------------------------
+    // Changed-files list snapshot cache
+    // -----------------------------------------------------------------------
+
+    fn changed_files_list_snapshot(
+        &mut self,
+        project_id: &str,
+        changed_files: &Arc<[crate::project_store::ChangedFile]>,
+    ) -> ChangedFilesListSnapshot {
+        if let Some(snapshot) = self.changed_files_list_snapshots.get(project_id) {
+            if Arc::ptr_eq(&snapshot.files, changed_files) {
+                return snapshot.clone();
+            }
+        }
+        let snapshot =
+            self.build_changed_files_list_snapshot(project_id.to_string(), changed_files.clone());
+        self.changed_files_list_snapshots
+            .insert(project_id.to_string(), snapshot.clone());
+        snapshot
+    }
+
+    fn build_changed_files_list_snapshot(
+        &self,
+        project_id: String,
+        changed_files: Arc<[crate::project_store::ChangedFile]>,
+    ) -> ChangedFilesListSnapshot {
+        let mut rows = Vec::with_capacity(changed_files.len());
+        let mut staged_indices = Vec::new();
+        let mut unstaged_indices = Vec::new();
+        let mut staged_additions = 0;
+        let mut staged_deletions = 0;
+        let mut unstaged_additions = 0;
+        let mut unstaged_deletions = 0;
+
+        for (file_index, changed) in changed_files.iter().enumerate() {
+            let file_name = Path::new(&changed.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(changed.path.as_str())
+                .to_string();
+            let parent_dir = Path::new(&changed.path)
+                .parent()
+                .and_then(|parent| parent.to_str())
+                .filter(|parent| !parent.is_empty() && *parent != ".")
+                .map(|parent| SharedString::from(parent.to_string()));
+            let staged_status = Self::changed_file_status_char(changed, ChangeGroup::Staged);
+            let unstaged_status =
+                Self::changed_file_status_char(changed, ChangeGroup::Uncommitted);
+            let can_stage = changed.can_stage();
+            let can_unstage = changed.can_unstage();
+            let has_staged_changes = changed.has_staged_changes();
+            let has_unstaged_changes = changed.has_unstaged_changes();
+
+            rows.push(ChangedFilesRowSnapshot {
+                path: SharedString::from(changed.path.clone()),
+                file_name: SharedString::from(file_name),
+                parent_dir,
+                staged_status,
+                staged_status_color: Self::changed_file_status_color(staged_status),
+                unstaged_status,
+                unstaged_status_color: Self::changed_file_status_color(unstaged_status),
+                staged_additions: changed.staged_additions,
+                staged_deletions: changed.staged_deletions,
+                unstaged_additions: changed.unstaged_additions,
+                unstaged_deletions: changed.unstaged_deletions,
+                can_stage,
+                can_unstage,
+            });
+
+            if has_staged_changes {
+                staged_indices.push(file_index);
+                staged_additions += changed.staged_additions.max(0);
+                staged_deletions += changed.staged_deletions.max(0);
+            }
+            if has_unstaged_changes {
+                unstaged_indices.push(file_index);
+                unstaged_additions += changed.unstaged_additions.max(0);
+                unstaged_deletions += changed.unstaged_deletions.max(0);
+            }
+        }
+
+        ChangedFilesListSnapshot {
+            project_id,
+            files: changed_files,
+            rows: Arc::from(rows),
+            staged_indices: Arc::from(staged_indices),
+            unstaged_indices: Arc::from(unstaged_indices),
+            staged_additions,
+            staged_deletions,
+            unstaged_additions,
+            unstaged_deletions,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Static helpers
+    // -----------------------------------------------------------------------
 
     pub(crate) fn toolbar_spinner(icon_color: gpui::Hsla, size_px: f32) -> impl IntoElement {
         svg()
@@ -178,6 +455,41 @@ impl AnotherOneApp {
             )
     }
 
+    fn changed_file_status_char(
+        changed: &crate::project_store::ChangedFile,
+        group: ChangeGroup,
+    ) -> char {
+        let raw = match group {
+            ChangeGroup::Staged => changed.index_status,
+            ChangeGroup::Uncommitted => {
+                if changed.untracked {
+                    'A'
+                } else {
+                    changed.worktree_status
+                }
+            }
+        };
+
+        match raw {
+            '?' => 'A',
+            ' ' => 'M',
+            other => other,
+        }
+    }
+
+    fn changed_file_status_color(status: char) -> gpui::Hsla {
+        match status {
+            'A' => hsla(135. / 360., 0.70, 0.68, 1.),
+            'D' => hsla(0., 0.72, 0.68, 1.),
+            'R' | 'C' => hsla(210. / 360., 0.72, 0.72, 1.),
+            _ => hsla(50. / 360., 0.90, 0.60, 1.),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Button widgets
+    // -----------------------------------------------------------------------
+
     fn changed_file_action_button(
         props: ChangedFileActionButtonProps,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
@@ -200,9 +512,11 @@ impl AnotherOneApp {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev, window, cx| {
-                        this.workspace_pane.update(cx, |workspace, cx| {
-                            workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
-                            cx.notify();
+                        let _ = this.app.update(cx, |app, cx| {
+                            app.workspace_pane.update(cx, |workspace, cx| {
+                                workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
+                                cx.notify();
+                            });
                         });
                         cx.stop_propagation();
                         on_click(this, ev, window, cx);
@@ -210,7 +524,8 @@ impl AnotherOneApp {
                 );
 
             if let Some(label) = props.tooltip_label {
-                button = button.tooltip(move |_window, cx| Self::action_tooltip_view(label, cx));
+                button = button
+                    .tooltip(move |_window, cx| AnotherOneApp::action_tooltip_view(label, cx));
             }
         }
 
@@ -290,7 +605,8 @@ impl AnotherOneApp {
         let mut button = button.child(content);
 
         if let Some(tip) = props.tooltip_label {
-            button = button.tooltip(move |_window, cx| Self::action_tooltip_view(tip, cx));
+            button =
+                button.tooltip(move |_window, cx| AnotherOneApp::action_tooltip_view(tip, cx));
         }
 
         button.when(props.enabled && !props.active, |button| {
@@ -300,9 +616,11 @@ impl AnotherOneApp {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev, window, cx| {
-                        this.workspace_pane.update(cx, |workspace, cx| {
-                            workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
-                            cx.notify();
+                        let _ = this.app.update(cx, |app, cx| {
+                            app.workspace_pane.update(cx, |workspace, cx| {
+                                workspace.keyboard_focus = WorkspaceKeyboardFocus::GitPanel;
+                                cx.notify();
+                            });
                         });
                         on_click(this, ev, window, cx);
                     }),
@@ -310,108 +628,9 @@ impl AnotherOneApp {
         })
     }
 
-    fn changed_file_status_char(
-        changed: &crate::project_store::ChangedFile,
-        group: ChangeGroup,
-    ) -> char {
-        let raw = match group {
-            ChangeGroup::Staged => changed.index_status,
-            ChangeGroup::Uncommitted => {
-                if changed.untracked {
-                    'A'
-                } else {
-                    changed.worktree_status
-                }
-            }
-        };
-
-        match raw {
-            '?' => 'A',
-            ' ' => 'M',
-            other => other,
-        }
-    }
-
-    fn changed_file_status_color(status: char) -> gpui::Hsla {
-        match status {
-            'A' => hsla(135. / 360., 0.70, 0.68, 1.),
-            'D' => hsla(0., 0.72, 0.68, 1.),
-            'R' | 'C' => hsla(210. / 360., 0.72, 0.72, 1.),
-            _ => hsla(50. / 360., 0.90, 0.60, 1.),
-        }
-    }
-
-    fn build_changed_files_list_snapshot(
-        &self,
-        project_id: String,
-        changed_files: Arc<[crate::project_store::ChangedFile]>,
-    ) -> ChangedFilesListSnapshot {
-        let mut rows = Vec::with_capacity(changed_files.len());
-        let mut staged_indices = Vec::new();
-        let mut unstaged_indices = Vec::new();
-        let mut staged_additions = 0;
-        let mut staged_deletions = 0;
-        let mut unstaged_additions = 0;
-        let mut unstaged_deletions = 0;
-
-        for (file_index, changed) in changed_files.iter().enumerate() {
-            let file_name = Path::new(&changed.path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(changed.path.as_str())
-                .to_string();
-            let parent_dir = Path::new(&changed.path)
-                .parent()
-                .and_then(|parent| parent.to_str())
-                .filter(|parent| !parent.is_empty() && *parent != ".")
-                .map(|parent| SharedString::from(parent.to_string()));
-            let staged_status = Self::changed_file_status_char(changed, ChangeGroup::Staged);
-            let unstaged_status = Self::changed_file_status_char(changed, ChangeGroup::Uncommitted);
-            let can_stage = changed.can_stage();
-            let can_unstage = changed.can_unstage();
-            let has_staged_changes = changed.has_staged_changes();
-            let has_unstaged_changes = changed.has_unstaged_changes();
-
-            rows.push(ChangedFilesRowSnapshot {
-                path: SharedString::from(changed.path.clone()),
-                file_name: SharedString::from(file_name),
-                parent_dir,
-                staged_status,
-                staged_status_color: Self::changed_file_status_color(staged_status),
-                unstaged_status,
-                unstaged_status_color: Self::changed_file_status_color(unstaged_status),
-                staged_additions: changed.staged_additions,
-                staged_deletions: changed.staged_deletions,
-                unstaged_additions: changed.unstaged_additions,
-                unstaged_deletions: changed.unstaged_deletions,
-                can_stage,
-                can_unstage,
-            });
-
-            if has_staged_changes {
-                staged_indices.push(file_index);
-                staged_additions += changed.staged_additions.max(0);
-                staged_deletions += changed.staged_deletions.max(0);
-            }
-            if has_unstaged_changes {
-                unstaged_indices.push(file_index);
-                unstaged_additions += changed.unstaged_additions.max(0);
-                unstaged_deletions += changed.unstaged_deletions.max(0);
-            }
-        }
-
-        ChangedFilesListSnapshot {
-            project_id,
-            files: changed_files,
-            rows: Arc::from(rows),
-            staged_indices: Arc::from(staged_indices),
-            unstaged_indices: Arc::from(unstaged_indices),
-            staged_additions,
-            staged_deletions,
-            unstaged_additions,
-            unstaged_deletions,
-        }
-    }
+    // -----------------------------------------------------------------------
+    // Row renderers
+    // -----------------------------------------------------------------------
 
     fn changed_file_row(
         &self,
@@ -422,7 +641,7 @@ impl AnotherOneApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let app_theme = theme::app_theme(window, self.snapshot.theme_mode);
         let title_col = app_theme.text_primary;
         let path_col = app_theme.text_muted;
         let row_hover = app_theme.overlay_hover;
@@ -462,8 +681,7 @@ impl AnotherOneApp {
             ChangeGroup::Uncommitted => crate::project_store::GitDiffSource::Unstaged,
         };
         let is_active_diff = self
-            .workspace_pane
-            .read(cx)
+            .snapshot
             .active_git_diff
             .as_ref()
             .is_some_and(|selection| {
@@ -494,11 +712,13 @@ impl AnotherOneApp {
                         tooltip_label: Some("Unstage file"),
                     },
                     move |this, _ev, _window, cx| {
-                        if let Some(changed) =
-                            this.changed_file_for_action(&unstage_project_id, file_index)
-                        {
-                            this.unstage_changed_file(&unstage_project_id, &changed, cx);
-                        }
+                        let _ = this.app.update(cx, |app, cx| {
+                            if let Some(changed) =
+                                app.changed_file_for_action(&unstage_project_id, file_index)
+                            {
+                                app.unstage_changed_file(&unstage_project_id, &changed, cx);
+                            }
+                        });
                         cx.notify();
                     },
                     cx,
@@ -519,11 +739,13 @@ impl AnotherOneApp {
                             tooltip_label: Some("Stage File"),
                         },
                         move |this, _ev, _window, cx| {
-                            if let Some(changed) =
-                                this.changed_file_for_action(&stage_project_id, file_index)
-                            {
-                                this.stage_changed_file(&stage_project_id, &changed, cx);
-                            }
+                            let _ = this.app.update(cx, |app, cx| {
+                                if let Some(changed) =
+                                    app.changed_file_for_action(&stage_project_id, file_index)
+                                {
+                                    app.stage_changed_file(&stage_project_id, &changed, cx);
+                                }
+                            });
                             cx.notify();
                         },
                         cx,
@@ -543,7 +765,8 @@ impl AnotherOneApp {
                         if let Some(changed) =
                             this.changed_file_for_action(&revert_project_id, file_index)
                         {
-                            this.discard_confirm = Some((revert_project_id.clone(), vec![changed]));
+                            this.discard_confirm =
+                                Some((revert_project_id.clone(), vec![changed]));
                         }
                         cx.notify();
                     },
@@ -567,16 +790,18 @@ impl AnotherOneApp {
             .cursor_pointer()
             .when(is_active_diff, |row| row.bg(active_bg))
             .hover(move |style| style.bg(row_hover))
-            .tooltip(move |_window, cx| Self::action_tooltip_view("Open file diff", cx))
+            .tooltip(move |_window, cx| AnotherOneApp::action_tooltip_view("Open file diff", cx))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev: &MouseDownEvent, window, cx| {
                     this.focus_handle.focus(window, cx);
-                    if let Some(changed) =
-                        this.changed_file_for_action(&open_project_id, file_index)
-                    {
-                        this.open_changed_file_diff(&open_project_id, &changed, source, cx);
-                    }
+                    let _ = this.app.update(cx, |app, cx| {
+                        if let Some(changed) =
+                            app.changed_file_for_action(&open_project_id, file_index)
+                        {
+                            app.open_changed_file_diff(&open_project_id, &changed, source, cx);
+                        }
+                    });
                     cx.stop_propagation();
                 }),
             )
@@ -645,14 +870,14 @@ impl AnotherOneApp {
             additions: section_additions,
             deletions: section_deletions,
         } = props;
-        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let app_theme = theme::app_theme(window, self.snapshot.theme_mode);
         let border = app_theme.border;
         let title_col = app_theme.text_primary;
         let count_col = app_theme.text_secondary;
         let action_hover = app_theme.overlay_hover_strong;
         let action_icon = app_theme.text_secondary;
         let header_hover = app_theme.overlay_hover;
-        let collapsed = self.collapsed_change_sections.contains(section_key);
+        let collapsed = self.snapshot.collapsed_change_sections.contains(section_key);
         let actions_busy = self.changed_files_actions_busy(&project_id);
         let project_mutations_pending = self.changed_files_project_mutations_pending(&project_id);
         let stage_all_pending = self.changed_files_stage_all_pending(&project_id);
@@ -683,7 +908,9 @@ impl AnotherOneApp {
                             },
                             move |this, _ev, _window, cx| {
                                 cx.stop_propagation();
-                                this.unstage_all_changes(&unstage_project_id, cx);
+                                let _ = this.app.update(cx, |app, cx| {
+                                    app.unstage_all_changes(&unstage_project_id, cx);
+                                });
                                 cx.notify();
                             },
                             cx,
@@ -718,7 +945,9 @@ impl AnotherOneApp {
                             },
                             move |this, _ev, _window, cx| {
                                 cx.stop_propagation();
-                                this.stage_all_changes(&stage_project_id, cx);
+                                let _ = this.app.update(cx, |app, cx| {
+                                    app.stage_all_changes(&stage_project_id, cx);
+                                });
                                 cx.notify();
                             },
                             cx,
@@ -740,13 +969,11 @@ impl AnotherOneApp {
                         },
                         move |this, _ev, _window, cx| {
                             cx.stop_propagation();
-                            this.discard_confirm = Some((
-                                discard_project_id.clone(),
-                                this.changed_files_for_action_indices(
-                                    &discard_project_id,
-                                    discard_indices.as_ref(),
-                                ),
-                            ));
+                            let files = this.changed_files_for_action_indices(
+                                &discard_project_id,
+                                discard_indices.as_ref(),
+                            );
+                            this.discard_confirm = Some((discard_project_id.clone(), files));
                             cx.notify();
                         },
                         cx,
@@ -770,19 +997,21 @@ impl AnotherOneApp {
             .cursor_pointer()
             .hover(move |s| s.bg(header_hover))
             .tooltip(move |_window, cx| {
-                Self::action_tooltip_view("Expand or collapse this section", cx)
+                AnotherOneApp::action_tooltip_view("Expand or collapse this section", cx)
             })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                    if this.collapsed_change_sections.contains(section_key) {
-                        this.collapsed_change_sections.remove(section_key);
-                    } else {
-                        this.collapsed_change_sections
-                            .insert(section_key.to_string());
-                    }
+                    let _ = this.app.update(cx, |app, cx| {
+                        if app.collapsed_change_sections.contains(section_key) {
+                            app.collapsed_change_sections.remove(section_key);
+                        } else {
+                            app.collapsed_change_sections
+                                .insert(section_key.to_string());
+                        }
+                        app.sync_right_sidebar_snapshot(cx);
+                    });
                     cx.stop_propagation();
-                    cx.notify();
                 }),
             )
             .child(
@@ -917,7 +1146,7 @@ impl AnotherOneApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let app_theme = theme::app_theme(window, self.snapshot.theme_mode);
         let title_col = app_theme.text_primary;
         let meta_col = app_theme.text_muted;
         let row_hover = app_theme.overlay_hover;
@@ -1078,11 +1307,13 @@ impl AnotherOneApp {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                            this.toggle_commit_row_expanded(
-                                &toggle_project_id,
-                                &toggle_commit_id,
-                                cx,
-                            );
+                            let _ = this.app.update(cx, |app, cx| {
+                                app.toggle_commit_row_expanded(
+                                    &toggle_project_id,
+                                    &toggle_commit_id,
+                                    cx,
+                                );
+                            });
                         }),
                     )
                     .child(
@@ -1125,10 +1356,12 @@ impl AnotherOneApp {
                             },
                             move |this, _ev, _window, cx| {
                                 cx.stop_propagation();
-                                this.start_toolbar_git_action(
-                                    crate::git_actions::ToolbarGitAction::UndoLastCommit,
-                                    cx,
-                                );
+                                let _ = this.app.update(cx, |app, cx| {
+                                    app.start_toolbar_git_action(
+                                        crate::git_actions::ToolbarGitAction::UndoLastCommit,
+                                        cx,
+                                    );
+                                });
                             },
                             cx,
                         ))
@@ -1194,7 +1427,7 @@ impl AnotherOneApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let app_theme = theme::app_theme(window, self.snapshot.theme_mode);
         let title_col = app_theme.text_primary;
         let meta_col = app_theme.text_muted;
         let hover_bg = app_theme.overlay_hover;
@@ -1277,7 +1510,9 @@ impl AnotherOneApp {
                                     if let Err(err) =
                                         crate::platform::CurrentPlatform::open_external_url(&url)
                                     {
-                                        this.show_error_toast(err, cx);
+                                        let _ = this
+                                            .app
+                                            .update(cx, |app, cx| app.show_error_toast(err, cx));
                                     }
                                 }
                             },
@@ -1288,35 +1523,35 @@ impl AnotherOneApp {
             .into_any_element()
     }
 
-    pub(crate) fn changed_files_panel(
+    // -----------------------------------------------------------------------
+    // Main render entry point
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn render_panel(
         &mut self,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let app_theme = theme::app_theme(window, self.project_store.ui.theme_mode);
+        let app_theme = theme::app_theme(window, self.snapshot.theme_mode);
         let bg = app_theme.chrome_bg;
         let muted_col = app_theme.text_muted;
-        let Some(active_section) = self.workspace_pane.read(cx).active_section.clone() else {
-            return Self::panel("Changed files", "", bg, true).into_any_element();
+
+        let Some(active_section) = self.snapshot.active_section.clone() else {
+            return AnotherOneApp::panel("Changed files", "", bg, true).into_any_element();
         };
         let project_id = active_section.project_id.clone();
-        let is_git_backed = self.project_store.is_git_backed(&project_id);
-        let has_github_remote = self.has_github_remote(&project_id);
-        let linked_issue = active_section
-            .task_id
-            .as_deref()
-            .and_then(|tid| self.project_store.task(tid))
-            .and_then(|task| task.linked_issue.clone());
-        let sidebar_mode = self.active_right_sidebar_mode(cx);
-        let commit_state = self.active_branch_commit_state(cx).cloned();
-        if is_git_backed && has_github_remote {
-            self.request_active_project_check_runs_lookup(cx);
-        }
-        let check_runs_state = self.active_project_check_runs_state(cx).cloned();
+        let is_git_backed = self.snapshot.is_git_backed;
+        let has_github_remote = self.snapshot.has_github_remote;
+        let linked_issue = self.snapshot.linked_issue.clone();
+        let sidebar_mode = self.snapshot.right_sidebar_mode;
+        let commit_state = self.active_branch_commit_state().cloned();
+        // NOTE: request_active_project_check_runs_lookup is NOT called here —
+        // that side-effect is handled by the caller (sync_right_sidebar_snapshot
+        // or the drain loop).
+        let check_runs_state = self.active_project_check_runs_state().cloned();
 
-        let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
-        let changed_files = self.active_changed_files(cx);
-
+        let has_loaded_changed_files = self.snapshot.changed_files.contains_key(&project_id);
+        let changed_files = self.active_changed_files();
         let mut body = div().flex_1().flex().flex_col().min_h_0();
 
         if !is_git_backed {
@@ -1338,9 +1573,14 @@ impl AnotherOneApp {
                         muted_col,
                     ));
                 } else {
-                    let staged_collapsed = self.collapsed_change_sections.contains("staged");
-                    let uncommitted_collapsed =
-                        self.collapsed_change_sections.contains("uncommitted");
+                    let staged_collapsed = self
+                        .snapshot
+                        .collapsed_change_sections
+                        .contains("staged");
+                    let uncommitted_collapsed = self
+                        .snapshot
+                        .collapsed_change_sections
+                        .contains("uncommitted");
                     let list_snapshot =
                         self.changed_files_list_snapshot(&project_id, &changed_files);
                     let mut rows = div()
@@ -1503,7 +1743,7 @@ impl AnotherOneApp {
                                 .pb(px(6.))
                                 .child(Self::git_toolbar_button(
                                     GitToolbarButtonProps {
-                                        theme_mode: self.project_store.ui.theme_mode,
+                                        theme_mode: self.snapshot.theme_mode,
                                         label: "Load more",
                                         leading_icon: None,
                                         trailing_icon: None,
@@ -1512,7 +1752,9 @@ impl AnotherOneApp {
                                         tooltip_label: Some("Show 20 more recent commits"),
                                     },
                                     move |this, _ev, _window, cx| {
-                                        this.load_more_commits(&load_more_project_id, cx);
+                                        let _ = this.app.update(cx, |app, cx| {
+                                            app.load_more_commits(&load_more_project_id, cx);
+                                        });
                                     },
                                     cx,
                                 )),
@@ -1746,7 +1988,7 @@ impl AnotherOneApp {
 
         let commits_button = Self::git_toolbar_button(
             GitToolbarButtonProps {
-                theme_mode: self.project_store.ui.theme_mode,
+                theme_mode: self.snapshot.theme_mode,
                 label: "Commits",
                 leading_icon: Some("assets/icons/icons__git-commit.svg"),
                 trailing_icon: None,
@@ -1755,14 +1997,16 @@ impl AnotherOneApp {
                 tooltip_label: Some("View recent commits on the current branch"),
             },
             move |this, _ev, _window, cx| {
-                this.set_right_sidebar_mode(RightSidebarMode::Commits, cx);
+                let _ = this.app.update(cx, |app, cx| {
+                    app.set_right_sidebar_mode(RightSidebarMode::Commits, cx);
+                });
             },
             cx,
         );
 
         let checks_button = Self::git_toolbar_button(
             GitToolbarButtonProps {
-                theme_mode: self.project_store.ui.theme_mode,
+                theme_mode: self.snapshot.theme_mode,
                 label: "Checks",
                 leading_icon: Some("assets/icons/icons__tool-check.svg"),
                 trailing_icon: None,
@@ -1771,7 +2015,9 @@ impl AnotherOneApp {
                 tooltip_label: Some("View CI checks for the current pull request"),
             },
             move |this, _ev, _window, cx| {
-                this.set_right_sidebar_mode(RightSidebarMode::Checks, cx);
+                let _ = this.app.update(cx, |app, cx| {
+                    app.set_right_sidebar_mode(RightSidebarMode::Checks, cx);
+                });
             },
             cx,
         );
@@ -1800,7 +2046,7 @@ impl AnotherOneApp {
                             .gap(px(6.))
                             .child(Self::git_toolbar_button(
                                 GitToolbarButtonProps {
-                                    theme_mode: self.project_store.ui.theme_mode,
+                                    theme_mode: self.snapshot.theme_mode,
                                     label: "Changes",
                                     leading_icon: Some(
                                         "assets/icons/icons__file_icons__changes.svg",
@@ -1811,7 +2057,12 @@ impl AnotherOneApp {
                                     tooltip_label: Some("View working tree changes"),
                                 },
                                 move |this, _ev, _window, cx| {
-                                    this.set_right_sidebar_mode(RightSidebarMode::WorkingTree, cx);
+                                    let _ = this.app.update(cx, |app, cx| {
+                                        app.set_right_sidebar_mode(
+                                            RightSidebarMode::WorkingTree,
+                                            cx,
+                                        );
+                                    });
                                 },
                                 cx,
                             ))
@@ -1904,11 +2155,13 @@ impl AnotherOneApp {
                     }
                     "enter" => {
                         if let Some((project_id, files)) = this.discard_confirm.take() {
-                            if files.len() == 1 {
-                                this.revert_changed_file(&project_id, &files[0], cx);
-                            } else {
-                                this.revert_changed_files(&project_id, &files, cx);
-                            }
+                            let _ = this.app.update(cx, |app, cx| {
+                                if files.len() == 1 {
+                                    app.revert_changed_file(&project_id, &files[0], cx);
+                                } else {
+                                    app.revert_changed_files(&project_id, &files, cx);
+                                }
+                            });
                         }
                         cx.stop_propagation();
                         cx.notify();
@@ -1978,7 +2231,7 @@ impl AnotherOneApp {
                                     .bg(btn_bg)
                                     .hover(move |style| style.bg(btn_hover))
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
+                                        AnotherOneApp::action_tooltip_view(
                                             "Close without discarding changes",
                                             cx,
                                         )
@@ -2006,7 +2259,7 @@ impl AnotherOneApp {
                                     .bg(danger_bg)
                                     .hover(move |style| style.bg(danger_hover))
                                     .tooltip(move |_window, cx| {
-                                        Self::action_tooltip_view(
+                                        AnotherOneApp::action_tooltip_view(
                                             "Permanently discard the selected changes",
                                             cx,
                                         )
@@ -2019,19 +2272,21 @@ impl AnotherOneApp {
                                         MouseButton::Left,
                                         cx.listener(
                                             move |this, _ev: &MouseDownEvent, _window, cx| {
-                                                if confirm_files.len() == 1 {
-                                                    this.revert_changed_file(
-                                                        &confirm_project_id,
-                                                        &confirm_files[0],
-                                                        cx,
-                                                    );
-                                                } else {
-                                                    this.revert_changed_files(
-                                                        &confirm_project_id,
-                                                        &confirm_files,
-                                                        cx,
-                                                    );
-                                                }
+                                                let _ = this.app.update(cx, |app, cx| {
+                                                    if confirm_files.len() == 1 {
+                                                        app.revert_changed_file(
+                                                            &confirm_project_id,
+                                                            &confirm_files[0],
+                                                            cx,
+                                                        );
+                                                    } else {
+                                                        app.revert_changed_files(
+                                                            &confirm_project_id,
+                                                            &confirm_files,
+                                                            cx,
+                                                        );
+                                                    }
+                                                });
                                                 this.discard_confirm = None;
                                                 cx.stop_propagation();
                                                 cx.notify();
@@ -2041,5 +2296,112 @@ impl AnotherOneApp {
                             ),
                     ),
             )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bridge methods kept on AnotherOneApp for call-sites outside this file.
+// ---------------------------------------------------------------------------
+
+impl AnotherOneApp {
+    /// Thin wrapper so `titlebar.rs` and other call-sites that still reference
+    /// `Self::toolbar_spinner` continue to compile unchanged.
+    pub(crate) fn toolbar_spinner(icon_color: gpui::Hsla, size_px: f32) -> impl IntoElement {
+        RightSidebarPanel::toolbar_spinner(icon_color, size_px)
+    }
+
+    /// Look up a changed file by index from the authoritative `self.changed_files`
+    /// map.  This is the version event-handlers inside the panel delegate to via
+    /// `this.app.update(cx, |app, cx| app.changed_file_for_action(...))`.
+    pub(crate) fn changed_file_for_action(
+        &self,
+        project_id: &str,
+        file_index: usize,
+    ) -> Option<crate::project_store::ChangedFile> {
+        self.changed_files
+            .get(project_id)
+            .and_then(|files| files.get(file_index))
+            .cloned()
+    }
+
+    /// Build a `RightSidebarSnapshot` from the current `AnotherOneApp` state.
+    pub(crate) fn build_right_sidebar_snapshot(
+        &self,
+        cx: &gpui::App,
+    ) -> RightSidebarSnapshot {
+        let workspace = self.workspace_pane.read(cx);
+        let active_section = workspace.active_section.clone();
+        let active_project_id = active_section.as_ref().map(|s| s.project_id.as_str());
+        let is_git_backed = active_project_id
+            .map(|pid| self.project_store.is_git_backed(pid))
+            .unwrap_or(false);
+        let has_github_remote = active_project_id
+            .map(|pid| self.has_github_remote(pid))
+            .unwrap_or(false);
+        let linked_issue = active_section
+            .as_ref()
+            .and_then(|s| s.task_id.as_deref())
+            .and_then(|tid| self.project_store.task(tid))
+            .and_then(|task| task.linked_issue.clone());
+        RightSidebarSnapshot {
+            theme_mode: self.project_store.ui.theme_mode,
+            active_section,
+            is_git_backed,
+            has_github_remote,
+            linked_issue,
+            active_git_diff: workspace.active_git_diff.clone(),
+            keyboard_focus: workspace.keyboard_focus,
+            right_sidebar_mode: self.right_sidebar_mode,
+            changed_files: self.changed_files.clone(),
+            branch_commit_states: self.branch_commit_states.clone(),
+            project_check_runs_states: self.project_check_runs_states.clone(),
+            commit_file_changes_states: self.commit_file_changes_states.clone(),
+            expanded_commit_rows: self.expanded_commit_rows.clone(),
+            active_git_actions: self
+                .active_git_actions
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        ActiveGitActionSnapshot {
+                            action: v.action.clone(),
+                            branch_name_at_start: v.branch_name_at_start.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            pending_changed_files_git_mutations: self
+                .pending_changed_files_git_mutations
+                .clone(),
+            collapsed_change_sections: self.collapsed_change_sections.clone(),
+        }
+    }
+
+    /// Push a fresh snapshot into the persistent `RightSidebarPanel` entity
+    /// and notify it to re-render.  Called from:
+    ///
+    /// * The drain loop timer (for git/CI state changes only — not terminal ticks).
+    /// * The `cx.observe(&workspace_pane, …)` subscription (section switch, diff
+    ///   open, focus change, etc.).
+    /// * Direct call sites that mutate sidebar-relevant app state
+    ///   (`set_right_sidebar_mode`, etc.).
+    ///
+    /// This does NOT call `cx.notify()` on `AnotherOneApp` — callers that also
+    /// need to re-render the outer frame must call `cx.notify()` separately.
+    pub(crate) fn sync_right_sidebar_snapshot(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.build_right_sidebar_snapshot(cx);
+        // RightSidebarPanel listeners reach back into AnotherOneApp via
+        // `this.app.update(cx, …)`. A direct `right_sidebar_panel.update`
+        // here would be a second lease on the panel and panic GPUI's
+        // double_lease_panic. `cx.defer` defers the inner update to after
+        // the listener's lock releases — same pattern as the workspace_pane
+        // context-menu path at ~line 9559.
+        let panel = self.right_sidebar_panel.clone();
+        cx.defer(move |cx| {
+            panel.update(cx, |panel, cx| {
+                panel.snapshot = snapshot;
+                cx.notify();
+            });
+        });
     }
 }
