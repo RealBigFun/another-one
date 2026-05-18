@@ -40,7 +40,46 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use anyhow::Context;
 use rusqlite::{params, Connection};
+
+/// Acquire an exclusive advisory lock on `<db_path>.lock` so two daemon
+/// processes cannot write to the same database simultaneously.
+///
+/// Returns the open `File` that holds the lock; the lock is released
+/// automatically when the `File` is dropped (i.e. when
+/// `SqliteProjectStorePersistence` is dropped / the daemon exits).
+///
+/// On Windows there is no `flock(2)`, so this is a no-op there — the
+/// existing `busy_timeout` pragma provides write serialisation.
+#[cfg(not(target_os = "windows"))]
+fn acquire_db_lock(db_path: &Path) -> anyhow::Result<std::fs::File> {
+    let lock_path = {
+        let name = db_path
+            .file_name()
+            .map(|n| format!("{}.lock", n.to_string_lossy()))
+            .unwrap_or_else(|| "state.sqlite.lock".to_string());
+        db_path.with_file_name(name)
+    };
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .with_context(|| format!("failed to open db lock file {lock_path:?}"))?;
+    use std::os::unix::io::AsRawFd;
+    // LOCK_EX | LOCK_NB: exclusive, non-blocking. Fails immediately with
+    // EWOULDBLOCK if another process holds the lock.
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        let raw = std::io::Error::last_os_error();
+        anyhow::bail!(
+            "Another daemon already has {db_path:?} open (lock file {lock_path:?} is held): {raw}. \
+             Stop the other daemon first."
+        );
+    }
+    Ok(file)
+}
 
 use crate::project_store::{
     PersistedSectionState, ProjectStore, ProjectStorePersistence, StoreFileV4,
@@ -112,6 +151,11 @@ pub(crate) fn open_state_db(path: &Path) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    // Retry for up to 5 s when another process holds the write lock
+    // (e.g. a dev daemon and a release daemon sharing the same DB).
+    // Without this the default busy-timeout is 0 ms — any contention
+    // returns SQLITE_BUSY immediately, which was silently swallowed.
+    conn.pragma_update(None, "busy_timeout", 5000_i64)?;
     Ok(conn)
 }
 
@@ -179,6 +223,10 @@ fn read_schema_version(conn: &Connection) -> rusqlite::Result<i64> {
 pub(crate) struct SqliteProjectStorePersistence {
     path: PathBuf,
     conn: Mutex<Connection>,
+    /// Advisory lock on `<path>.lock` that prevents two daemon processes
+    /// from writing to the same database simultaneously. Released on drop.
+    #[cfg(not(target_os = "windows"))]
+    _lock_file: std::fs::File,
 }
 
 impl std::fmt::Debug for SqliteProjectStorePersistence {
@@ -198,12 +246,21 @@ impl std::fmt::Debug for SqliteProjectStorePersistence {
 impl SqliteProjectStorePersistence {
     /// Open the database at `path` and ensure the v1 schema is in
     /// place. Creates the file if it doesn't exist.
-    pub(crate) fn open(path: PathBuf) -> rusqlite::Result<Self> {
-        let conn = open_state_db(&path)?;
-        init_schema(&conn)?;
+    ///
+    /// On non-Windows platforms this also acquires an exclusive advisory
+    /// lock on `<path>.lock` — if another daemon process already holds
+    /// it, this returns an error immediately rather than letting two
+    /// daemons corrupt each other's writes.
+    pub(crate) fn open(path: PathBuf) -> anyhow::Result<Self> {
+        #[cfg(not(target_os = "windows"))]
+        let _lock_file = acquire_db_lock(&path)?;
+        let conn = open_state_db(&path).context("failed to open state.sqlite")?;
+        init_schema(&conn).context("failed to initialise state.sqlite schema")?;
         Ok(Self {
             path,
             conn: Mutex::new(conn),
+            #[cfg(not(target_os = "windows"))]
+            _lock_file,
         })
     }
 
@@ -391,14 +448,9 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
         out
     }
 
-    fn save(&self, store: &StoreFileV4) {
-        let json = match serde_json::to_string(store) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!("sqlite_persistence: failed to serialise StoreFileV4: {err}");
-                return;
-            }
-        };
+    fn save(&self, store: &StoreFileV4) -> anyhow::Result<()> {
+        let json = serde_json::to_string(store)
+            .context("sqlite_persistence: failed to serialise StoreFileV4")?;
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         // Whole-blob save. Sections are NOT cleared from the
         // `sections` row-level table here — they're an independent
@@ -406,12 +458,12 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
         // `remove_section_rows`. `load()` overlays the rows on top
         // of the blob's task-embedded sections, so the blob carrying
         // possibly-stale section data is harmless: the overlay wins.
-        if let Err(err) = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO app_state (id, state_json) VALUES (1, ?1)",
             params![json],
-        ) {
-            eprintln!("sqlite_persistence: write app_state failed: {err}");
-        }
+        )
+        .context("sqlite_persistence: write app_state failed")?;
+        Ok(())
     }
 
     fn path(&self) -> &Path {
@@ -423,46 +475,36 @@ impl ProjectStorePersistence for SqliteProjectStorePersistence {
         section_id: &str,
         state: &PersistedSectionState,
         _full_blob: &StoreFileV4,
-    ) {
-        let json = match serde_json::to_string(state) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!(
-                    "sqlite_persistence: failed to serialise section {section_id} for upsert: {err}"
-                );
-                return;
-            }
-        };
+    ) -> anyhow::Result<()> {
+        let json = serde_json::to_string(state).with_context(|| {
+            format!("sqlite_persistence: failed to serialise section {section_id} for upsert")
+        })?;
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        if let Err(err) = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO sections (section_id, state_json) VALUES (?1, ?2)",
             params![section_id, json],
-        ) {
-            eprintln!("sqlite_persistence: failed to upsert section {section_id}: {err}");
-        }
+        )
+        .with_context(|| {
+            format!("sqlite_persistence: failed to upsert section {section_id}")
+        })?;
+        Ok(())
     }
 
-    fn remove_section_rows(&self, section_ids: &[String], _full_blob: &StoreFileV4) {
+    fn remove_section_rows(&self, section_ids: &[String], _full_blob: &StoreFileV4) -> anyhow::Result<()> {
         if section_ids.is_empty() {
-            return;
+            return Ok(());
         }
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        let tx = match conn.unchecked_transaction() {
-            Ok(t) => t,
-            Err(err) => {
-                eprintln!("sqlite_persistence: failed to begin remove_section_rows tx: {err}");
-                return;
-            }
-        };
+        let tx = conn
+            .unchecked_transaction()
+            .context("sqlite_persistence: failed to begin remove_section_rows tx")?;
         for id in section_ids {
-            if let Err(err) = tx.execute("DELETE FROM sections WHERE section_id = ?1", params![id])
-            {
-                eprintln!("sqlite_persistence: failed to delete section {id}: {err}");
-            }
+            tx.execute("DELETE FROM sections WHERE section_id = ?1", params![id])
+                .with_context(|| format!("sqlite_persistence: failed to delete section {id}"))?;
         }
-        if let Err(err) = tx.commit() {
-            eprintln!("sqlite_persistence: failed to commit remove_section_rows: {err}");
-        }
+        tx.commit()
+            .context("sqlite_persistence: failed to commit remove_section_rows")?;
+        Ok(())
     }
 }
 
@@ -550,7 +592,7 @@ mod tests {
         let blob: StoreFileV4 =
             serde_json::from_str(&serde_json::to_string(&serde_for_test(&store)).unwrap()).unwrap();
 
-        adapter.save(&blob);
+        adapter.save(&blob).unwrap();
 
         // Re-open from disk to make sure the value actually committed,
         // not just sat in the connection's page cache.
@@ -740,7 +782,7 @@ mod tests {
             cwd: None,
             tabs: Vec::new(),
         };
-        adapter.upsert_section("section-x", &state, &StoreFileV4::default());
+        adapter.upsert_section("section-x", &state, &StoreFileV4::default()).unwrap();
 
         // Blob unchanged: upsert_section is row-only.
         let blob_after = serde_json::to_string(&adapter.load()).unwrap();
@@ -771,11 +813,11 @@ mod tests {
             cwd: None,
             tabs: Vec::new(),
         };
-        adapter.upsert_section("a", &mk("ta"), &StoreFileV4::default());
-        adapter.upsert_section("b", &mk("tb"), &StoreFileV4::default());
-        adapter.upsert_section("c", &mk("tc"), &StoreFileV4::default());
+        adapter.upsert_section("a", &mk("ta"), &StoreFileV4::default()).unwrap();
+        adapter.upsert_section("b", &mk("tb"), &StoreFileV4::default()).unwrap();
+        adapter.upsert_section("c", &mk("tc"), &StoreFileV4::default()).unwrap();
 
-        adapter.remove_section_rows(&["b".to_string()], &StoreFileV4::default());
+        adapter.remove_section_rows(&["b".to_string()], &StoreFileV4::default()).unwrap();
 
         let mut ids: Vec<String> = adapter
             .read_sections()
@@ -805,11 +847,11 @@ mod tests {
             cwd: None,
             tabs: Vec::new(),
         };
-        adapter.upsert_section("section-x", &cached, &StoreFileV4::default());
+        adapter.upsert_section("section-x", &cached, &StoreFileV4::default()).unwrap();
         assert_eq!(adapter.read_sections().len(), 1);
 
         // Full save with an empty blob should leave the cache alone.
-        adapter.save(&StoreFileV4::default());
+        adapter.save(&StoreFileV4::default()).unwrap();
         let rows = adapter.read_sections();
         assert_eq!(
             rows.len(),

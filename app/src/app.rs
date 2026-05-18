@@ -604,12 +604,6 @@ pub(crate) struct WorktreeDeletionReply {
     pub(crate) result: Result<Option<String>, String>,
 }
 
-struct CommitFileChangesReply {
-    project_id: String,
-    commit_id: String,
-    result: Result<Vec<crate::project_store::BranchCompareFile>, String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommitFileChangesState {
     Loading,
@@ -1883,10 +1877,6 @@ pub struct AnotherOneApp {
     pub(crate) worktree_deletion_sender: mpsc::Sender<WorktreeDeletionReply>,
     /// Receiver for background worktree deletion operations.
     worktree_deletion_receiver: mpsc::Receiver<WorktreeDeletionReply>,
-    /// Sender used by background commit file-change lookups.
-    commit_file_changes_sender: mpsc::Sender<CommitFileChangesReply>,
-    /// Receiver for background commit file-change lookups.
-    commit_file_changes_receiver: mpsc::Receiver<CommitFileChangesReply>,
     /// Sender used by background project GitHub-link lookups.
     project_github_link_sender: broadcast::Sender<ProjectGitHubLinkReply>,
     /// Receiver for background project GitHub-link lookups.
@@ -1961,12 +1951,6 @@ pub struct AnotherOneApp {
     /// Active scrollback search (Cmd-F). At most one terminal at a time;
     /// opening the search on a different terminal closes any previous.
     pub(crate) terminal_search: Option<TerminalSearchState>,
-    /// Phase 5f of design 01 (#158): in-flight
-    /// `Control::TerminalSearch` reply channel. The session call
-    /// callback pushes `(query, reply)` so a stale reply for a
-    /// query the user already changed gets ignored.
-    terminal_search_reply_tx: tokio::sync::mpsc::UnboundedSender<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
-    terminal_search_reply_rx: tokio::sync::mpsc::UnboundedReceiver<(String, TerminalRuntimeKey, daemon_proto::TerminalSearchReply)>,
     /// `Control::TerminalReadScrollback` reply channel. The session
     /// call callback pushes `(key, generation, reply)` so the renderer's
     /// drain loop can ignore stale rows if live output moved the
@@ -2001,6 +1985,12 @@ pub struct AnotherOneApp {
     /// every relaunch. Click "Dismiss" once and the overlay stays
     /// hidden until the next process boot.
     pub(crate) gh_check_dismissed_for_session: bool,
+    /// Unified event bus for cross-thread push events. Producers clone
+    /// `app_event_tx`; the render timer drains `app_event_rx` once per
+    /// tick via `drain_app_events`. See `crate::app_event::AppEvent`
+    /// for the two-pattern policy (bus vs polled drains).
+    pub(crate) app_event_tx: tokio::sync::mpsc::UnboundedSender<crate::app_event::AppEvent>,
+    app_event_rx: tokio::sync::mpsc::UnboundedReceiver<crate::app_event::AppEvent>,
     /// Last time each terminal rang its bell. The renderer flashes the
     /// pane briefly while the entry is fresher than `BELL_FLASH_DURATION`.
     pub(crate) terminal_bell_at: HashMap<TerminalRuntimeKey, Instant>,
@@ -2172,11 +2162,6 @@ pub struct AnotherOneApp {
     /// stream the GPUI renderer consumes. See
     /// `crate::daemon_host::RegistryState` for the full layout.
     pub(crate) registry_state: Arc<Mutex<crate::daemon_host::RegistryState>>,
-    /// Receives the `EndpointHandle` from the daemon-host thread once
-    /// the iroh endpoint is up. Polled on every render tick until the
-    /// handle arrives, then `daemon_handle` is set and the receiver
-    /// is cleared.
-    pub(crate) daemon_handle_rx: Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
     /// Endpoint handle from the embedded daemon (pairing URL + QR
     /// PNG). `None` until the daemon-host thread finishes booting;
     /// after that, `pair_mobile_overlay` reads from here. Keeping the
@@ -3672,6 +3657,7 @@ impl AnotherOneApp {
         self.show_toast_with_copy_message(ToastKind::Error, message, copy_message, cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn show_anyhow_error_toast(
         &mut self,
         message: impl Into<SharedString>,
@@ -4398,14 +4384,14 @@ impl AnotherOneApp {
         self.commit_file_changes_states
             .insert(key, CommitFileChangesState::Loading);
 
-        let tx = self.commit_file_changes_sender.clone();
+        let tx = self.app_event_tx.clone();
         let project_id = project_id.to_string();
         let commit_id = commit_id.to_string();
         std::thread::spawn(move || {
             let result =
                 crate::project_store::read_project_commit_file_changes(&project_path, &commit_id)
                     .map(|state| state.files);
-            let _ = tx.send(CommitFileChangesReply {
+            let _ = tx.send(crate::app_event::AppEvent::CommitFileChanges {
                 project_id,
                 commit_id,
                 result,
@@ -4616,6 +4602,7 @@ impl AnotherOneApp {
         }
     }
 
+    #[allow(dead_code)]
     fn anyhow_error_details(error: &anyhow::Error) -> String {
         format!("{error:?}")
     }
@@ -4792,21 +4779,25 @@ impl AnotherOneApp {
         // process), collapse both arms into one path with the
         // embed-daemon decision driven by a build feature flag
         // instead of `target_os`.
+        //
+        // Create the unified event bus before the daemon spawn so the
+        // desktop path can hand a sender clone to the daemon-host thread.
+        let (app_event_tx, app_event_rx) =
+            tokio::sync::mpsc::unbounded_channel::<crate::app_event::AppEvent>();
         #[cfg(not(target_os = "android"))]
-        let (daemon_handle_rx, initial_session) = {
-            let handles = crate::daemon_host::spawn(registry_state.clone(), event_bus.clone());
-            (Some(handles.endpoint_rx), handles.session)
+        let initial_session = {
+            let handles = crate::daemon_host::spawn(
+                registry_state.clone(),
+                event_bus.clone(),
+                app_event_tx.clone(),
+            );
+            handles.session
         };
         #[cfg(target_os = "android")]
-        let (daemon_handle_rx, initial_session): (
-            Option<mpsc::Receiver<anyhow::Result<daemon::EndpointHandle>>>,
-            Arc<dyn daemon_transport::Session>,
-        ) = (
-            None,
+        let initial_session: Arc<dyn daemon_transport::Session> =
             Arc::new(crate::session_host::NoSession::new(
                 "mobile session not paired yet — scan the desktop's QR code",
-            )),
-        );
+            ));
         // Spawn the session-events pump on the boot session BEFORE
         // moving it into the Mutex, so the pump's stream subscription
         // doesn't have to take the lock. PTY bytes (and any future
@@ -4837,7 +4828,6 @@ impl AnotherOneApp {
         let (project_page_pull_requests_sender, project_page_pull_requests_receiver) =
             broadcast::channel(64);
         let (project_check_runs_sender, project_check_runs_receiver) = broadcast::channel(64);
-        let (commit_file_changes_sender, commit_file_changes_receiver) = mpsc::channel();
         let (worktree_deletion_sender, worktree_deletion_receiver) = mpsc::channel();
         let (changed_files_git_mutation_sender, changed_files_git_mutation_receiver) =
             broadcast::channel(64);
@@ -4845,12 +4835,6 @@ impl AnotherOneApp {
             mpsc::sync_channel(TERMINAL_LAUNCH_QUEUE_CAP);
         let (warm_terminal_launch_sender, warm_terminal_launch_receiver) =
             mpsc::sync_channel(WARM_TERMINAL_LAUNCH_QUEUE_CAP);
-        let (terminal_search_reply_tx, terminal_search_reply_rx) =
-            tokio::sync::mpsc::unbounded_channel::<(
-                String,
-                TerminalRuntimeKey,
-                daemon_proto::TerminalSearchReply,
-            )>();
         let (terminal_scrollback_reply_tx, terminal_scrollback_reply_rx) =
             tokio::sync::mpsc::unbounded_channel::<(
                 TerminalRuntimeKey,
@@ -4973,8 +4957,6 @@ impl AnotherOneApp {
             project_add_receiver: None,
             worktree_deletion_sender,
             worktree_deletion_receiver,
-            commit_file_changes_sender,
-            commit_file_changes_receiver,
             project_github_link_sender,
             project_github_link_receiver,
             project_pull_requests: HashMap::new(),
@@ -4998,13 +4980,13 @@ impl AnotherOneApp {
             terminal_scroll_remainder_lines: HashMap::new(),
             terminal_selection: None,
             terminal_search: None,
-            terminal_search_reply_tx,
-            terminal_search_reply_rx,
             terminal_scrollback_reply_tx,
             terminal_scrollback_reply_rx,
             scrollback_in_flight: HashMap::new(),
             viewer_input_senders: HashMap::new(),
             gh_check_dismissed_for_session: false,
+            app_event_tx,
+            app_event_rx,
             terminal_bell_at: HashMap::new(),
             client_focus: HashMap::new(),
             last_observed_gui_focus: Focus::None,
@@ -5122,7 +5104,6 @@ impl AnotherOneApp {
             pair_mobile_modal_open: false,
             pair_mobile_reset_pending: false,
             registry_state,
-            daemon_handle_rx,
             daemon_handle: None,
             session,
             session_events_tx,
@@ -7232,11 +7213,34 @@ impl AnotherOneApp {
     /// Fire `Control::SetTaskName` over the active session.
     pub(crate) fn dispatch_rename_task(&self, task_id: String, new_name: String) {
         let session = self.session_handle();
+        let tx = self.app_event_tx.clone();
+        let task_id_for_ack = task_id.clone();
+        let new_name_for_ack = new_name.clone();
         crate::session_host::dispatch_fire_and_forget(
             session,
             daemon_proto::Control::SetTaskName { task_id, new_name },
-            |result| {
-                if let Err(err) = result {
+            move |result| match result {
+                Ok(daemon_proto::WorkerReply::SetTaskNameAck {
+                    changed: true,
+                    task: Some(_),
+                }) => {
+                    // Daemon confirmed the rename. Push it onto the bus
+                    // so drain_app_events can update the render-side
+                    // mirror immediately, without waiting for the next
+                    // 50 ms ProjectList broadcast.
+                    let _ = tx.send(crate::app_event::AppEvent::TaskRenameAcked {
+                        task_id: task_id_for_ack,
+                        new_name: new_name_for_ack,
+                    });
+                }
+                Ok(daemon_proto::WorkerReply::SetTaskNameAck { .. }) => {}
+                Ok(other) => {
+                    log::warn!(
+                        "SetTaskName unexpected reply: {:?}",
+                        std::mem::discriminant(&other)
+                    );
+                }
+                Err(err) => {
                     log::warn!("SetTaskName failed: {err}");
                 }
             },
@@ -7442,35 +7446,6 @@ impl AnotherOneApp {
         true
     }
 
-    /// Poll the daemon-host thread for the `EndpointHandle`. Called
-    /// on the render tick until it resolves — after that,
-    /// `daemon_handle_rx` is `None` and this is a no-op.
-    pub(crate) fn drain_daemon_handle(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(rx) = self.daemon_handle_rx.as_ref() else {
-            return false;
-        };
-        match rx.try_recv() {
-            Ok(Ok(handle)) => {
-                self.daemon_handle = Some(handle);
-                self.daemon_handle_rx = None;
-                true
-            }
-            Ok(Err(e)) => {
-                log::warn!("daemon-host failed to start: {e:?}");
-                self.daemon_handle_rx = None;
-                // Surface once — the pair-mobile modal will show its
-                // empty state anyway, but a toast tells the user
-                // what's wrong if they try to open it.
-                self.show_anyhow_error_toast(format!("Mobile daemon failed to start: {e}"), &e, cx);
-                true
-            }
-            Err(mpsc::TryRecvError::Empty) => false,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.daemon_handle_rx = None;
-                false
-            }
-        }
-    }
 
     /// Drain any resize requests enqueued by the daemon thread via
     /// `DesktopTerminalRegistry::tab_resize` and apply them through
@@ -8845,11 +8820,10 @@ impl AnotherOneApp {
         }
         // Phase 5f of design 01 (#158): search runs against the
         // daemon's canonical Term task via Control::TerminalSearch.
-        // Fire and forget; the reply lands in
-        // `terminal_search_reply_rx` for `drain_terminal_search_replies`
-        // to apply on the next render tick.
+        // Fire and forget; the reply lands on the app event bus for
+        // drain_app_events to apply on the next render tick.
         let session = self.session_handle();
-        let reply_tx = self.terminal_search_reply_tx.clone();
+        let reply_tx = self.app_event_tx.clone();
         let key_for_callback = key.clone();
         let query_for_callback = query.clone();
         crate::session_host::dispatch_fire_and_forget(
@@ -8865,7 +8839,11 @@ impl AnotherOneApp {
             },
             move |result| match result {
                 Ok(daemon_proto::WorkerReply::TerminalSearch { reply, .. }) => {
-                    let _ = reply_tx.send((query_for_callback, key_for_callback, reply));
+                    let _ = reply_tx.send(crate::app_event::AppEvent::TerminalSearchReplyReceived {
+                        query: query_for_callback,
+                        key: key_for_callback,
+                        reply,
+                    });
                 }
                 Ok(daemon_proto::WorkerReply::Err { message, .. }) => {
                     log::warn!("TerminalSearch err: {message}");
@@ -8880,45 +8858,123 @@ impl AnotherOneApp {
         );
     }
 
-    /// Phase 5f of design 01 (#158): drain replies from the search
-    /// RPC channel. Stale replies (query no longer matches the
-    /// active search) are silently dropped.
-    fn drain_terminal_search_replies(&mut self, cx: &mut Context<Self>) -> bool {
-        let mut updated = false;
+    /// Drain the unified `AppEvent` bus once per render tick. Each
+    /// match arm calls a small per-variant handler that returns `bool`
+    /// (did it dirty render state?). Returns the OR of those bits so
+    /// the render timer can call `cx.notify()` exactly once per tick.
+    ///
+    /// Handlers must NOT call `cx.notify()` themselves.
+    fn drain_app_events(&mut self, cx: &mut Context<Self>) -> bool {
+        use crate::app_event::AppEvent;
+        let mut dirty = false;
         loop {
-            match self.terminal_search_reply_rx.try_recv() {
-                Ok((query, key, reply)) => {
-                    let active_matches = match self.terminal_search.as_ref() {
-                        Some(s) if s.key == key && s.query == query => true,
-                        _ => false,
-                    };
-                    if !active_matches {
-                        continue;
-                    }
-                    let mut matches: Vec<TerminalScrollbackMatch> = reply
-                        .matches
-                        .into_iter()
-                        .map(|m| TerminalScrollbackMatch {
-                            line: m.line as i32,
-                            start_col: m.start_col as usize,
-                            end_col: m.end_col as usize,
-                        })
-                        .collect();
-                    matches.sort_by_key(|m| (m.line, m.start_col));
-                    if let Some(state) = self.terminal_search.as_mut() {
-                        state.matches = matches;
-                        state.current_index = state
-                            .current_index
-                            .min(state.matches.len().saturating_sub(1));
-                    }
-                    self.scroll_to_current_search_match(cx);
-                    updated = true;
+            match self.app_event_rx.try_recv() {
+                Ok(AppEvent::TaskRenameAcked { task_id, new_name }) => {
+                    dirty |= self.handle_task_rename_acked(&task_id, &new_name);
+                }
+                Ok(AppEvent::CommitFileChanges {
+                    project_id,
+                    commit_id,
+                    result,
+                }) => {
+                    dirty |= self.handle_commit_file_changes(project_id, commit_id, result, cx);
+                }
+                Ok(AppEvent::TerminalSearchReplyReceived { query, key, reply }) => {
+                    dirty |= self.handle_terminal_search_reply(query, key, reply, cx);
+                }
+                Ok(AppEvent::DaemonHandleResolved(result)) => {
+                    dirty |= self.handle_daemon_handle_resolved(result, cx);
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
-        updated
+        dirty
+    }
+
+    fn handle_task_rename_acked(&mut self, task_id: &str, new_name: &str) -> bool {
+        self.project_store.rename_task(task_id, new_name)
+    }
+
+    fn handle_commit_file_changes(
+        &mut self,
+        project_id: String,
+        commit_id: String,
+        result: Result<Vec<crate::project_store::BranchCompareFile>, String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let key = Self::commit_file_changes_key(&project_id, &commit_id);
+        let state = match result {
+            Ok(files) => CommitFileChangesState::Loaded(Arc::from(files)),
+            Err(error) => {
+                self.show_warning_toast(error.clone(), cx);
+                CommitFileChangesState::Failed(error)
+            }
+        };
+        if self.commit_file_changes_states.get(&key) != Some(&state) {
+            self.commit_file_changes_states.insert(key, state);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_terminal_search_reply(
+        &mut self,
+        query: String,
+        key: TerminalRuntimeKey,
+        reply: daemon_proto::TerminalSearchReply,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let active_matches = matches!(
+            self.terminal_search.as_ref(),
+            Some(s) if s.key == key && s.query == query
+        );
+        if !active_matches {
+            return false;
+        }
+        let mut matches: Vec<TerminalScrollbackMatch> = reply
+            .matches
+            .into_iter()
+            .map(|m| TerminalScrollbackMatch {
+                line: m.line as i32,
+                start_col: m.start_col as usize,
+                end_col: m.end_col as usize,
+            })
+            .collect();
+        matches.sort_by_key(|m| (m.line, m.start_col));
+        if let Some(state) = self.terminal_search.as_mut() {
+            state.matches = matches;
+            state.current_index = state
+                .current_index
+                .min(state.matches.len().saturating_sub(1));
+        }
+        self.scroll_to_current_search_match(cx);
+        true
+    }
+
+    fn handle_daemon_handle_resolved(
+        &mut self,
+        result: Result<daemon::EndpointHandle, String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match result {
+            Ok(handle) => {
+                self.daemon_handle = Some(handle);
+                true
+            }
+            Err(msg) => {
+                log::warn!("daemon-host failed to start: {msg}");
+                // Surface once — the pair-mobile modal will show its
+                // empty state anyway, but a toast tells the user
+                // what's wrong if they try to open it.
+                self.show_warning_toast(
+                    format!("Mobile daemon failed to start: {msg}"),
+                    cx,
+                );
+                true
+            }
+        }
     }
 
     /// Step 5 of rc/terminal-hardening: dispatch a
@@ -12281,27 +12337,6 @@ impl AnotherOneApp {
         should_notify
     }
 
-    fn drain_commit_file_changes(&mut self, cx: &mut Context<Self>) -> bool {
-        let mut should_notify = false;
-
-        while let Ok(reply) = self.commit_file_changes_receiver.try_recv() {
-            let key = Self::commit_file_changes_key(&reply.project_id, &reply.commit_id);
-            let state = match reply.result {
-                Ok(files) => CommitFileChangesState::Loaded(Arc::from(files)),
-                Err(error) => {
-                    self.show_warning_toast(error.clone(), cx);
-                    CommitFileChangesState::Failed(error)
-                }
-            };
-
-            if self.commit_file_changes_states.get(&key) != Some(&state) {
-                self.commit_file_changes_states.insert(key, state);
-                should_notify = true;
-            }
-        }
-
-        should_notify
-    }
 
     pub(crate) fn request_project_github_link_lookup(
         &mut self,
@@ -17701,14 +17736,12 @@ impl Render for AnotherOneApp {
                             should_notify |= this.drain_branch_creation(cx);
                             should_notify |= this.drain_project_add(cx);
                             should_notify |= this.drain_worktree_deletions(cx);
-                            should_notify |= this.drain_commit_file_changes(cx);
                             should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
                             should_notify |= this.drain_project_check_runs_lookup(cx);
                             should_notify |= this.drain_pending_session_handoff();
                             should_notify |= this.drain_session_events(cx);
-                            should_notify |= this.drain_terminal_search_replies(cx);
                             should_notify |= this.drain_terminal_scrollback_replies(cx);
                             // Idle prefetch: keep the focused tab's
                             // scrollback cache warm so the next
@@ -17720,6 +17753,7 @@ impl Render for AnotherOneApp {
                             if let Some(focused) = this.active_terminal_key(cx) {
                                 this.maybe_dispatch_scrollback_fetch(&focused);
                             }
+                            should_notify |= this.drain_app_events(cx);
                             let terminal_launched = this.drain_terminal_launch_replies(cx);
                             let warm_launched = this.drain_warm_terminal_launch_replies(cx);
                             should_notify |= terminal_launched;
@@ -17731,7 +17765,6 @@ impl Render for AnotherOneApp {
                             if terminal_launched || warm_launched {
                                 this.sync_registry_project_store();
                             }
-                            should_notify |= this.drain_daemon_handle(cx);
                             should_notify |= this.drain_pending_spawn_terminals(cx);
                             should_notify |= this.drain_pending_close_tabs(cx);
                             should_notify |= this.drain_pending_select_focus(cx);

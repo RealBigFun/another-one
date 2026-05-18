@@ -1194,7 +1194,7 @@ impl Default for StoreFileV4 {
 
 pub(crate) trait ProjectStorePersistence: Send + Sync + std::fmt::Debug {
     fn load(&self) -> StoreFileV4;
-    fn save(&self, store: &StoreFileV4);
+    fn save(&self, store: &StoreFileV4) -> anyhow::Result<()>;
     /// Path-of-record for the persistence backend. Currently unused
     /// by live code (the JSON adapter is gone; the SQLite adapter
     /// owns its own path); retained on the trait so adapters that
@@ -1228,19 +1228,19 @@ pub(crate) trait ProjectStorePersistence: Send + Sync + std::fmt::Debug {
         section_id: &str,
         state: &PersistedSectionState,
         full_blob: &StoreFileV4,
-    ) {
+    ) -> anyhow::Result<()> {
         // Default: rewrite the world. Adapters that care override.
         let _ = (section_id, state);
-        self.save(full_blob);
+        self.save(full_blob)
     }
 
     /// Row-level bulk delete of sections. Same motivation as
     /// [`Self::upsert_section`]: the GUI tab-close cleanup path
     /// shouldn't have to rewrite every other section + every
     /// project + every task to drop a few rows.
-    fn remove_section_rows(&self, section_ids: &[String], full_blob: &StoreFileV4) {
+    fn remove_section_rows(&self, section_ids: &[String], full_blob: &StoreFileV4) -> anyhow::Result<()> {
         let _ = section_ids;
-        self.save(full_blob);
+        self.save(full_blob)
     }
 }
 
@@ -1266,7 +1266,9 @@ impl ProjectStorePersistence for NoopPersistence {
     fn load(&self) -> StoreFileV4 {
         StoreFileV4::default()
     }
-    fn save(&self, _store: &StoreFileV4) {}
+    fn save(&self, _store: &StoreFileV4) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn path(&self) -> &Path {
         &self.path
     }
@@ -1310,9 +1312,10 @@ impl ProjectStorePersistence for InMemoryProjectStorePersistence {
         self.saved_snapshot()
     }
 
-    fn save(&self, store: &StoreFileV4) {
+    fn save(&self, store: &StoreFileV4) -> anyhow::Result<()> {
         *self.store.lock().unwrap_or_else(|e| e.into_inner()) = store.clone();
         *self.save_count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        Ok(())
     }
 
     fn path(&self) -> &Path {
@@ -1570,7 +1573,9 @@ impl ProjectStore {
                     fn load(&self) -> StoreFileV4 {
                         StoreFileV4::default()
                     }
-                    fn save(&self, _store: &StoreFileV4) {}
+                    fn save(&self, _store: &StoreFileV4) -> anyhow::Result<()> {
+                        Ok(())
+                    }
                     fn path(&self) -> &Path {
                         Path::new("/dev/null")
                     }
@@ -1632,7 +1637,9 @@ impl ProjectStore {
                                 fn load(&self) -> StoreFileV4 {
                                     StoreFileV4::default()
                                 }
-                                fn save(&self, _store: &StoreFileV4) {}
+                                fn save(&self, _store: &StoreFileV4) -> anyhow::Result<()> {
+                                    Ok(())
+                                }
                                 fn path(&self) -> &Path {
                                     &self.0
                                 }
@@ -2466,7 +2473,10 @@ impl ProjectStore {
         // write, the no-op adapter wouldn't touch disk — which is
         // the v0.1.18 bug-class invariant: pure-client binaries
         // must never clobber the daemon's authoritative store.
-        self.persistence.save(&self.snapshot_for_save());
+        if let Err(e) = self.persistence.save(&self.snapshot_for_save()) {
+            eprintln!("project_store: save FAILED — mutation is in memory but NOT on disk: {e:#}");
+            debug_assert!(false, "project_store: save failed: {e:#}");
+        }
     }
 
     /// Assemble the on-disk representation from the in-memory store.
@@ -2784,7 +2794,10 @@ impl ProjectStore {
         // adapters that don't override `upsert_section` (Noop,
         // InMemory). SqliteAdapter ignores it and writes one row.
         let blob = self.snapshot_for_save();
-        self.persistence.upsert_section(&section_id, &state, &blob);
+        if let Err(e) = self.persistence.upsert_section(&section_id, &state, &blob) {
+            eprintln!("project_store: upsert_section FAILED — section is in memory but NOT on disk: {e:#}");
+            debug_assert!(false, "project_store: upsert_section failed: {e:#}");
+        }
     }
 
     pub fn set_shortcut_binding(&mut self, action: ShortcutAction, binding: impl Into<String>) {
@@ -3080,7 +3093,10 @@ impl ProjectStore {
             // statements.
             let blob = self.snapshot_for_save();
             let ids: Vec<String> = section_ids.iter().cloned().collect();
-            self.persistence.remove_section_rows(&ids, &blob);
+            if let Err(e) = self.persistence.remove_section_rows(&ids, &blob) {
+                eprintln!("project_store: remove_section_rows FAILED — sections removed from memory but NOT from disk: {e:#}");
+                debug_assert!(false, "project_store: remove_section_rows failed: {e:#}");
+            }
         }
         changed
     }
@@ -3613,7 +3629,10 @@ impl ProjectStore {
             self.rebuild_runtime_views();
             // Row-level write for the section's row.
             let blob = self.snapshot_for_save();
-            self.persistence.upsert_section(&section_id, state, &blob);
+            if let Err(e) = self.persistence.upsert_section(&section_id, state, &blob) {
+                eprintln!("project_store: upsert_section FAILED — section is in memory but NOT on disk: {e:#}");
+                debug_assert!(false, "project_store: upsert_section failed: {e:#}");
+            }
         }
     }
 }
@@ -5596,7 +5615,7 @@ mod tests {
         let persistence = InMemoryProjectStorePersistence::new(StoreFileV4::default());
 
         store.ui.theme_mode = super::ThemeMode::Dark;
-        persistence.save(&store.snapshot_for_save());
+        persistence.save(&store.snapshot_for_save()).unwrap();
 
         assert_eq!(persistence.save_count(), 1);
         assert_eq!(
