@@ -139,6 +139,17 @@ pub fn spawn_terminal_in_daemon(req: SpawnRequest) -> anyhow::Result<DaemonSpawn
     // serialise through one mutex.
     let writer: std::sync::Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>> =
         std::sync::Arc::new(std::sync::Mutex::new(writer));
+    // Pre-seed DA1 (primary device attributes) response into the PTY slave's
+    // stdin buffer before spawning the shell. Fish starts a 2-second detection
+    // timer at the very beginning of its init phase — before loading config
+    // files. On slow-starting configs (heavy plugins/themes), config loading
+    // can exceed 2 seconds, so the timer expires before fish writes \033[c.
+    // The response is already in the slave's stdin buffer when fish polls,
+    // so the detection succeeds regardless of timer state.
+    if let Ok(mut w) = writer.lock() {
+        let _ = w.write_all(b"\x1b[?6c");
+        let _ = w.flush();
+    }
     let child = pair
         .slave
         .spawn_command(builder)

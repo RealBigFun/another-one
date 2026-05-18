@@ -1282,12 +1282,14 @@ impl DaemonRegistry for DesktopTerminalRegistry {
                 return Ok(None);
             };
 
-            // PTY open + child spawn block briefly; acceptable on
-            // a runtime worker. Inside `spawn_terminal_in_daemon`
-            // the Term task is spawned via `tokio::spawn` which
-            // requires being inside a runtime context — we are,
-            // since this future runs on the daemon's runtime.
-            let outcome = match daemon::terminal::spawn_terminal_in_daemon(request) {
+            // PTY open + child spawn are blocking syscalls. `block_in_place`
+            // signals to tokio that this worker is about to block so the
+            // runtime can compensate by waking other tasks on the remaining
+            // workers. Stays on the current thread so `tokio::spawn` inside
+            // `spawn_terminal_in_daemon` still has a live runtime handle.
+            let outcome = match tokio::task::block_in_place(|| {
+                daemon::terminal::spawn_terminal_in_daemon(request)
+            }) {
                 Ok(o) => o,
                 Err(error) => return Err(error),
             };
@@ -2660,6 +2662,14 @@ fn run(
             return;
         }
     };
+
+    // Prewarm the shell PATH-discovery cache on a blocking thread so the
+    // first LaunchTab doesn't stall a tokio worker for up to 2 seconds
+    // running `$SHELL -lic` to discover PATH. The OnceLock in
+    // `command_env::shell_initialized_path_dirs` caches the result; this
+    // fires-and-forgets before the iroh endpoint is up, giving it a head
+    // start that covers normal tab-open latency.
+    runtime.spawn_blocking(another_one_core::prewarm_shell_path_cache);
 
     let weak = Arc::downgrade(&registry_state);
     drop(registry_state); // drop the strong ref we took for spawn; the app still holds one.

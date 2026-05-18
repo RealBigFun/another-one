@@ -49,8 +49,7 @@ impl PtySession {
             .context("openpty")?;
 
         let shell = std::env::var("AGENT_CMD")
-            .or_else(|_| std::env::var("SHELL"))
-            .unwrap_or_else(|_| "bash".to_string());
+            .unwrap_or_else(|_| another_one_core::login_shell());
         let mut cmd = CommandBuilder::new(&shell);
         cmd.env("TERM", "xterm-256color");
         if let Ok(home) = std::env::var("HOME") {
