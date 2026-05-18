@@ -1,7 +1,6 @@
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::vte::ansi::Rgb;
 #[cfg(test)]
 use gpui::rgb;
 use gpui::{font, px, FontWeight, Hsla, StrikethroughStyle, TextRun, UnderlineStyle};
@@ -1308,8 +1307,8 @@ fn resolve_grid_color(color: ProtoGridColor, flags: ProtoGridCellFlags, is_foreg
             if is_foreground && flags.contains(ProtoGridCellFlags::BOLD) && idx < 8 {
                 idx += 8;
             }
-            let rgb = default_indexed_color(idx);
-            gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
+            let [r, g, b] = default_indexed_color(idx);
+            gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
         }
     }
 }
@@ -1469,36 +1468,24 @@ fn text_run_from_style(style: ResolvedCellStyle) -> TextRun {
 }
 
 
-fn default_indexed_color(index: u8) -> Rgb {
+fn default_indexed_color(index: u8) -> [u8; 3] {
     let palette = crate::theme::current_terminal_palette();
     match index {
-        0..=7 => rgb_from_triple(palette.normal[index as usize]),
-        8..=15 => rgb_from_triple(palette.bright[(index - 8) as usize]),
+        0..=7 => palette.normal[index as usize],
+        8..=15 => palette.bright[(index - 8) as usize],
         16..=231 => {
             let index = index - 16;
             let red = index / 36;
             let green = (index % 36) / 6;
             let blue = index % 6;
-            let cube = [0, 95, 135, 175, 215, 255];
-            Rgb {
-                r: cube[red as usize],
-                g: cube[green as usize],
-                b: cube[blue as usize],
-            }
+            let cube: [u8; 6] = [0, 95, 135, 175, 215, 255];
+            [cube[red as usize], cube[green as usize], cube[blue as usize]]
         }
         232..=255 => {
             let value = 8 + (index - 232) * 10;
-            Rgb {
-                r: value,
-                g: value,
-                b: value,
-            }
+            [value, value, value]
         }
     }
-}
-
-fn rgb_from_triple([r, g, b]: [u8; 3]) -> Rgb {
-    Rgb { r, g, b }
 }
 
 fn default_background_color() -> Hsla {
@@ -2299,8 +2286,8 @@ mod tests {
 
     #[test]
     fn default_indexed_color_includes_xterm_gray_ramp() {
-        assert_eq!(default_indexed_color(232), Rgb { r: 0x08, g: 0x08, b: 0x08 });
-        assert_eq!(default_indexed_color(244), Rgb { r: 0x80, g: 0x80, b: 0x80 });
-        assert_eq!(default_indexed_color(255), Rgb { r: 0xee, g: 0xee, b: 0xee });
+        assert_eq!(default_indexed_color(232), [0x08, 0x08, 0x08]);
+        assert_eq!(default_indexed_color(244), [0x80, 0x80, 0x80]);
+        assert_eq!(default_indexed_color(255), [0xee, 0xee, 0xee]);
     }
 }
