@@ -553,13 +553,6 @@ fn active_toolbar_git_action_entry<'a>(
     active_git_actions.get(project_id)
 }
 
-fn has_active_toolbar_git_action(
-    active_git_actions: &HashMap<String, ActiveToolbarGitAction>,
-    project_id: &str,
-) -> bool {
-    active_toolbar_git_action_entry(active_git_actions, project_id).is_some()
-}
-
 fn collect_drained_git_action_replies(
     active_git_actions: &HashMap<String, ActiveToolbarGitAction>,
 ) -> Vec<DrainedGitAction> {
@@ -3770,17 +3763,6 @@ impl AnotherOneApp {
             .unwrap_or(RECENT_COMMITS_PAGE_SIZE)
     }
 
-    pub(crate) fn active_branch_commit_state(&self, cx: &App) -> Option<&ProjectBranchCommitState> {
-        let project_id = self
-            .workspace_pane
-            .read(cx)
-            .active_section
-            .as_ref()?
-            .project_id
-            .clone();
-        self.branch_commit_states.get(&project_id)
-    }
-
     pub(crate) fn active_right_sidebar_mode(&self, cx: &App) -> RightSidebarMode {
         if self.right_sidebar_mode == RightSidebarMode::Issue {
             let has_linked_issue = self
@@ -3994,15 +3976,6 @@ impl AnotherOneApp {
         self.project_check_runs_states.remove(&lookup_key);
     }
 
-    pub(crate) fn active_project_check_runs_state(
-        &self,
-        cx: &App,
-    ) -> Option<&ProjectCheckRunsState> {
-        let (project_id, branch_name, _, _) = self.active_project_check_runs_context(cx)?;
-        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
-        self.project_check_runs_states.get(&lookup_key)
-    }
-
     pub(crate) fn request_project_pull_request_lookup_for(
         &mut self,
         project_id: &str,
@@ -4021,20 +3994,6 @@ impl AnotherOneApp {
         };
         let lookup_key = Self::project_pull_request_lookup_key(&project_id, &branch_name);
         self.request_project_pull_request_lookup(&lookup_key, &branch_name, &project_path);
-    }
-
-    pub(crate) fn request_active_project_check_runs_lookup(&mut self, cx: &App) {
-        let Some((project_id, branch_name, project_path, pull_request_number)) =
-            self.active_project_check_runs_context(cx)
-        else {
-            return;
-        };
-        if pull_request_number.is_none() && !self.active_project_pull_request_lookup_checked(cx) {
-            self.refresh_active_project_pull_request_lookup(cx);
-            return;
-        }
-        let lookup_key = Self::project_check_runs_lookup_key(&project_id, &branch_name);
-        self.request_project_check_runs_lookup(&lookup_key, &project_path, pull_request_number);
     }
 
     pub(crate) fn active_project_ahead_count(&self, cx: &App) -> usize {
@@ -4378,20 +4337,6 @@ impl AnotherOneApp {
 
     fn commit_file_changes_key(project_id: &str, commit_id: &str) -> String {
         format!("{project_id}:{commit_id}")
-    }
-
-    pub(crate) fn commit_row_expanded(&self, project_id: &str, commit_id: &str) -> bool {
-        self.expanded_commit_rows
-            .contains(&Self::commit_file_changes_key(project_id, commit_id))
-    }
-
-    pub(crate) fn commit_file_changes_state(
-        &self,
-        project_id: &str,
-        commit_id: &str,
-    ) -> Option<&CommitFileChangesState> {
-        self.commit_file_changes_states
-            .get(&Self::commit_file_changes_key(project_id, commit_id))
     }
 
     fn request_commit_file_changes(&mut self, project_id: &str, commit_id: &str) {
@@ -11619,44 +11564,6 @@ impl AnotherOneApp {
         self.active_git_action_for_project(&project_id)
     }
 
-    pub(crate) fn changed_files_actions_busy(&self, project_id: &str) -> bool {
-        has_active_toolbar_git_action(&self.active_git_actions, project_id)
-    }
-
-    pub(crate) fn changed_files_stage_all_pending(&self, project_id: &str) -> bool {
-        self.pending_changed_files_git_mutations
-            .get(project_id)
-            .is_some_and(|pending| pending.mutations().any(ChangedFilesGitMutation::stages_all))
-    }
-
-    pub(crate) fn changed_files_unstage_all_pending(&self, project_id: &str) -> bool {
-        self.pending_changed_files_git_mutations
-            .get(project_id)
-            .is_some_and(|pending| {
-                pending
-                    .mutations()
-                    .any(ChangedFilesGitMutation::unstages_all)
-            })
-    }
-
-    pub(crate) fn changed_files_file_pending(&self, project_id: &str, path: &str) -> bool {
-        self.pending_changed_files_git_mutations
-            .get(project_id)
-            .is_some_and(|pending| {
-                pending.mutations().any(|mutation| {
-                    mutation.stages_all()
-                        || mutation.unstages_all()
-                        || mutation.stages_file(path)
-                        || mutation.unstages_file(path)
-                })
-            })
-    }
-
-    pub(crate) fn changed_files_project_mutations_pending(&self, project_id: &str) -> bool {
-        self.pending_changed_files_git_mutations
-            .contains_key(project_id)
-    }
-
     fn start_changed_files_git_mutation(
         &mut self,
         project_id: &str,
@@ -14500,7 +14407,7 @@ mod tests {
         apply_terminal_title_update, check_project_path_git_backed, choose_initial_section,
         collect_drained_git_action_replies, encode_terminal_mouse_event,
         fixed_title_for_project_action, global_tab_navigation_targets,
-        has_active_toolbar_git_action, latest_project_list_projection, new_tab_seed_agent_id,
+        latest_project_list_projection, new_tab_seed_agent_id,
         next_global_tab_navigation_target, next_project_navigation_target,
         next_task_navigation_target, open_in_target_path_for_project, persisted_active_section_key,
         reconcile_projected_section_state, remove_terminal_runtime_state,
@@ -14718,14 +14625,8 @@ mod tests {
         let mut active_git_actions = HashMap::new();
         active_git_actions.insert("project-a".to_string(), action);
 
-        assert!(has_active_toolbar_git_action(
-            &active_git_actions,
-            "project-a"
-        ));
-        assert!(!has_active_toolbar_git_action(
-            &active_git_actions,
-            "project-b"
-        ));
+        assert!(active_git_actions.contains_key("project-a"));
+        assert!(!active_git_actions.contains_key("project-b"));
         assert!(matches!(
             active_toolbar_git_action_entry(&active_git_actions, "project-a")
                 .map(|active| &active.action),
