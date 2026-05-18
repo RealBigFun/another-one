@@ -5858,31 +5858,22 @@ impl AnotherOneApp {
             // loopback session (see the follow-up unify-control-
             // plane PR referenced in this branch's PR body).
             use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
-            #[cfg(target_os = "android")]
             let mut focus_changed = false;
             if let Ok(mut state) = self.registry_state.lock() {
                 // Single-call viewport claim — see #51. The registry
                 // lives in this process on the host role, so
                 // claiming directly skips the session round-trip.
-                // The `focus_changed` bit is only consumed on the
-                // pure-client role below where it triggers a
-                // remote AttachTab over the paired session; on the
-                // host role the attach is already correct via the
-                // in-process dispatch path that created this key.
-                let changed = state.claim_viewport(
+                // The `focus_changed` bit triggers a remote AttachTab
+                // over the paired session when focus changes, so the
+                // daemon's forwarder re-keys which tab it streams
+                // bytes for. Every client role takes this path.
+                focus_changed = state.claim_viewport(
                     DESKTOP_LOCAL_VIEWER_ID,
                     request.key.clone(),
                     request.size.cols,
                     request.size.rows,
                 );
-                #[cfg(target_os = "android")]
-                {
-                    focus_changed = changed;
-                }
-                #[cfg(not(target_os = "android"))]
-                let _ = changed;
             }
-            #[cfg(target_os = "android")]
             if focus_changed {
                 // Re-key the session attach to the focused tab so
                 // the daemon's forwarder pushes bytes for *this* key
@@ -5930,26 +5921,36 @@ impl AnotherOneApp {
             tab.restore_status = TerminalRestoreStatus::Launching;
         });
 
-        #[cfg(target_os = "android")]
         {
-            // ── Client-role split (NOT a platform split) ───────────
-            // Mobile is an *equal* client of the daemon — not a
-            // viewer. What it can't do is host the PTY locally
-            // (Android has no fork/exec shell surface), so the
-            // daemon (which lives on the peer) spawns + owns the
-            // PTY and streams bytes over the session. This branch
-            // stands up a local terminal runtime whose bytes come
-            // from `SessionEvent::PtyBytes` instead of a
-            // locally-owned `portable_pty` child. Control verbs
-            // (LaunchTab / AttachTab / TabResize / TabInput) are
-            // dispatched over the same session — mobile has every
-            // mutation primitive desktop has.
-            //
-            // This whole cfg arm collapses in the follow-up
-            // unify-control-plane PR: every client (desktop too)
-            // will take this path and drive PTY ownership through
-            // the registry-host role, not through a platform
-            // branch. See the branch PR body.
+            // Every client takes this path: stand up a local terminal
+            // runtime whose bytes come from `SessionEvent::PtyBytes`
+            // (streamed from the daemon), then drive PTY ownership
+            // through the daemon via LaunchTab + AttachTab + TabResize.
+            // The daemon owns the PTY regardless of whether the client
+            // is desktop or mobile — the only legitimate distinction
+            // between clients is viewport size, not the platform binary.
+
+            // Claim the viewport before dispatching LaunchTab so the
+            // daemon opens the PTY at the pane's actual grid size
+            // rather than whatever the last claimed size was.
+            // `DESKTOP_LOCAL_VIEWER_ID` is this process's viewer id;
+            // the in-process registry applies it synchronously so the
+            // size is visible to the daemon's spawn path.
+            use crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID;
+            if let Ok(mut state) = self.registry_state.lock() {
+                state.claim_viewport(
+                    DESKTOP_LOCAL_VIEWER_ID,
+                    request.key.clone(),
+                    request.size.cols,
+                    request.size.rows,
+                );
+            }
+            // Seed the size so apply_proto_terminal_launched can use
+            // it if TerminalLaunched arrives in the rare race where
+            // the runtime hasn't been installed yet.
+            self.in_flight_remote_launches
+                .insert(request.key.clone(), request.size);
+
             log::info!(
                 "client: ensure_active_terminal_runtime → stream-from-daemon \
                  section={} tab={} size={}x{}",
@@ -5985,7 +5986,7 @@ impl AnotherOneApp {
                 },
             );
             // Daemon's handle_attach returns without installing a
-            // forwarder if it arrives before the desktop's render
+            // forwarder if it arrives before the daemon's render
             // tick has spawned the PTY (the registry says "no live
             // runtime yet"). Re-fire AttachTab a few times with
             // backoff so the forwarder lands once the broadcast is
@@ -6023,16 +6024,15 @@ impl AnotherOneApp {
                 }
                 // Send TabResize *after* the attach handshake has
                 // had a chance to land. The daemon's PTY keeps
-                // whatever dimensions it last received (desktop's
-                // grid at task-launch time), so without this the
-                // mobile viewer renders bytes sized for a 120×40
-                // terminal into a 48×46 phone viewport — the
-                // on-screen wrap is visibly wrong. `TabResize`
-                // applies to the currently-attached tab, so it
-                // only matters that the attach has taken effect;
-                // re-firing on every attach attempt would cause
-                // the PTY to ping-pong its SIGWINCH. Single post-
-                // handshake fire with the phone's actual viewport.
+                // whatever dimensions it last received at task-launch
+                // time, so without this the viewer renders bytes sized
+                // for the wrong viewport — the on-screen wrap is
+                // visibly wrong. `TabResize` applies to the
+                // currently-attached tab, so it only matters that the
+                // attach has taken effect; re-firing on every attach
+                // attempt would cause the PTY to ping-pong its
+                // SIGWINCH. Single post-handshake fire with the
+                // actual viewport.
                 log::info!(
                     "TabResize section={} tab={} cols={} rows={}",
                     section_id,
@@ -6047,66 +6047,6 @@ impl AnotherOneApp {
                     log::warn!("session TabResize failed: {err}");
                 }
             });
-            return;
-        }
-
-        #[cfg(not(target_os = "android"))]
-        {
-            // Claim the desktop viewport before dispatching LaunchTab
-            // so daemon-side spawn can open the PTY at the pane's
-            // actual grid size instead of the fallback 80×24.
-            if let Ok(mut state) = self.registry_state.lock() {
-                state.claim_viewport(
-                    crate::daemon_host::DESKTOP_LOCAL_VIEWER_ID,
-                    request.key.clone(),
-                    request.size.cols,
-                    request.size.rows,
-                );
-            }
-
-            // ── Client-role split (NOT a platform split) ───────────
-            // Registry-host role: this binary also owns PTYs, so
-            // the spawn goes to the local `terminal_launch` pipe
-            // which runs portable_pty in-process and installs the
-            // LiveTerminalRuntime on completion. The pure-client
-            // arm above dispatches LaunchTab + AttachTab over the
-            // session instead — both produce the same end state
-            // (a live broadcast feeding the local runtime). A
-            // future unify-control-plane pass will collapse this
-            // into a single always-dispatch-through-session path
-            // that the host role handles via its loopback session.
-            //
-            // Phase 5d-v (design 01 / #158): cold launches go
-            // through Control::LaunchTab unconditionally. The
-            // daemon owns the PTY; the WorkerReply::TerminalLaunched
-            // push installs a viewer-only runtime via
-            // apply_proto_terminal_launched. The legacy GPUI-thread
-            // spawn path was deleted alongside this fork.
-            if !self.in_flight_remote_launches.contains_key(&request.key) {
-                self.in_flight_remote_launches
-                    .insert(request.key.clone(), request.size);
-                let session = self.session_handle();
-                let key_for_callback = request.key.clone();
-                log::trace!(
-                    "DBG: dispatching LaunchTab section={} tab={}",
-                    request.key.section_id.store_key(),
-                    request.key.tab_id
-                );
-                crate::session_host::dispatch_fire_and_forget(
-                    session,
-                    daemon_proto::Control::LaunchTab {
-                        section_id: request.key.section_id.store_key(),
-                        tab_id: request.key.tab_id.clone(),
-                    },
-                    move |result| {
-                        if let Err(err) = result {
-                            log::warn!(
-                                "daemon-side LaunchTab for {key_for_callback:?} failed: {err}"
-                            );
-                        }
-                    },
-                );
-            }
         }
     }
 
@@ -6921,11 +6861,13 @@ impl AnotherOneApp {
     /// `ensure_active_terminal_runtime` finds it and opens a
     /// `TerminalSubscribe` (Phase 5b-iii).
     ///
-    /// The size comes from `in_flight_remote_launches`, populated
-    /// when LaunchTab was dispatched. If the entry is missing
-    /// (push raced ahead of the dispatch callback or a stale
-    /// retry), fall back to the default 80x24 — the next focus
-    /// pass will reshape via the standard viewport-claim path.
+    /// The size comes from `in_flight_remote_launches`, populated by
+    /// `ensure_active_terminal_runtime` before dispatching LaunchTab.
+    /// In the normal case `ensure_active_terminal_runtime` also
+    /// pre-installs the viewer-only runtime, so this function returns
+    /// early via the `contains_key` guard below. The size fallback and
+    /// runtime install here serve the race where TerminalLaunched
+    /// arrives before the local runtime is in place.
     fn apply_proto_terminal_launched(&mut self, section_id: &str, tab_id: &str) {
         log::trace!("DBG: apply_proto_terminal_launched section={section_id} tab={tab_id}");
         let Some(section_id_parsed) = SectionId::from_store_key(section_id) else {
