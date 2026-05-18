@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::TerminalLaunchConfig;
-use crate::project_store::TaskKind;
+use crate::project_store::{LinkedIssue, TaskKind};
 use crate::section::SectionId;
 
 /// Stable identifier for a daemon client. Strings rather than a typed
@@ -105,6 +105,9 @@ pub struct OpenTaskRequest {
     /// and mobile clients always leave this `None`.
     #[serde(skip, default)]
     pub warm_launch_hint: Option<u64>,
+    /// Optional external issue (GitHub, Jira, …) linked at creation.
+    #[serde(default)]
+    pub linked_issue: Option<LinkedIssue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -420,6 +423,7 @@ mod tests {
             cwd: None,
             focus_after_open: true,
             warm_launch_hint: Some(42),
+            linked_issue: None,
         };
         let wire = serde_json::to_value(&req).expect("encode");
         assert!(

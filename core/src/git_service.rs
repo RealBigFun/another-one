@@ -22,9 +22,10 @@ use std::thread;
 use tokio::sync::broadcast;
 
 use crate::git_actions::{
-    execute_toolbar_git_action, find_github_repo_url, GitActionSettings, ProjectPagePullRequest,
-    PullRequestCheck, PullRequestStatus, ToolbarActionError, ToolbarActionOutcome,
-    ToolbarGitAction,
+    execute_toolbar_git_action, find_github_repo_url, find_project_open_issues,
+    probe_github_issue_availability, GitActionSettings, GitHubIssueAvailability, GitHubIssueRecord,
+    ProjectPagePullRequest, PullRequestCheck, PullRequestStatus, ToolbarActionError,
+    ToolbarActionOutcome, ToolbarGitAction,
 };
 use crate::project_store::{
     fetch_project_git_state, read_changed_file_diff, read_project_branch_commit_state,
@@ -403,4 +404,36 @@ fn lookup_check_runs(
     provider
         .pull_request_checks(project_path, pull_request_number)
         .map_err(|err| err.to_string())
+}
+
+// ---- GitHub issue discovery -------------------------------------------------
+
+#[derive(Clone)]
+pub struct ProjectIssueDiscoveryReply {
+    pub project_id: String,
+    pub availability: GitHubIssueAvailability,
+    /// Populated only when `availability` is `Available`; empty otherwise.
+    pub issues: Result<Vec<GitHubIssueRecord>, String>,
+}
+
+/// Probe whether GitHub Issues are available for `project_path` and, if so,
+/// fetch open issues — all in a single background hop.
+pub fn spawn_project_issue_discovery(
+    sender: broadcast::Sender<ProjectIssueDiscoveryReply>,
+    project_id: String,
+    project_path: PathBuf,
+) {
+    thread::spawn(move || {
+        let availability = probe_github_issue_availability(&project_path);
+        let issues = if matches!(availability, GitHubIssueAvailability::Available) {
+            find_project_open_issues(&project_path)
+        } else {
+            Ok(Vec::new())
+        };
+        let _ = sender.send(ProjectIssueDiscoveryReply {
+            project_id,
+            availability,
+            issues,
+        });
+    });
 }

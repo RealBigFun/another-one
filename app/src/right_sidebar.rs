@@ -1302,6 +1302,11 @@ impl AnotherOneApp {
         let project_id = active_section.project_id.clone();
         let is_git_backed = self.project_store.is_git_backed(&project_id);
         let has_github_remote = self.has_github_remote(&project_id);
+        let linked_issue = active_section
+            .task_id
+            .as_deref()
+            .and_then(|tid| self.project_store.task(tid))
+            .and_then(|task| task.linked_issue.clone());
         let sidebar_mode = self.active_right_sidebar_mode(cx);
         let commit_state = self.active_branch_commit_state(cx).cloned();
         if is_git_backed && has_github_remote {
@@ -1311,6 +1316,7 @@ impl AnotherOneApp {
 
         let has_loaded_changed_files = self.changed_files.contains_key(&project_id);
         let changed_files = self.active_changed_files(cx);
+
         let mut body = div().flex_1().flex().flex_col().min_h_0();
 
         if !is_git_backed {
@@ -1633,6 +1639,108 @@ impl AnotherOneApp {
                     body = body.child(rows);
                 }
             },
+            RightSidebarMode::Issue => {
+                if let Some(ref issue) = linked_issue {
+                    let issue_number = issue.number;
+                    let issue_title = issue.title.clone();
+                    let issue_url = issue.url.clone();
+                    let issue_url_for_open = issue_url.clone();
+                    body = body.child(
+                        div()
+                            .id("right-sidebar-issue-body")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(0.))
+                            .p(px(12.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(8.))
+                                    .p(px(12.))
+                                    .rounded(px(6.))
+                                    .bg(app_theme.overlay_rest)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap(px(8.))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(px(6.))
+                                                    .child(
+                                                        svg()
+                                                            .path("assets/icons/icons__github.svg")
+                                                            .size(px(14.))
+                                                            .text_color(muted_col),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_color(muted_col)
+                                                            .text_size(px(11.))
+                                                            .child(format!("#{issue_number}")),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("issue-open-external")
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .w(px(20.))
+                                                    .h(px(20.))
+                                                    .rounded(px(4.))
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(app_theme.overlay_hover))
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(
+                                                            move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                                cx.stop_propagation();
+                                                                if let Err(err) = crate::platform::CurrentPlatform::open_external_url(&issue_url_for_open) {
+                                                                    this.show_error_toast(err, cx);
+                                                                }
+                                                            },
+                                                        ),
+                                                    )
+                                                    .child(
+                                                        svg()
+                                                            .path("assets/icons/icons__external-link.svg")
+                                                            .size(px(12.))
+                                                            .text_color(muted_col),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(app_theme.text_primary)
+                                            .text_size(px(13.))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .child(issue_title),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(muted_col)
+                                            .text_size(px(11.))
+                                            .child(issue_url),
+                                    ),
+                            ),
+                    );
+                } else {
+                    body = body.child(Self::centered_sidebar_message(
+                        "No linked issue.",
+                        muted_col,
+                    ));
+                }
+            }
         }
         } // end else (is_git_backed)
 
@@ -1708,7 +1816,24 @@ impl AnotherOneApp {
                                 cx,
                             ))
                             .when(is_git_backed, |row| row.child(commits_button))
-                            .when(has_github_remote, |row| row.child(checks_button)),
+                            .when(has_github_remote, |row| row.child(checks_button))
+                            .when(linked_issue.is_some(), |row| {
+                                row.child(Self::git_toolbar_button(
+                                    GitToolbarButtonProps {
+                                        theme_mode: self.project_store.ui.theme_mode,
+                                        label: "Issue",
+                                        leading_icon: Some("assets/icons/icons__github.svg"),
+                                        trailing_icon: None,
+                                        enabled: true,
+                                        active: sidebar_mode == RightSidebarMode::Issue,
+                                        tooltip_label: Some("View the linked GitHub issue"),
+                                    },
+                                    move |this, _ev, _window, cx| {
+                                        this.set_right_sidebar_mode(RightSidebarMode::Issue, cx);
+                                    },
+                                    cx,
+                                ))
+                            }),
                     )
                     .child(
                         div()

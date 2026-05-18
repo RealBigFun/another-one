@@ -1512,6 +1512,11 @@ impl AnotherOneApp {
         let pull_request_url = pull_request
             .as_ref()
             .map(|pull_request| pull_request.url.clone());
+        // Linked issue chip (e.g. #123) — shown when a task was created with a linked issue.
+        let linked_issue = self
+            .project_store
+            .task(&task_id)
+            .and_then(|t| t.linked_issue.clone());
         let root_project_id = self
             .sidebar_root_project_for_project(&project_id)
             .map(|project| project.id)
@@ -1775,6 +1780,46 @@ impl AnotherOneApp {
                             .into_any_element()
                     })
                     .child(task_label)
+                    .when_some(linked_issue, |row, issue| {
+                        let chip_url = issue.url.clone();
+                        row.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "issue-chip-{}",
+                                    issue.number
+                                )))
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(3.))
+                                .px(px(5.))
+                                .h(px(18.))
+                                .rounded_md()
+                                .bg(app_theme.overlay_rest)
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                                        cx.stop_propagation();
+                                        if let Err(err) = open_external_url(&chip_url) {
+                                            this.show_error_toast(err, cx);
+                                        }
+                                    }),
+                                )
+                                .child(
+                                    svg()
+                                        .path("assets/icons/icons__github.svg")
+                                        .size(px(10.))
+                                        .text_color(muted_col),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(rems(10. / 16.))
+                                        .text_color(text_col)
+                                        .child(format!("#{}", issue.number)),
+                                ),
+                        )
+                    })
                     .when(is_worktree && entry.branch.is_default, |row| {
                         row.child(
                             div()
@@ -3557,6 +3602,7 @@ mod tests {
             active_tab_id: String::new(),
             next_tab_id: 0,
             cwd: None,
+            linked_issue: None,
         }
     }
 

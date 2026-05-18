@@ -327,6 +327,9 @@ pub enum Control {
         agent_ids: Vec<String>,
         branch_mode_existing: bool,
         worktree_mode: bool,
+        /// GitHub issue linked at creation. Wire-additive.
+        #[serde(default)]
+        linked_issue: Option<LinkedIssueWire>,
     },
     /// Append one agent tab (or plain shell when `agent_id` is
     /// empty) to an existing task section, make it active, and queue
@@ -1908,6 +1911,17 @@ pub struct UiSnapshot {
     pub git_pr_generation_llm: Option<serde_json::Value>,
 }
 
+/// Wire-safe mirror of `core::project_store::LinkedIssue`.
+/// Wire-additive — old clients decode to `None` via `serde(default)`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LinkedIssueWire {
+    /// Provider tag: `"github"`, `"jira"`, etc.
+    pub provider: String,
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+}
+
 /// Lossy wire projection of `core::project_store::Task`. Contains
 /// enough for the mobile task page to render the tab strip and
 /// request an attach; no live PTY state.
@@ -1987,6 +2001,9 @@ pub struct TaskSummary {
     /// requiring a top-level worktree Project in `ProjectSummary`.
     #[serde(default)]
     pub worktree: Option<serde_json::Value>,
+    /// GitHub issue linked at task-creation time. Wire-additive.
+    #[serde(default)]
+    pub linked_issue: Option<LinkedIssueWire>,
 }
 
 /// Lossy wire projection of

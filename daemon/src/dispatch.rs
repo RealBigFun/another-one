@@ -504,6 +504,7 @@ async fn dispatch_call(
             agent_ids,
             branch_mode_existing,
             worktree_mode,
+            linked_issue,
         } => Some(
             match registry
                 .submit_new_task(
@@ -513,6 +514,7 @@ async fn dispatch_call(
                     agent_ids,
                     branch_mode_existing,
                     worktree_mode,
+                    linked_issue,
                 )
                 .await
             {

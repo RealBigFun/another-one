@@ -35,6 +35,9 @@ pub(crate) struct NewTaskModalState {
     pub task_name_selection_anchor: Option<usize>,
     pub advanced_expanded: bool,
     pub submitting: bool,
+    pub issue_dropdown_open: bool,
+    pub selected_issue: Option<another_one_core::git_actions::GitHubIssueRecord>,
+    pub issue_filter: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,7 +246,11 @@ impl AnotherOneApp {
             task_name_selection_anchor: None,
             advanced_expanded: false,
             submitting: false,
+            issue_dropdown_open: false,
+            selected_issue: None,
+            issue_filter: String::new(),
         });
+        self.request_project_issue_discovery(&refresh_project_id, &project_path);
         self.start_new_task_branch_refresh(refresh_project_id, project_path);
         self.sync_new_task_modal_prewarm(cx);
     }
@@ -289,6 +296,43 @@ impl AnotherOneApp {
         let task_name_selection = selected_task_name_range(state);
         let advanced_expanded = state.advanced_expanded;
         let submitting = state.submitting;
+        let issue_dropdown_open = state.issue_dropdown_open;
+        let selected_issue = state.selected_issue.clone();
+        let issue_filter: SharedString = state.issue_filter.clone().into();
+
+        // Resolve issue availability from app-level cache.
+        let issue_discovery = self
+            .project_issue_discovery_cache
+            .get(&state.project_id);
+        let issue_row_visible = match issue_discovery.map(|r| &r.availability) {
+            None => false,
+            Some(another_one_core::git_actions::GitHubIssueAvailability::Hidden(_)) => false,
+            Some(_) => true,
+        };
+        let issue_options_loading = issue_discovery.is_none()
+            && self
+                .project_issue_discovery_requests
+                .contains(&state.project_id);
+        let issue_options: Vec<another_one_core::git_actions::GitHubIssueRecord> =
+            issue_discovery
+                .and_then(|r| r.issues.as_ref().ok())
+                .cloned()
+                .unwrap_or_default();
+        let issue_options_error: Option<SharedString> =
+            match issue_discovery.map(|r| &r.availability) {
+                Some(another_one_core::git_actions::GitHubIssueAvailability::GhMissing) => {
+                    Some("GitHub CLI is not installed.".into())
+                }
+                Some(another_one_core::git_actions::GitHubIssueAvailability::GhError(s)) => {
+                    Some(s.clone().into())
+                }
+                Some(another_one_core::git_actions::GitHubIssueAvailability::Available) => {
+                    issue_discovery
+                        .and_then(|r| r.issues.as_ref().err())
+                        .map(|e| SharedString::from(e.clone()))
+                }
+                _ => None,
+            };
 
         div()
             .id("new-task-modal-overlay")
@@ -368,6 +412,13 @@ impl AnotherOneApp {
                             .child(Self::render_advanced_options(
                                 advanced_expanded,
                                 submitting,
+                                issue_row_visible,
+                                issue_dropdown_open,
+                                selected_issue,
+                                issue_filter,
+                                issue_options,
+                                issue_options_loading,
+                                issue_options_error,
                                 cx,
                             )),
                     )
@@ -410,6 +461,15 @@ impl AnotherOneApp {
 
         match ev.keystroke.key.as_str() {
             "escape" => {
+                // Close dropdowns before dismissing the whole modal.
+                if let Some(state) = self.new_task_modal.as_mut() {
+                    if state.issue_dropdown_open {
+                        state.issue_dropdown_open = false;
+                        state.issue_filter.clear();
+                        cx.notify();
+                        return;
+                    }
+                }
                 self.cancel_active_new_task_prewarm();
                 self.new_task_modal = None;
                 cx.notify();
@@ -418,17 +478,49 @@ impl AnotherOneApp {
                 if self
                     .new_task_modal
                     .as_ref()
-                    .is_some_and(|state| state.branch_filter_focused)
+                    .is_some_and(|state| state.branch_filter_focused || state.issue_dropdown_open)
                 {
                     return;
                 }
                 self.submit_new_task_modal(cx);
             }
             _ => {
-                if !self.handle_branch_filter_key_down(ev, cx) {
+                if !self.handle_issue_filter_key_down(ev, cx)
+                    && !self.handle_branch_filter_key_down(ev, cx)
+                {
                     self.handle_task_name_key_down(ev, cx);
                 }
             }
+        }
+    }
+
+    fn handle_issue_filter_key_down(
+        &mut self,
+        ev: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.new_task_modal.as_mut() else {
+            return false;
+        };
+        if !state.issue_dropdown_open {
+            return false;
+        }
+        let modifiers = ev.keystroke.modifiers;
+        if modifiers.platform || modifiers.alt || modifiers.control {
+            return false;
+        }
+        match ev.keystroke.key.as_str() {
+            "backspace" => {
+                state.issue_filter.pop();
+                cx.notify();
+                true
+            }
+            key if key.chars().count() == 1 => {
+                state.issue_filter.push_str(key);
+                cx.notify();
+                true
+            }
+            _ => false,
         }
     }
 
@@ -949,6 +1041,7 @@ impl AnotherOneApp {
                                     }
                                     state.branch_dropdown_open = !state.branch_dropdown_open;
                                     state.agent_dropdown_open = false;
+                                    state.issue_dropdown_open = false;
                                     state.task_name_focused = false;
                                     state.branch_filter_focused = state.branch_dropdown_open;
                                 }
@@ -1090,6 +1183,7 @@ impl AnotherOneApp {
                                         state.branch_dropdown_open = false;
                                         state.branch_filter_focused = false;
                                         state.agent_dropdown_open = false;
+                                        state.issue_dropdown_open = false;
                                     }
                                     this.sync_new_task_modal_prewarm(cx);
                                     cx.stop_propagation();
@@ -1219,6 +1313,7 @@ impl AnotherOneApp {
                                 state.branch_dropdown_open = false;
                                 state.branch_filter_focused = false;
                                 state.agent_dropdown_open = false;
+                                state.issue_dropdown_open = false;
                             }
                             cx.stop_propagation();
                             cx.notify();
@@ -1320,6 +1415,7 @@ impl AnotherOneApp {
                                     state.agent_dropdown_open = !state.agent_dropdown_open;
                                     state.branch_dropdown_open = false;
                                     state.branch_filter_focused = false;
+                                    state.issue_dropdown_open = false;
                                     state.task_name_focused = false;
                                 }
                                 cx.stop_propagation();
@@ -1593,6 +1689,7 @@ impl AnotherOneApp {
                                         }
                                         state.worktree_mode = true;
                                         state.agent_dropdown_open = false;
+                                        state.issue_dropdown_open = false;
                                         state.branch_filter_focused = false;
                                     }
                                     this.sync_new_task_modal_prewarm(cx);
@@ -1664,6 +1761,7 @@ impl AnotherOneApp {
                                         state.branch_dropdown_open = false;
                                         state.branch_filter_focused = false;
                                         state.agent_dropdown_open = false;
+                                        state.issue_dropdown_open = false;
                                     }
                                     this.sync_new_task_modal_prewarm(cx);
                                     cx.stop_propagation();
@@ -1705,9 +1803,17 @@ impl AnotherOneApp {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_advanced_options(
         expanded: bool,
         submitting: bool,
+        issue_row_visible: bool,
+        issue_dropdown_open: bool,
+        selected_issue: Option<another_one_core::git_actions::GitHubIssueRecord>,
+        issue_filter: SharedString,
+        issue_options: Vec<another_one_core::git_actions::GitHubIssueRecord>,
+        issue_options_loading: bool,
+        issue_options_error: Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let chevron = if expanded {
@@ -1733,10 +1839,7 @@ impl AnotherOneApp {
                 .opacity(if submitting { 0.45 } else { 1.0 })
                 .hover(move |s| s.bg(hover_bg()))
                 .tooltip(move |_window, cx| {
-                    Self::action_tooltip_view(
-                        "Show advanced task options that will be wired later",
-                        cx,
-                    )
+                    Self::action_tooltip_view("Advanced options for this task", cx)
                 })
                 .on_mouse_down(
                     MouseButton::Left,
@@ -1748,6 +1851,7 @@ impl AnotherOneApp {
                             state.advanced_expanded = !state.advanced_expanded;
                             state.agent_dropdown_open = false;
                             state.branch_dropdown_open = false;
+                            state.issue_dropdown_open = false;
                             state.branch_filter_focused = false;
                             state.task_name_focused = false;
                         }
@@ -1779,122 +1883,382 @@ impl AnotherOneApp {
         );
 
         if expanded {
-            section = section.child(
-                div()
-                    .mt(px(12.))
+            let mut rows = div().mt(px(12.)).flex().flex_col().gap(px(12.));
+
+            // GitHub issue row — hidden if repo has no Issues or is not GitHub-backed.
+            if issue_row_visible {
+                let trigger_chevron_icon = if issue_dropdown_open {
+                    "assets/icons/icons__chevron-up.svg"
+                } else {
+                    "assets/icons/icons__chevron-down.svg"
+                };
+
+                let trigger_label: SharedString = match &selected_issue {
+                    None => "Select a GitHub issue".into(),
+                    Some(issue) => {
+                        let title = if issue.title.chars().count() > 32 {
+                            format!(
+                                "{}…",
+                                issue.title.chars().take(32).collect::<String>()
+                            )
+                        } else {
+                            issue.title.clone()
+                        };
+                        format!("#{} · {}", issue.number, title).into()
+                    }
+                };
+                let has_selection = selected_issue.is_some();
+
+                let mut trigger_row = div()
+                    .flex_1()
+                    .h(px(36.))
+                    .id("new-task-issue-trigger")
+                    .rounded_md()
+                    .bg(subtle_bg())
+                    .border_1()
+                    .border_color(border_col())
                     .flex()
-                    .flex_col()
+                    .flex_row()
+                    .items_center()
+                    .px(px(10.))
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .opacity(if submitting { 0.45 } else { 1.0 })
+                    .hover(move |s| s.bg(hover_bg()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                            if let Some(state) = this.new_task_modal.as_mut() {
+                                if state.submitting {
+                                    return;
+                                }
+                                state.issue_dropdown_open = !state.issue_dropdown_open;
+                                state.agent_dropdown_open = false;
+                                state.branch_dropdown_open = false;
+                                state.branch_filter_focused = false;
+                                state.task_name_focused = false;
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("assets/icons/icons__github.svg")
+                            .size(px(16.))
+                            .text_color(muted_col()),
+                    );
+
+                if has_selection {
+                    trigger_row = trigger_row
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(rems(12. / 16.))
+                                .text_color(body_col())
+                                .child(trigger_label),
+                        )
+                        .child(
+                            div()
+                                .id("new-task-issue-clear")
+                                .size(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(4.))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(hover_bg()))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
+                                        if let Some(state) = this.new_task_modal.as_mut() {
+                                            state.selected_issue = None;
+                                        }
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                )
+                                .child(
+                                    svg()
+                                        .path("assets/icons/icons__close.svg")
+                                        .size(px(10.))
+                                        .text_color(muted_col()),
+                                ),
+                        );
+                } else {
+                    trigger_row = trigger_row
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(rems(12. / 16.))
+                                .text_color(placeholder_col())
+                                .child(trigger_label),
+                        )
+                        .child(
+                            svg()
+                                .path(trigger_chevron_icon)
+                                .size(px(11.))
+                                .text_color(muted_col()),
+                        );
+                }
+
+                // Right side: trigger + optional dropdown, stacked vertically.
+                let mut right_col = div().flex().flex_col().flex_1().child(trigger_row);
+
+                // Dropdown popover
+                if issue_dropdown_open {
+                    let filter_lc = issue_filter.to_lowercase();
+                    let filtered: Vec<_> = issue_options
+                        .iter()
+                        .filter(|issue| {
+                            if filter_lc.is_empty() {
+                                return true;
+                            }
+                            let haystack =
+                                format!("#{} {}", issue.number, issue.title).to_lowercase();
+                            haystack.contains(&filter_lc)
+                        })
+                        .collect();
+
+                    let mut dropdown = div()
+                        .id("new-task-issue-dropdown")
+                        .mt(px(4.))
+                        .max_h(px(200.))
+                        .rounded_md()
+                        .bg(card_bg())
+                        .border_1()
+                        .border_color(border_col())
+                        .shadow_md()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col();
+
+                    // Filter input
+                    dropdown = dropdown.child(
+                        div()
+                            .px(px(10.))
+                            .py(px(6.))
+                            .border_b_1()
+                            .border_color(border_col())
+                            .child(
+                                div()
+                                    .text_size(rems(12. / 16.))
+                                    .text_color(if issue_filter.is_empty() {
+                                        placeholder_col()
+                                    } else {
+                                        body_col()
+                                    })
+                                    .child(if issue_filter.is_empty() {
+                                        SharedString::from("Filter issues…")
+                                    } else {
+                                        issue_filter.clone()
+                                    }),
+                            ),
+                    );
+
+                    if issue_options_loading {
+                        dropdown = dropdown.child(
+                            div()
+                                .px(px(12.))
+                                .py(px(10.))
+                                .text_size(rems(12. / 16.))
+                                .text_color(muted_col())
+                                .child("Loading…"),
+                        );
+                    } else if let Some(error) = issue_options_error {
+                        dropdown = dropdown.child(
+                            div()
+                                .px(px(12.))
+                                .py(px(10.))
+                                .text_size(rems(12. / 16.))
+                                .text_color(danger_col())
+                                .child(error),
+                        );
+                    } else if filtered.is_empty() {
+                        dropdown = dropdown.child(
+                            div()
+                                .px(px(12.))
+                                .py(px(10.))
+                                .text_size(rems(12. / 16.))
+                                .text_color(muted_col())
+                                .child("No open issues"),
+                        );
+                    } else {
+                        for issue in filtered {
+                            let number = issue.number;
+                            let title: SharedString = issue.title.clone().into();
+                            let date: SharedString = issue
+                                .updated_at
+                                .get(..10)
+                                .unwrap_or(&issue.updated_at)
+                                .to_string()
+                                .into();
+                            dropdown = dropdown.child(
+                                div()
+                                    .id(("new-task-issue-row", number))
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .h(px(36.))
+                                    .px(px(12.))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(hover_bg()))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |this, _ev: &MouseDownEvent, _window, cx| {
+                                                if let Some(state) =
+                                                    this.new_task_modal.as_mut()
+                                                {
+                                                    // Find the issue in the cache
+                                                    let issue_record = this
+                                                        .project_issue_discovery_cache
+                                                        .get(&state.project_id)
+                                                        .and_then(|r| r.issues.as_ref().ok())
+                                                        .and_then(|issues| {
+                                                            issues
+                                                                .iter()
+                                                                .find(|i| i.number == number)
+                                                                .cloned()
+                                                        });
+                                                    if let Some(record) = issue_record {
+                                                        // Prefill task name if user hasn't
+                                                        // edited it
+                                                        if state.task_name.is_empty()
+                                                            || state.task_name
+                                                                == state.generated_task_name
+                                                        {
+                                                            state.task_name =
+                                                                record.title.clone();
+                                                            state.generated_task_name =
+                                                                record.title.clone();
+                                                            state.task_name_cursor =
+                                                                record.title.len();
+                                                        }
+                                                        state.selected_issue = Some(record);
+                                                        state.issue_dropdown_open = false;
+                                                        state.issue_filter =
+                                                            String::new();
+                                                    }
+                                                }
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(rems(12. / 16.))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(body_col())
+                                            .child(format!("#{number}")),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .text_size(rems(12. / 16.))
+                                            .text_color(body_col())
+                                            .overflow_hidden()
+                                            .child(title),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(rems(11. / 16.))
+                                            .text_color(muted_col())
+                                            .child(date),
+                                    ),
+                            );
+                        }
+                    }
+
+                    right_col = right_col.child(dropdown);
+                }
+
+                let github_row = div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
                     .gap(px(12.))
                     .child(
                         div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(rems(13. / 16.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(title_col())
-                                    .w(px(100.))
-                                    .child("GitHub issue"),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .h(px(36.))
-                                    .rounded_md()
-                                    .bg(subtle_bg())
-                                    .border_1()
-                                    .border_color(border_col())
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .px(px(10.))
-                                    .gap(px(8.))
-                                    .child(
-                                        svg()
-                                            .path("assets/icons/icons__github.svg")
-                                            .size(px(16.))
-                                            .text_color(muted_col()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .text_size(rems(12. / 16.))
-                                            .text_color(placeholder_col())
-                                            .child("Select a GitHub issue"),
-                                    )
-                                    .child(
-                                        svg()
-                                            .path("assets/icons/icons__chevron-down.svg")
-                                            .size(px(11.))
-                                            .text_color(muted_col()),
-                                    ),
-                            ),
+                            .flex_shrink_0()
+                            .text_size(rems(13. / 16.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(title_col())
+                            .w(px(100.))
+                            .pt(px(10.))
+                            .child("GitHub issue"),
+                    )
+                    .child(right_col);
+
+                rows = rows.child(github_row);
+            }
+
+            // Jira issue row — stub, not yet wired.
+            rows = rows.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(rems(13. / 16.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(title_col())
+                            .w(px(100.))
+                            .child("Jira issue"),
                     )
                     .child(
                         div()
+                            .flex_1()
+                            .h(px(36.))
+                            .rounded_md()
+                            .bg(subtle_bg())
+                            .border_1()
+                            .border_color(border_col())
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap(px(12.))
+                            .px(px(10.))
+                            .gap(px(8.))
                             .child(
                                 div()
-                                    .flex_shrink_0()
-                                    .text_size(rems(13. / 16.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(title_col())
-                                    .w(px(100.))
-                                    .child("Jira issue"),
+                                    .w(px(16.))
+                                    .h(px(16.))
+                                    .rounded(px(3.))
+                                    .bg(hsla(220. / 360., 0.65, 0.52, 1.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .text_size(rems(9. / 16.))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(gpui::white())
+                                            .child("J"),
+                                    ),
                             )
                             .child(
                                 div()
                                     .flex_1()
-                                    .h(px(36.))
-                                    .rounded_md()
-                                    .bg(subtle_bg())
-                                    .border_1()
-                                    .border_color(border_col())
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .px(px(10.))
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .w(px(16.))
-                                            .h(px(16.))
-                                            .rounded(px(3.))
-                                            .bg(hsla(220. / 360., 0.65, 0.52, 1.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(
-                                                div()
-                                                    .text_size(rems(9. / 16.))
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_color(gpui::white())
-                                                    .child("J"),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .text_size(rems(12. / 16.))
-                                            .text_color(placeholder_col())
-                                            .child("Select a Jira issue"),
-                                    )
-                                    .child(
-                                        svg()
-                                            .path("assets/icons/icons__chevron-down.svg")
-                                            .size(px(11.))
-                                            .text_color(muted_col()),
-                                    ),
+                                    .text_size(rems(12. / 16.))
+                                    .text_color(placeholder_col())
+                                    .child("Select a Jira issue"),
+                            )
+                            .child(
+                                svg()
+                                    .path("assets/icons/icons__chevron-down.svg")
+                                    .size(px(11.))
+                                    .text_color(muted_col()),
                             ),
                     ),
             );
+
+            section = section.child(rows);
         }
 
         section

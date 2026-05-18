@@ -38,7 +38,7 @@ use daemon_proto::{
     AgentSummaryWire, ChangedFileWire, EnabledAgentsViewWire, GitActionScriptsView,
     McpCatalogEntryDto, McpServerDto, McpSettingsView, McpSourceDto, McpTransportKindDto,
     OpenInAppSettingsRowWire, OpenInSettingsViewWire, ProjectKind, ProjectSummary,
-    ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
+    LinkedIssueWire, ShortcutSettingsRow, ShortcutSettingsView, TabSummary, TaskSummary,
     ToolbarActionOutcome as WireToolbarActionOutcome,
 };
 
@@ -2235,6 +2235,12 @@ fn task_to_summary(
         kind: kind_value,
         worktree_project_id,
         worktree,
+        linked_issue: task.linked_issue.as_ref().map(|li| LinkedIssueWire {
+            provider: li.provider.clone(),
+            number: li.number,
+            url: li.url.clone(),
+            title: li.title.clone(),
+        }),
     }
 }
 
