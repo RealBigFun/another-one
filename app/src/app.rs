@@ -12962,6 +12962,14 @@ impl AnotherOneApp {
         cx.notify();
     }
 
+    fn footer_section() -> gpui::Div {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+    }
+
     fn footer_add_project_button(
         &self,
         window: &Window,
@@ -13077,8 +13085,6 @@ impl AnotherOneApp {
                 .flex()
                 .flex_row()
                 .items_center()
-                .relative()
-                .top(px(-3.))
                 .gap(px(6.))
                 .child(
                     svg()
@@ -13115,8 +13121,6 @@ impl AnotherOneApp {
                 .flex()
                 .flex_row()
                 .items_center()
-                .relative()
-                .top(px(-3.))
                 .gap(px(6.))
                 .child(
                     svg()
@@ -17773,6 +17777,9 @@ impl Render for AnotherOneApp {
 
         let main = self.main_row(window, cx, sw, rw, open, busy);
 
+        let supports_custom_chrome =
+            crate::platform::CurrentPlatform::supports_custom_chrome(window);
+
         let footer = div()
             .flex()
             .flex_row()
@@ -17780,16 +17787,14 @@ impl Render for AnotherOneApp {
             .h(px(FOOTER_H))
             .flex_shrink_0()
             .bg(chrome_bg)
-            // Left section: fixed width matching sidebar
+            // Left section: pl(10) + two 26px buttons + gap(8) = 70px natural width.
+            // Clamp sw from below so the section never shrinks below its content,
+            // keeping the center section from sliding underneath during collapse.
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
+                Self::footer_section()
                     .pl(px(10.))
                     .flex_shrink_0()
-                    .w(px(sw))
+                    .w(px(sw.max(70.)))
                     .child(self.footer_settings_button(window, cx))
                     .child(self.footer_add_project_button(window, cx))
                     .when(
@@ -17800,27 +17805,30 @@ impl Render for AnotherOneApp {
                         |d| d.child(self.footer_install_update_button(window, cx)),
                     ),
             )
-            // Right section: branch + worktree
+            // Left gutter spacer — aligns footer seams with main_row drag gutters.
+            .child(div().w(px(GUTTER)).flex_shrink_0())
+            // Center section: branch + worktree, absorbs slack.
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
+                Self::footer_section()
                     .flex_1()
-                    .gap(px(8.))
-                    .pl(px(GUTTER + 4.))
-                    .pr(px(10.))
+                    .min_w_0()
+                    .pl(px(4.))
                     .child(self.footer_branch_indicator(window, cx))
                     .child(self.footer_worktree_indicator(window, cx)),
+            )
+            // Right gutter spacer.
+            .child(div().w(px(GUTTER)).flex_shrink_0())
+            // Right section: preferred width matches right sidebar.
+            .child(
+                Self::footer_section()
+                    .justify_end()
+                    .pr(px(10.))
+                    .w(px(rw.max(crate::resource_indicator::RESOURCE_INDICATOR_BUTTON_W + 12.)))
+                    .flex_shrink_0()
+                    .when(!supports_custom_chrome, |d| {
+                        d.child(self.resource_indicator_button(window, cx))
+                    }),
             );
-
-        let supports_custom_chrome =
-            crate::platform::CurrentPlatform::supports_custom_chrome(window);
-        let footer = if supports_custom_chrome {
-            footer
-        } else {
-            footer.child(self.resource_indicator_button(window, cx))
-        };
 
         AppInputHost::new(
             div()
