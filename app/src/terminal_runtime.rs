@@ -303,8 +303,14 @@ impl LiveTerminalRuntime {
     }
 
     pub fn paste_text(&self, text: &str) -> io::Result<()> {
-        let payload = encode_paste_payload(text, self.bracketed_paste());
-        self.write_input(payload.as_bytes())
+        self.write_input(&self.paste_payload(text))
+    }
+
+    /// Returns the bracketed-paste-encoded bytes for `text` without writing
+    /// them. Callers that need to route paste over a daemon session (viewer-only
+    /// runtimes) use this to get the payload, then push via `Session::push_data`.
+    pub fn paste_payload(&self, text: &str) -> Vec<u8> {
+        encode_paste_payload(text, self.bracketed_paste()).into_bytes()
     }
 
     /// Lines the viewer has scrolled up from the live screen. `0` =
