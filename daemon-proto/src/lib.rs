@@ -1705,6 +1705,12 @@ pub struct DaemonResourceUsageWire {
     pub total_memory_bytes: u64,
     #[serde(default)]
     pub ram_share_percent: f32,
+    /// Number of logical CPU cores on the daemon host. Used by clients
+    /// to normalize `cpu_percent` values (which are per-core) into a
+    /// 0–100% fraction of total system CPU capacity. Defaults to 1 so
+    /// older clients that don't send this field degrade gracefully.
+    #[serde(default = "default_cpu_core_count")]
+    pub cpu_core_count: u16,
     #[serde(default)]
     pub session_count: usize,
     /// The daemon-host process row (CPU/RSS for the binary that
@@ -1714,6 +1720,10 @@ pub struct DaemonResourceUsageWire {
     /// Per-project aggregation of tracked PTY processes.
     #[serde(default)]
     pub projects: Vec<DaemonResourceUsageProjectWire>,
+}
+
+fn default_cpu_core_count() -> u16 {
+    1
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1734,6 +1744,7 @@ pub struct DaemonResourceUsageProjectWire {
     pub key: String,
     #[serde(default)]
     pub label: String,
+    /// Raw per-core value; divide by [`DaemonResourceUsageWire::cpu_core_count`] before display.
     #[serde(default)]
     pub cpu_percent: f32,
     #[serde(default)]
@@ -1748,6 +1759,7 @@ pub struct DaemonResourceUsageTaskWire {
     pub key: String,
     #[serde(default)]
     pub label: String,
+    /// Raw per-core value; divide by [`DaemonResourceUsageWire::cpu_core_count`] before display.
     #[serde(default)]
     pub cpu_percent: f32,
     #[serde(default)]
@@ -1767,6 +1779,7 @@ pub struct DaemonResourceUsageSessionWire {
     /// String so the wire shape stays platform-agnostic.
     #[serde(default)]
     pub icon_path: String,
+    /// Raw per-core value; divide by [`DaemonResourceUsageWire::cpu_core_count`] before display.
     #[serde(default)]
     pub cpu_percent: f32,
     #[serde(default)]

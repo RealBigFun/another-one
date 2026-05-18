@@ -108,6 +108,18 @@ pub trait HeadlessPlatform {
     /// is fine; no caching layer is warranted.
     fn total_system_memory_bytes() -> Option<u64>;
 
+    /// Number of logical CPU cores available to the process.
+    ///
+    /// Used to normalize per-core CPU% values (which can exceed 100 on
+    /// multi-core machines) into a 0–100 fraction of total system CPU
+    /// capacity before displaying to the user. Cached after the first
+    /// call — core count doesn't change at runtime.
+    ///
+    /// macOS / iOS: `sysctl hw.logicalcpu`. Linux / Android:
+    /// `sysconf(_SC_NPROCESSORS_ONLN)`. Windows: `SYSTEM_INFO.dwNumberOfProcessors`.
+    /// Returns 1 on failure so callers can divide safely.
+    fn num_logical_cpus() -> u16;
+
     /// Sample CPU + memory for the given process tree.
     ///
     /// `app_pid` is the host UI process; `tracked_processes` are

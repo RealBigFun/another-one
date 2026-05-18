@@ -21,6 +21,21 @@ const RESOURCE_CPU_LABEL_W: f32 = 46.;
 const RESOURCE_MEMORY_LABEL_W: f32 = 74.;
 const PANEL_BOTTOM_MARGIN: f32 = crate::layout::FOOTER_H + 10.;
 
+/// Normalize a raw per-core CPU% to a 0–100% fraction of total system capacity.
+/// `core_count` must be ≥ 1 (enforced by the daemon; the `max(1)` guard here
+/// is a belt-and-suspenders defence against a zeroed default on first connect).
+fn normalize_cpu(raw_percent: f32, core_count: u16) -> f32 {
+    raw_percent / (core_count.max(1) as f32)
+}
+
+struct ResourceGroupRowStyle {
+    indent: f32,
+    text_col: gpui::Hsla,
+    metric_col: gpui::Hsla,
+    hover_bg: gpui::Hsla,
+    chevron_col: gpui::Hsla,
+}
+
 impl AnotherOneApp {
     /// Live resource-usage snapshot, sourced from the daemon's
     /// projection (`UiSnapshot.daemon_resource_usage`). Returns an
@@ -84,8 +99,10 @@ impl AnotherOneApp {
             app_theme.overlay_rest
         };
         let border = app_theme.border;
-        let cpu_label = format!("{:.1}%", self.resource_usage().app.cpu_percent);
-        let memory_label = format_memory(self.resource_usage().app.memory_bytes);
+        let usage = self.resource_usage();
+        let cores = usage.cpu_core_count;
+        let cpu_label = format!("{:.1}%", normalize_cpu(usage.total_cpu_percent, cores));
+        let memory_label = format_memory(usage.total_memory_bytes);
 
         div()
             .id("resource-indicator-button")
@@ -183,7 +200,14 @@ impl AnotherOneApp {
         let muted_col = app_theme.text_muted;
         let stat_col = app_theme.text_primary;
         let empty_col = app_theme.text_muted;
-        let session_count = self.resource_usage().session_count.to_string();
+        let usage = self.resource_usage();
+        let cores = usage.cpu_core_count;
+        let session_count = usage.session_count.to_string();
+        let total_cpu = format!("{:.1}%", normalize_cpu(usage.total_cpu_percent, cores));
+        let total_mem = format_memory(usage.total_memory_bytes);
+        let ram_share = format!("{:.1}%", usage.ram_share_percent);
+        let app_cpu = format!("{:.1}%", normalize_cpu(usage.app.cpu_percent, cores));
+        let app_mem = format_memory(usage.app.memory_bytes);
 
         let mut tree = div().flex().flex_col().gap(px(4.));
         if self.resource_usage().projects.is_empty() {
@@ -202,7 +226,7 @@ impl AnotherOneApp {
             );
         } else {
             for project in &self.resource_usage().projects {
-                tree = tree.child(self.resource_project_group(project, cx));
+                tree = tree.child(self.resource_project_group(project, cores, cx));
             }
         }
 
@@ -260,30 +284,66 @@ impl AnotherOneApp {
                 div()
                     .px(px(20.))
                     .pb(px(10.))
-                    .child(Self::resource_section_heading("APP SHELL", title_col)),
+                    .child(Self::resource_section_heading("TOTAL", title_col)),
             )
             .child(
                 div()
                     .flex()
-                    .gap(px(12.))
+                    .gap(px(8.))
                     .px(px(20.))
                     .child(Self::resource_stat_card(
-                        "APP CPU",
-                        format!("{:.1}%", self.resource_usage().app.cpu_percent),
+                        "CPU",
+                        total_cpu,
                         surface_bg,
                         muted_col,
                         stat_col,
                     ))
                     .child(Self::resource_stat_card(
-                        "APP MEM",
-                        format_memory(self.resource_usage().app.memory_bytes),
+                        "MEMORY",
+                        total_mem,
                         surface_bg,
                         muted_col,
                         stat_col,
                     ))
+                    .when(usage.ram_share_percent > 0.0, |row| {
+                        row.child(Self::resource_stat_card(
+                            "SYS MEM",
+                            ram_share,
+                            surface_bg,
+                            muted_col,
+                            stat_col,
+                        ))
+                    })
                     .child(Self::resource_stat_card(
                         "SESSIONS",
                         session_count,
+                        surface_bg,
+                        muted_col,
+                        stat_col,
+                    )),
+            )
+            .child(
+                div()
+                    .px(px(20.))
+                    .pt(px(14.))
+                    .pb(px(6.))
+                    .child(Self::resource_section_heading("APP PROCESS", title_col)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .px(px(20.))
+                    .child(Self::resource_stat_card(
+                        "CPU",
+                        app_cpu,
+                        surface_bg,
+                        muted_col,
+                        stat_col,
+                    ))
+                    .child(Self::resource_stat_card(
+                        "MEMORY",
+                        app_mem,
                         surface_bg,
                         muted_col,
                         stat_col,
@@ -349,9 +409,17 @@ impl AnotherOneApp {
     fn resource_project_group(
         &self,
         project: &ResourceUsageProject,
+        cores: u16,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+        let style = ResourceGroupRowStyle {
+            indent: 0.0,
+            text_col: app_theme.text_primary,
+            metric_col: app_theme.text_muted,
+            hover_bg: app_theme.overlay_hover,
+            chevron_col: app_theme.text_muted,
+        };
         let collapsed = self.resource_collapsed_nodes.contains(&project.key);
         let project_key = project.key.clone();
         let mut group = div()
@@ -360,24 +428,19 @@ impl AnotherOneApp {
             .gap(px(4.))
             .child(Self::resource_group_row(
                 &project.label,
-                project.cpu_percent,
+                normalize_cpu(project.cpu_percent, cores),
                 project.memory_bytes,
-                0.0,
                 collapsed,
-                true,
-                app_theme.text_primary,
-                app_theme.text_muted,
-                app_theme.overlay_hover,
-                app_theme.text_muted,
-                Some(move |this: &mut Self, cx: &mut Context<Self>| {
+                style,
+                move |this: &mut Self, cx: &mut Context<Self>| {
                     this.toggle_resource_node(&project_key, cx);
-                }),
+                },
                 cx,
             ));
 
         if !collapsed {
             for task in &project.tasks {
-                group = group.child(self.resource_task_group(task, cx));
+                group = group.child(self.resource_task_group(task, cores, cx));
             }
         }
 
@@ -387,9 +450,17 @@ impl AnotherOneApp {
     fn resource_task_group(
         &self,
         task: &ResourceUsageTask,
+        cores: u16,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let app_theme = theme::app_theme_for_preference(self.project_store.ui.theme_mode);
+        let style = ResourceGroupRowStyle {
+            indent: 20.0,
+            text_col: app_theme.text_secondary,
+            metric_col: app_theme.text_muted,
+            hover_bg: app_theme.overlay_hover,
+            chevron_col: app_theme.text_muted,
+        };
         let collapsed = self.resource_collapsed_nodes.contains(&task.key);
         let task_key = task.key.clone();
         let mut group = div()
@@ -398,18 +469,13 @@ impl AnotherOneApp {
             .gap(px(4.))
             .child(Self::resource_group_row(
                 &task.label,
-                task.cpu_percent,
+                normalize_cpu(task.cpu_percent, cores),
                 task.memory_bytes,
-                20.0,
                 collapsed,
-                true,
-                app_theme.text_secondary,
-                app_theme.text_muted,
-                app_theme.overlay_hover,
-                app_theme.text_muted,
-                Some(move |this: &mut Self, cx: &mut Context<Self>| {
+                style,
+                move |this: &mut Self, cx: &mut Context<Self>| {
                     this.toggle_resource_node(&task_key, cx);
-                }),
+                },
                 cx,
             ));
 
@@ -417,6 +483,7 @@ impl AnotherOneApp {
             for session in &task.sessions {
                 group = group.child(Self::resource_session_row(
                     session,
+                    cores,
                     app_theme.text_secondary,
                     app_theme.text_muted,
                 ));
@@ -430,17 +497,13 @@ impl AnotherOneApp {
         label: &str,
         cpu_percent: f32,
         memory_bytes: u64,
-        indent: f32,
         collapsed: bool,
-        collapsible: bool,
-        text_col: gpui::Hsla,
-        metric_col: gpui::Hsla,
-        hover_bg: gpui::Hsla,
-        chevron_col: gpui::Hsla,
-        on_toggle: Option<impl Fn(&mut Self, &mut Context<Self>) + 'static>,
+        style: ResourceGroupRowStyle,
+        on_toggle: impl Fn(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let row = div()
+        let ResourceGroupRowStyle { indent, text_col, metric_col, hover_bg, chevron_col } = style;
+        div()
             .flex()
             .items_center()
             .justify_between()
@@ -449,18 +512,15 @@ impl AnotherOneApp {
             .pl(px(indent))
             .pr(px(4.))
             .rounded(px(8.))
-            .when(collapsible, |row| {
-                row.cursor_pointer().hover(move |style| style.bg(hover_bg))
-            })
-            .when_some(on_toggle, |row, on_toggle| {
-                row.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
-                        on_toggle(this, cx);
-                        cx.stop_propagation();
-                    }),
-                )
-            })
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev: &MouseDownEvent, _window, cx| {
+                    on_toggle(this, cx);
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 div()
                     .flex()
@@ -488,17 +548,12 @@ impl AnotherOneApp {
                             .child(label.to_string()),
                     ),
             )
-            .child(Self::resource_metrics(
-                cpu_percent,
-                memory_bytes,
-                metric_col,
-            ));
-
-        row
+            .child(Self::resource_metrics(cpu_percent, memory_bytes, metric_col))
     }
 
     fn resource_session_row(
         session: &ResourceUsageSession,
+        cores: u16,
         title_col: gpui::Hsla,
         metric_col: gpui::Hsla,
     ) -> impl IntoElement {
@@ -527,7 +582,7 @@ impl AnotherOneApp {
                     ),
             )
             .child(Self::resource_metrics(
-                session.cpu_percent,
+                normalize_cpu(session.cpu_percent, cores),
                 session.memory_bytes,
                 metric_col,
             ))
@@ -557,5 +612,22 @@ impl AnotherOneApp {
                     .text_color(text_col)
                     .child(format_memory(memory_bytes)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_cpu;
+
+    #[test]
+    fn normalize_cpu_treats_zero_core_count_as_one() {
+        // core_count=0 is the wire default; max(1) must prevent division by zero.
+        assert_eq!(normalize_cpu(100.0, 0), 100.0);
+    }
+
+    #[test]
+    fn normalize_cpu_divides_by_core_count() {
+        assert_eq!(normalize_cpu(200.0, 2), 100.0);
+        assert_eq!(normalize_cpu(400.0, 4), 100.0);
     }
 }

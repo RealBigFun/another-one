@@ -7,6 +7,8 @@ use crate::process::{RawProcessSample, TrackedProcess};
 
 use super::HeadlessPlatform;
 
+use tracing::{trace, warn};
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxPlatform;
 
@@ -29,6 +31,10 @@ impl HeadlessPlatform for LinuxPlatform {
 
     fn total_system_memory_bytes() -> Option<u64> {
         proc_meminfo_total_bytes()
+    }
+
+    fn num_logical_cpus() -> u16 {
+        sysconf_logical_cpus()
     }
 
     fn read_process_samples(
@@ -185,14 +191,26 @@ fn flatpak_app_installed(app_id: &str) -> bool {
 
 /// Parse `MemTotal:` from `/proc/meminfo` and convert KiB to bytes.
 /// Shared with `AndroidPlatform`, which uses the same procfs layout.
+/// Result is cached — total physical RAM never changes at runtime.
+/// Only a successful read is cached; transient failures are retried on
+/// the next call rather than permanently poisoning the cache.
 pub(super) fn proc_meminfo_total_bytes() -> Option<u64> {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<u64> = OnceLock::new();
+    // Fast path: return cached value if already populated.
+    if let Some(&cached) = CACHED.get() {
+        return Some(cached);
+    }
+    // Slow path: read from /proc/meminfo and cache on success only.
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
     let line = meminfo.lines().find(|line| line.starts_with("MemTotal:"))?;
     let kib = line
         .split_whitespace()
         .nth(1)
         .and_then(|value| value.parse::<u64>().ok())?;
-    Some(kib.saturating_mul(1024))
+    let bytes = kib.saturating_mul(1024);
+    // get_or_init: if another thread raced us here, use their result.
+    Some(*CACHED.get_or_init(|| bytes))
 }
 
 /// Sample the app PID plus tracked process trees from procfs.
@@ -210,11 +228,17 @@ pub(super) fn procfs_read_process_samples(
 ) -> Vec<RawProcessSample> {
     let clock_ticks_per_second = match sysconf_u64(libc::_SC_CLK_TCK) {
         Some(value) if value > 0 => value,
-        _ => return Vec::new(),
+        other => {
+            warn!(?other, "sysconf(_SC_CLK_TCK) returned unusable value; skipping sample");
+            return Vec::new();
+        }
     };
     let page_size = match sysconf_u64(libc::_SC_PAGESIZE) {
         Some(value) if value > 0 => value,
-        _ => return Vec::new(),
+        other => {
+            warn!(?other, "sysconf(_SC_PAGESIZE) returned unusable value; skipping sample");
+            return Vec::new();
+        }
     };
 
     if tracked_processes.is_empty() {
@@ -354,7 +378,10 @@ impl LinuxStatSample {
             // Tracked subprocess rows can include multiple child
             // processes. PSS avoids double-counting shared library
             // pages when those trees are summed in the UI.
-            LinuxMemoryMode::Pss => read_smaps_pss_bytes(self.pid).unwrap_or(self.rss_memory_bytes),
+            LinuxMemoryMode::Pss => read_smaps_pss_bytes(self.pid).unwrap_or_else(|| {
+                trace!(pid = self.pid, "smaps_rollup unavailable; falling back to RSS");
+                self.rss_memory_bytes
+            }),
         };
         RawProcessSample {
             pid: self.pid,
@@ -378,8 +405,30 @@ fn read_smaps_pss_bytes(pid: u32) -> Option<u64> {
     None
 }
 
+/// Number of online logical CPUs via `sysconf(_SC_NPROCESSORS_ONLN)`.
+/// Shared with `AndroidPlatform`. Returns 1 on failure so callers can divide safely.
+pub(super) fn sysconf_logical_cpus() -> u16 {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<u16> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        sysconf_u64(libc::_SC_NPROCESSORS_ONLN)
+            .and_then(|n| u16::try_from(n).ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(1)
+    })
+}
+
 pub(super) fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
-    ticks.saturating_mul(1_000_000_000) / clock_ticks_per_second
+    debug_assert!(clock_ticks_per_second > 0, "caller must guard against zero");
+    // Divide before multiplying to avoid saturating_mul overflow for long-lived
+    // processes: ticks * 1e9 overflows u64 after ~5.8 years of single-core
+    // CPU time (or ~66 days at 32 cores). Dividing first keeps the intermediate
+    // value in range; the remainder term recovers sub-second precision.
+    let whole = ticks / clock_ticks_per_second;
+    let remainder = ticks % clock_ticks_per_second;
+    whole
+        .saturating_mul(1_000_000_000)
+        .saturating_add(remainder * 1_000_000_000 / clock_ticks_per_second)
 }
 
 fn sysconf_u64(name: libc::c_int) -> Option<u64> {
@@ -418,6 +467,26 @@ mod tests {
     #[test]
     fn converts_linux_ticks_to_nanoseconds() {
         assert_eq!(ticks_to_nanos(250, 100), 2_500_000_000);
+    }
+
+    #[test]
+    fn ticks_to_nanos_preserves_sub_tick_precision() {
+        // ticks=99, clock=100 → 0 whole seconds, remainder=99
+        // expected: 99 * 1_000_000_000 / 100 = 990_000_000 ns
+        assert_eq!(ticks_to_nanos(99, 100), 990_000_000);
+        // ticks=1, clock=100 → 10_000_000 ns
+        assert_eq!(ticks_to_nanos(1, 100), 10_000_000);
+    }
+
+    #[test]
+    fn ticks_to_nanos_does_not_overflow_for_long_lived_process() {
+        // 32 cores pegged for 100 days: 32 * 100 * 24 * 3600 * 100 ticks/s = 27_648_000_000
+        // ticks * 1e9 would overflow u64 (max ~1.84e19); divide-first must not saturate.
+        let ticks = 27_648_000_000_u64;
+        let clock_ticks = 100_u64;
+        let nanos = ticks_to_nanos(ticks, clock_ticks);
+        let expected = ticks / clock_ticks * 1_000_000_000;
+        assert_eq!(nanos, expected);
     }
 
     #[test]

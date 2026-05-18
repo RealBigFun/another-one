@@ -35,6 +35,10 @@ impl HeadlessPlatform for IosPlatform {
         super::macos::sysctl_hw_memsize()
     }
 
+    fn num_logical_cpus() -> u16 {
+        super::macos::sysctl_hw_logicalcpu()
+    }
+
     fn read_process_samples(
         app_pid: u32,
         tracked_processes: &[crate::process::TrackedProcess],

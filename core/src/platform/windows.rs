@@ -38,6 +38,15 @@ impl HeadlessPlatform for WindowsPlatform {
         None
     }
 
+    fn num_logical_cpus() -> u16 {
+        // `GetSystemInfo().dwNumberOfProcessors` would give the real
+        // count but requires `windows-sys`; deferred with the same
+        // rationale as `total_system_memory_bytes`. Per-process CPU%
+        // data isn't returned on Windows anyway (empty vec from
+        // `read_process_samples`), so this value is never used.
+        1
+    }
+
     fn read_process_samples(
         _app_pid: u32,
         _tracked_processes: &[crate::process::TrackedProcess],

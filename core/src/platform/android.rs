@@ -38,6 +38,10 @@ impl HeadlessPlatform for AndroidPlatform {
         super::linux::proc_meminfo_total_bytes()
     }
 
+    fn num_logical_cpus() -> u16 {
+        super::linux::sysconf_logical_cpus()
+    }
+
     fn read_process_samples(
         app_pid: u32,
         tracked_processes: &[crate::process::TrackedProcess],
