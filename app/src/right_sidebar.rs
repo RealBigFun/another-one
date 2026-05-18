@@ -1948,7 +1948,9 @@ impl RightSidebarPanel {
                                                             move |this, _ev: &MouseDownEvent, _window, cx| {
                                                                 cx.stop_propagation();
                                                                 if let Err(err) = crate::platform::CurrentPlatform::open_external_url(&issue_url_for_open) {
-                                                                    this.show_error_toast(err, cx);
+                                                                    let _ = this.app.update(cx, |app, cx| {
+                                                                        app.show_error_toast(err, cx);
+                                                                    });
                                                                 }
                                                             },
                                                         ),
@@ -2071,7 +2073,7 @@ impl RightSidebarPanel {
                             .when(linked_issue.is_some(), |row| {
                                 row.child(Self::git_toolbar_button(
                                     GitToolbarButtonProps {
-                                        theme_mode: self.project_store.ui.theme_mode,
+                                        theme_mode: self.snapshot.theme_mode,
                                         label: "Issue",
                                         leading_icon: Some("assets/icons/icons__github.svg"),
                                         trailing_icon: None,
@@ -2080,7 +2082,9 @@ impl RightSidebarPanel {
                                         tooltip_label: Some("View the linked GitHub issue"),
                                     },
                                     move |this, _ev, _window, cx| {
-                                        this.set_right_sidebar_mode(RightSidebarMode::Issue, cx);
+                                        let _ = this.app.update(cx, |app, cx| {
+                                            app.set_right_sidebar_mode(RightSidebarMode::Issue, cx);
+                                        });
                                     },
                                     cx,
                                 ))
