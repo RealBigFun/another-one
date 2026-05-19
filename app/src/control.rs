@@ -13,9 +13,9 @@
 //! that `&self` render helpers can register without requiring `&mut self`
 //! throughout the entire element-building call chain.
 //!
-//! The `test-harness` feature will expose `simulate_click` / `simulate_toggle`
-//! on `AnotherOneApp`, enabling interaction tests without a real window.
-//! See the `test-harness` gate in `app/src/lib.rs`.
+//! Step 4 (below) will expose `simulate_click` / `simulate_toggle` on
+//! `AnotherOneApp` behind a `test-harness` feature gate, enabling
+//! interaction tests without a real window. That gate does not yet exist.
 //!
 //! ## Migration order (from issue #198)
 //!
@@ -26,7 +26,8 @@
 //!    `settings_theme_button` — each registers metadata; handler is `None`.
 //! 4. Add `simulate_click` / `simulate_toggle` behind `test-harness`.
 //!    Populate `handler` so the test surface can invoke controls.
-//! 5. Expand to left sidebar → settings → header → project panes.
+//! 5. Expand to header → project panes (left sidebar task menus and
+//!    settings page already converted in step 3).
 
 use gpui::SharedString;
 
