@@ -1624,6 +1624,15 @@ impl ProjectStore {
             // first launch with a JSON, the existing state on every
             // launch after).
             let json_path = Self::config_path();
+            // In debug builds, use a per-worktree dev database so the
+            // debug binary doesn't compete with the production app for
+            // the exclusive flock on state.sqlite.  On first run the
+            // production DB is cloned via VACUUM INTO (captures WAL
+            // data) so projects are pre-populated.  Changes persist
+            // within the worktree between runs.
+            #[cfg(debug_assertions)]
+            let db_path = crate::project_store::dev_state_db_path();
+            #[cfg(not(debug_assertions))]
             let db_path = crate::sqlite_persistence::default_state_db_path();
             if let Err(err) = crate::sqlite_persistence::migrate_from_json(&json_path, &db_path) {
                 eprintln!("project_store: SQLite migration failed: {err}");
@@ -3676,6 +3685,59 @@ pub(crate) fn app_config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("another-one")
+}
+
+/// Returns the dev-only state DB path for debug builds.
+///
+/// The path is anchored to the workspace root at compile time via
+/// `CARGO_MANIFEST_DIR` (which resolves to `<worktree>/core`) so
+/// each git worktree gets its own isolated `.another-one-dev/`
+/// directory.  The directory and an initial DB snapshot (cloned from
+/// the production `state.sqlite` via `VACUUM INTO`) are created on
+/// the first run if absent.
+#[cfg(debug_assertions)]
+pub(crate) fn dev_state_db_path() -> PathBuf {
+    // CARGO_MANIFEST_DIR = "<worktree>/core"; step one level up to land
+    // the dev dir at the workspace root rather than inside a crate subdir.
+    let dev_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.another-one-dev"));
+    let db_path = dev_dir.join(crate::sqlite_persistence::STATE_DB_FILENAME);
+    if !db_path.exists() {
+        if let Err(e) = std::fs::create_dir_all(&dev_dir) {
+            eprintln!("project_store[dev]: failed to create dev state dir: {e}");
+            return db_path;
+        }
+        let prod_path =
+            app_config_dir().join(crate::sqlite_persistence::STATE_DB_FILENAME);
+        if prod_path.exists() {
+            // VACUUM INTO produces a consistent snapshot that includes
+            // any uncommitted WAL data, so the dev copy is complete
+            // even when the production app is idle with a large WAL.
+            match rusqlite::Connection::open_with_flags(
+                &prod_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            ) {
+                Ok(conn) => {
+                    let sql =
+                        format!("VACUUM INTO '{}'", db_path.display());
+                    match conn.execute_batch(&sql) {
+                        Ok(()) => eprintln!(
+                            "project_store[dev]: seeded dev state from {:?} → {:?}",
+                            prod_path, db_path
+                        ),
+                        Err(e) => eprintln!(
+                            "project_store[dev]: VACUUM INTO failed ({e}); starting empty"
+                        ),
+                    }
+                }
+                Err(e) => eprintln!(
+                    "project_store[dev]: could not open production DB for seeding ({e}); \
+                     starting empty"
+                ),
+            }
+        }
+    }
+    db_path
 }
 
 pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {
