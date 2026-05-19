@@ -349,6 +349,7 @@ impl AnotherOneApp {
                     cx.stop_propagation();
                 }),
             )
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
                 this.handle_new_task_modal_key_down(ev, cx);
             }))

@@ -601,6 +601,7 @@ impl AnotherOneApp {
                     cx.notify();
                 }),
             )
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
                 this.handle_custom_action_modal_key_down(ev, cx);
             }))
