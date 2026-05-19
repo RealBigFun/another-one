@@ -2213,7 +2213,6 @@ impl AnotherOneApp {
 
         let task_id_str: gpui::SharedString =
             menu.task_id.clone().unwrap_or_default().into();
-        let registry = &self.control_registry;
 
         div()
             .w(px(TASK_MENU_W))
@@ -2238,7 +2237,7 @@ impl AnotherOneApp {
                     task_id: task_id_str.clone(),
                     kind: crate::control::TaskControl::Pin,
                 },
-                registry,
+                &self.control_registry,
                 move |this, _ev, _window, cx| {
                     this.sidebar_task_menu = None;
                     if let Some(task_id) = pin_task_id.as_deref() {
@@ -2263,7 +2262,7 @@ impl AnotherOneApp {
                     task_id: task_id_str.clone(),
                     kind: crate::control::TaskControl::NewTaskFromBranch,
                 },
-                registry,
+                &self.control_registry,
                 move |this, _ev, window, cx| {
                     this.sidebar_task_menu = None;
                     this.focus_handle.focus(window, cx);
@@ -2290,7 +2289,7 @@ impl AnotherOneApp {
                     task_id: task_id_str.clone(),
                     kind: crate::control::TaskControl::Rename,
                 },
-                registry,
+                &self.control_registry,
                 move |this, _ev, window, cx| {
                     this.sidebar_task_menu = None;
                     this.focus_handle.focus(window, cx);
@@ -2317,7 +2316,7 @@ impl AnotherOneApp {
                     task_id: task_id_str,
                     kind: crate::control::TaskControl::Delete,
                 },
-                registry,
+                &self.control_registry,
                 move |this, _ev, _window, cx| {
                     if let Some(task_id) = delete_task_id.clone() {
                         this.request_sidebar_task_delete(

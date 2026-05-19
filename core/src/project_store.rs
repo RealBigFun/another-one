@@ -1624,12 +1624,6 @@ impl ProjectStore {
             // first launch with a JSON, the existing state on every
             // launch after).
             let json_path = Self::config_path();
-            // In debug builds, use a per-worktree dev database so the
-            // debug binary doesn't compete with the production app for
-            // the exclusive flock on state.sqlite.  On first run the
-            // production DB is cloned via VACUUM INTO (captures WAL
-            // data) so projects are pre-populated.  Changes persist
-            // within the worktree between runs.
             #[cfg(debug_assertions)]
             let db_path = crate::project_store::dev_state_db_path();
             #[cfg(not(debug_assertions))]
@@ -3698,8 +3692,6 @@ pub(crate) fn app_config_dir() -> PathBuf {
 /// debug sessions.
 #[cfg(debug_assertions)]
 pub(crate) fn dev_state_db_path() -> PathBuf {
-    // Place the dev DB next to the running binary so each worktree's
-    // debug build gets its own isolated copy inside its own target/.
     let dev_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join(".another-one")))
@@ -3710,19 +3702,17 @@ pub(crate) fn dev_state_db_path() -> PathBuf {
             eprintln!("project_store[dev]: failed to create dev state dir: {e}");
             return db_path;
         }
-        let prod_path =
-            app_config_dir().join(crate::sqlite_persistence::STATE_DB_FILENAME);
+        let prod_path = crate::sqlite_persistence::default_state_db_path();
         if prod_path.exists() {
-            // VACUUM INTO produces a consistent snapshot that includes
-            // any uncommitted WAL data, so the dev copy is complete
-            // even when the production app is idle with a large WAL.
+            // VACUUM INTO captures uncommitted WAL data; plain file copy would miss it.
             match rusqlite::Connection::open_with_flags(
                 &prod_path,
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
                     | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
             ) {
                 Ok(conn) => {
-                    let sql = format!("VACUUM INTO '{}'", db_path.display());
+                    let escaped = db_path.display().to_string().replace('\'', "''");
+                    let sql = format!("VACUUM INTO '{escaped}'");
                     match conn.execute_batch(&sql) {
                         Ok(()) => eprintln!(
                             "project_store[dev]: seeded dev state from {:?} → {:?}",
