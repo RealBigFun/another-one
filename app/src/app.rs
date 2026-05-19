@@ -1840,8 +1840,10 @@ pub struct AnotherOneApp {
     /// Whether the refresh timer has been started.
     pub(crate) refresh_timer_started: bool,
     /// Per-frame registry of interactive controls. Cleared at the top of
-    /// `render` and re-populated during element construction.
-    pub(crate) control_registry: crate::control::ControlRegistry,
+    /// `render` and re-populated during element construction. Wrapped in
+    /// `RefCell` so `&self` render helpers can register without needing
+    /// `&mut self` throughout the entire element-building call chain.
+    pub(crate) control_registry: std::cell::RefCell<crate::control::ControlRegistry>,
     /// Toolbar git actions currently running in the background, keyed by originating project id.
     pub(crate) active_git_actions: HashMap<String, ActiveToolbarGitAction>,
     /// Pending right-sidebar git mutations keyed by project id.
@@ -4913,7 +4915,7 @@ impl AnotherOneApp {
             focus_handle,
             titlebar_drag_pending: false,
             refresh_timer_started: false,
-            control_registry: crate::control::ControlRegistry::default(),
+            control_registry: std::cell::RefCell::new(crate::control::ControlRegistry::default()),
             active_git_actions: HashMap::new(),
             pending_changed_files_git_mutations: HashMap::new(),
             changed_files_git_mutation_sender,
@@ -17725,7 +17727,7 @@ fn word_start_before(text: &str, cursor: usize) -> usize {
 impl Render for AnotherOneApp {
     #[hotpath::measure]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.control_registry.clear();
+        self.control_registry.borrow_mut().clear();
         let view = cx.entity().clone();
         // Start terminal refresh timer once.
         if !self.refresh_timer_started {

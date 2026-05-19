@@ -9,17 +9,23 @@
 //! render and re-populated during element construction, so its contents
 //! always reflect the live frame.
 //!
-//! The `test-harness` feature exposes `simulate_click` / `simulate_toggle`
-//! on `AnotherOneApp`, enabling interaction tests that do not require a
-//! real window. See the `test-harness` gate in `app/src/lib.rs`.
+//! `AnotherOneApp` holds the registry as a `RefCell<ControlRegistry>` so
+//! that `&self` render helpers can register without requiring `&mut self`
+//! throughout the entire element-building call chain.
+//!
+//! The `test-harness` feature will expose `simulate_click` / `simulate_toggle`
+//! on `AnotherOneApp`, enabling interaction tests without a real window.
+//! See the `test-harness` gate in `app/src/lib.rs`.
 //!
 //! ## Migration order (from issue #198)
 //!
-//! 1. ✅ Types defined here (no call sites yet).
-//! 2. `control_registry` field added to `AnotherOneApp`, cleared in `render`.
-//! 3. Convert `sidebar_task_menu_item`, `settings_general_button`,
-//!    `settings_theme_button` one at a time.
+//! 1. ✅ Types defined here.
+//! 2. ✅ `control_registry: RefCell<ControlRegistry>` added to `AnotherOneApp`,
+//!    cleared at the top of `render`.
+//! 3. ✅ Convert `sidebar_task_menu_item`, `settings_general_button`,
+//!    `settings_theme_button` — each registers metadata; handler is `None`.
 //! 4. Add `simulate_click` / `simulate_toggle` behind `test-harness`.
+//!    Populate `handler` so the test surface can invoke controls.
 //! 5. Expand to left sidebar → settings → header → project panes.
 
 use gpui::SharedString;
@@ -59,26 +65,32 @@ pub(crate) enum TaskControl {
     Delete,
     Pin,
     Open,
+    NewTaskFromBranch,
 }
 
 // ---- ControlEntry -------------------------------------------------------
 
 /// A single registered control for the current frame.
+///
+/// `handler` is `None` in the current migration step; it will be populated
+/// in step 4 when `simulate_click` / `simulate_toggle` land.
 pub(crate) struct ControlEntry {
     pub(crate) id: ControlId,
     pub(crate) label: SharedString,
     pub(crate) kind: ControlKind,
     pub(crate) enabled: bool,
-    /// Stored action invoked by `simulate_click` / `simulate_toggle`.
-    /// `None` for controls that drive mutations directly via closure rather
-    /// than a GPUI `Action`.
-    pub(crate) handler: Option<Box<dyn FnMut(&mut crate::app::AnotherOneApp, &mut gpui::Context<crate::app::AnotherOneApp>)>>,
+    /// Invoked by `simulate_click` / `simulate_toggle` in tests. `None`
+    /// until step 4 of the migration.
+    pub(crate) handler: Option<Box<dyn FnMut()>>,
 }
 
 // ---- ControlRegistry ----------------------------------------------------
 
 /// Per-frame registry of all interactive controls. Cleared at the top of
 /// `AnotherOneApp::render` and re-populated during element construction.
+///
+/// `AnotherOneApp` stores this inside a `RefCell` so that `&self` render
+/// helpers can register without `&mut self` threading through the whole tree.
 #[derive(Default)]
 pub(crate) struct ControlRegistry {
     entries: Vec<ControlEntry>,

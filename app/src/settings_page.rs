@@ -1551,6 +1551,7 @@ impl AnotherOneApp {
                         button_bg,
                         button_hover,
                         active_button_bg,
+                        &self.control_registry,
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.set_theme_mode(ThemeMode::System, cx);
                             cx.stop_propagation();
@@ -1564,6 +1565,7 @@ impl AnotherOneApp {
                         button_bg,
                         button_hover,
                         active_button_bg,
+                        &self.control_registry,
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.set_theme_mode(ThemeMode::Light, cx);
                             cx.stop_propagation();
@@ -1577,6 +1579,7 @@ impl AnotherOneApp {
                         button_bg,
                         button_hover,
                         active_button_bg,
+                        &self.control_registry,
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.set_theme_mode(ThemeMode::Dark, cx);
                             cx.stop_propagation();
@@ -1789,6 +1792,7 @@ impl AnotherOneApp {
                         button_bg,
                         button_hover,
                         settings_text_primary(mode),
+                        &self.control_registry,
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.updater.send(UpdaterCommand::CheckNow);
                             cx.stop_propagation();
@@ -1811,6 +1815,7 @@ impl AnotherOneApp {
                             button_hover
                         },
                         gpui::white(),
+                        &self.control_registry,
                         cx.listener(|this, _ev: &MouseDownEvent, _window, cx| {
                             this.updater.send(UpdaterCommand::Install);
                             cx.stop_propagation();
@@ -3854,11 +3859,19 @@ fn settings_general_button<F>(
     bg: gpui::Hsla,
     hover_bg: gpui::Hsla,
     enabled_text: gpui::Hsla,
+    registry: &std::cell::RefCell<crate::control::ControlRegistry>,
     on_click: F,
 ) -> impl IntoElement
 where
     F: Fn(&MouseDownEvent, &mut gpui::Window, &mut App) + 'static,
 {
+    registry.borrow_mut().register(crate::control::ControlEntry {
+        id: crate::control::ControlId::Static(id),
+        label: label.into(),
+        kind: crate::control::ControlKind::Button,
+        enabled,
+        handler: None,
+    });
     let base = div()
         .id(id)
         .px(px(12.))
@@ -3894,11 +3907,19 @@ fn settings_theme_button<F>(
     bg: gpui::Hsla,
     hover_bg: gpui::Hsla,
     selected_bg: gpui::Hsla,
+    registry: &std::cell::RefCell<crate::control::ControlRegistry>,
     on_click: F,
 ) -> impl IntoElement
 where
     F: Fn(&MouseDownEvent, &mut gpui::Window, &mut App) + 'static,
 {
+    registry.borrow_mut().register(crate::control::ControlEntry {
+        id: crate::control::ControlId::Static(id),
+        label: label.into(),
+        kind: crate::control::ControlKind::Toggle { selected },
+        enabled: true,
+        handler: None,
+    });
     div()
         .id(id)
         .px(px(12.))
