@@ -1887,10 +1887,14 @@ pub struct AnotherOneApp {
     project_issue_discovery_receiver: broadcast::Receiver<ProjectIssueDiscoveryReply>,
     /// Project ids for which a discovery request is in-flight.
     pub(crate) project_issue_discovery_requests: HashSet<String>,
-    /// Cached discovery results keyed by project_id.
+    /// Cached discovery results keyed by project_id, stamped with the time they
+    /// were populated so stale entries can be evicted on the next request.
     pub(crate) project_issue_discovery_cache: HashMap<
         String,
-        another_one_core::git_service::ProjectIssueDiscoveryReply,
+        (
+            std::time::Instant,
+            another_one_core::git_service::ProjectIssueDiscoveryReply,
+        ),
     >,
     /// Pending linked issue for a worktree task about to be inserted
     /// (bridging the gap between submit_new_task_modal and the
@@ -12638,15 +12642,21 @@ impl AnotherOneApp {
     }
 
     /// Kick off a GitHub issue discovery probe for `project_id` if one is not
-    /// already in flight and the result is not already cached.
+    /// already in flight and the result is not already cached (or the cached
+    /// entry is older than `ISSUE_DISCOVERY_TTL`).
     pub(crate) fn request_project_issue_discovery(
         &mut self,
         project_id: &str,
         project_path: &std::path::Path,
     ) {
-        if self.project_issue_discovery_cache.contains_key(project_id)
-            || self.project_issue_discovery_requests.contains(project_id)
-        {
+        const ISSUE_DISCOVERY_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+        if let Some((cached_at, _)) = self.project_issue_discovery_cache.get(project_id) {
+            if cached_at.elapsed() < ISSUE_DISCOVERY_TTL {
+                return;
+            }
+            self.project_issue_discovery_cache.remove(project_id);
+        }
+        if self.project_issue_discovery_requests.contains(project_id) {
             return;
         }
         self.project_issue_discovery_requests
@@ -12676,7 +12686,7 @@ impl AnotherOneApp {
             self.project_issue_discovery_requests
                 .remove(&reply.project_id);
             self.project_issue_discovery_cache
-                .insert(reply.project_id.clone(), reply);
+                .insert(reply.project_id.clone(), (std::time::Instant::now(), reply));
             should_notify = true;
         }
         should_notify

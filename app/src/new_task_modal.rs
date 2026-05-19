@@ -303,7 +303,8 @@ impl AnotherOneApp {
         // Resolve issue availability from app-level cache.
         let issue_discovery = self
             .project_issue_discovery_cache
-            .get(&state.project_id);
+            .get(&state.project_id)
+            .map(|(_, reply)| reply);
         let issue_row_visible = match issue_discovery.map(|r| &r.availability) {
             None => false,
             Some(another_one_core::git_actions::GitHubIssueAvailability::Hidden(_)) => false,
@@ -2115,7 +2116,7 @@ impl AnotherOneApp {
                                                     let issue_record = this
                                                         .project_issue_discovery_cache
                                                         .get(&state.project_id)
-                                                        .and_then(|r| r.issues.as_ref().ok())
+                                                        .and_then(|(_, r)| r.issues.as_ref().ok())
                                                         .and_then(|issues| {
                                                             issues
                                                                 .iter()
