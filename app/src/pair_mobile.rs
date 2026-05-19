@@ -137,6 +137,7 @@ impl AnotherOneApp {
                     cx.notify();
                 }),
             )
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .child(
                 div()
                     .id("pair-mobile-body")
