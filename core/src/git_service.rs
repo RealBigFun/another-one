@@ -258,15 +258,16 @@ pub struct ProjectGitHubLinkReply {
     pub github_url: Option<String>,
 }
 
-/// Resolve a project's GitHub remote URL in the background.
+/// Resolve a project's GitHub remote URL in the background. Calls
+/// `on_complete` from a worker thread once the lookup finishes.
 pub fn spawn_github_link_lookup(
-    sender: broadcast::Sender<ProjectGitHubLinkReply>,
     project_id: String,
     project_path: PathBuf,
+    on_complete: impl FnOnce(ProjectGitHubLinkReply) + Send + 'static,
 ) {
     thread::spawn(move || {
         let github_url = find_github_repo_url(&project_path);
-        let _ = sender.send(ProjectGitHubLinkReply {
+        on_complete(ProjectGitHubLinkReply {
             project_id,
             github_url,
         });
