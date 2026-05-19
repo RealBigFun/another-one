@@ -40,6 +40,3 @@ app/android/hs_err_pid*.log
 
 # Project-root core dumps from panicking child processes.
 /core.[0-9]*
-
-# Per-worktree dev state DB — seeded from production on first debug run.
-.another-one-dev/
