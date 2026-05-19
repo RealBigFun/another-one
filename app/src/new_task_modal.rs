@@ -104,6 +104,54 @@ fn focus_col() -> gpui::Hsla {
     new_task_theme().focus_ring
 }
 
+/// Shared card element for a GitHub issue. Returns a `Div` so callers can
+/// attach `.id(...)` and event handlers before rendering.
+pub(crate) fn issue_card(number: u64, title: SharedString, date: SharedString) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .px(px(10.))
+        .py(px(8.))
+        .rounded(px(6.))
+        .bg(subtle_bg())
+        .cursor_pointer()
+        .hover(|s| s.bg(hover_bg()))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .child(
+                    svg()
+                        .path("assets/icons/icons__github.svg")
+                        .size(px(12.))
+                        .text_color(muted_col()),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(muted_col())
+                        .child(format!("#{number}")),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(13.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(body_col())
+                .overflow_hidden()
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(muted_col())
+                .child(date),
+        )
+}
+
 fn primary_button_bg() -> gpui::Hsla {
     match theme::current_terminal_theme() {
         ResolvedTheme::Light => rgb(0x1f2328).into(),
@@ -2023,7 +2071,7 @@ impl AnotherOneApp {
                     let mut dropdown = div()
                         .id("new-task-issue-dropdown")
                         .mt(px(4.))
-                        .max_h(px(200.))
+                        .max_h(px(320.))
                         .rounded_md()
                         .bg(card_bg())
                         .border_1()
@@ -2031,7 +2079,9 @@ impl AnotherOneApp {
                         .shadow_md()
                         .overflow_y_scroll()
                         .flex()
-                        .flex_col();
+                        .flex_col()
+                        .gap(px(4.))
+                        .pb(px(4.));
 
                     // Filter input
                     dropdown = dropdown.child(
@@ -2094,16 +2144,8 @@ impl AnotherOneApp {
                                 .to_string()
                                 .into();
                             dropdown = dropdown.child(
-                                div()
+                                issue_card(number, title, date)
                                     .id(("new-task-issue-row", number))
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .h(px(36.))
-                                    .px(px(12.))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(hover_bg()))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(
@@ -2111,7 +2153,6 @@ impl AnotherOneApp {
                                                 if let Some(state) =
                                                     this.new_task_modal.as_mut()
                                                 {
-                                                    // Find the issue in the cache
                                                     let issue_record = this
                                                         .project_issue_discovery_cache
                                                         .get(&state.project_id)
@@ -2123,8 +2164,6 @@ impl AnotherOneApp {
                                                                 .cloned()
                                                         });
                                                     if let Some(record) = issue_record {
-                                                        // Prefill task name if user hasn't
-                                                        // edited it
                                                         if state.task_name.is_empty()
                                                             || state.task_name
                                                                 == state.generated_task_name
@@ -2146,28 +2185,6 @@ impl AnotherOneApp {
                                                 cx.notify();
                                             },
                                         ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(rems(12. / 16.))
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(body_col())
-                                            .child(format!("#{number}")),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .text_size(rems(12. / 16.))
-                                            .text_color(body_col())
-                                            .overflow_hidden()
-                                            .child(title),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(rems(11. / 16.))
-                                            .text_color(muted_col())
-                                            .child(date),
                                     ),
                             );
                         }
