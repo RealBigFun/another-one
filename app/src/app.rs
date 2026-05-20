@@ -509,12 +509,9 @@ fn fixed_title_for_project_action(action: &ProjectAction) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-// Moved to `another_one_core::git_service::GitRefreshReply`; the
-// struct stays named the same at this path so existing call sites
-// keep compiling, but the body + the spawn worker now live in core.
-use another_one_core::git_service::{
-    ChangedFileDiffReply, GitRefreshReply, RemoteBranchRefreshReply,
-};
+// Moved to `another_one_core::git_service`; re-exported here so
+// existing call sites keep compiling.
+use another_one_core::git_service::{GitRefreshReply, RemoteBranchRefreshReply};
 
 enum GitActionReply {
     Progress {
@@ -653,19 +650,15 @@ impl PendingChangedFilesGitMutations {
     }
 }
 
-// Worker bodies + reply types moved to core::project_service;
-// re-exported at these paths so existing channel fields and drain
-// loops keep compiling. Only the two Reply types are reached from
-// outside the drain loop; Success/Failure are inspected via
-// `reply.result` at the call site.
-use another_one_core::project_service::{ProjectAddReply, TaskCreationReply};
+// Worker body + reply type moved to core::project_service.
+use another_one_core::project_service::TaskCreationReply;
 
-// All four github-lookup reply types + their spawn workers live in
-// another_one_core::git_service now; re-exported here so existing
+// GitHub-lookup reply types + their spawn workers live in
+// another_one_core::git_service; re-exported here so existing
 // channel-field types and drain-loop field accesses keep compiling.
 use another_one_core::git_service::{
-    ProjectCheckRunsReply, ProjectGitHubLinkReply, ProjectIssueDiscoveryReply,
-    ProjectPagePullRequestsReply, ProjectPullRequestReply,
+    ProjectCheckRunsReply, ProjectIssueDiscoveryReply, ProjectPagePullRequestsReply,
+    ProjectPullRequestReply,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1846,6 +1839,11 @@ pub struct AnotherOneApp {
     pub(crate) titlebar_drag_pending: bool,
     /// Whether the refresh timer has been started.
     pub(crate) refresh_timer_started: bool,
+    /// Per-frame registry of interactive controls. Cleared at the top of
+    /// `render` and re-populated during element construction. Wrapped in
+    /// `RefCell` so `&self` render helpers can register without needing
+    /// `&mut self` throughout the entire element-building call chain.
+    pub(crate) control_registry: std::cell::RefCell<crate::control::ControlRegistry>,
     /// Toolbar git actions currently running in the background, keyed by originating project id.
     pub(crate) active_git_actions: HashMap<String, ActiveToolbarGitAction>,
     /// Pending right-sidebar git mutations keyed by project id.
@@ -1856,8 +1854,6 @@ pub struct AnotherOneApp {
     changed_files_git_mutation_receiver: broadcast::Receiver<ChangedFilesGitMutationReply>,
     /// Active changed-file diff load result for the main pane.
     pub(crate) git_diff_state: Option<GitDiffPaneState>,
-    /// Receiver for the in-flight changed-file diff load.
-    git_diff_receiver: Option<broadcast::Receiver<ChangedFileDiffReply>>,
     /// Lifecycle slot for the in-flight automatic git refresh result.
     git_refresh_operation: BroadcastOperation<GitRefreshReply>,
     /// Lifecycle slot for refreshing remote refs while the new-task modal is open.
@@ -1869,16 +1865,12 @@ pub struct AnotherOneApp {
         Option<broadcast::Receiver<another_one_core::project_service::BranchCreationReply>>,
     /// UI context for the in-flight task creation worker.
     pending_task_launch: Option<PendingTaskLaunch>,
-    /// Receiver for the in-flight add-project background preparation result.
-    project_add_receiver: Option<broadcast::Receiver<ProjectAddReply>>,
+    /// True while a background add-project preparation is in flight.
+    project_add_in_progress: bool,
     /// Sender used by background worktree deletion operations.
     pub(crate) worktree_deletion_sender: mpsc::Sender<WorktreeDeletionReply>,
     /// Receiver for background worktree deletion operations.
     worktree_deletion_receiver: mpsc::Receiver<WorktreeDeletionReply>,
-    /// Sender used by background project GitHub-link lookups.
-    project_github_link_sender: broadcast::Sender<ProjectGitHubLinkReply>,
-    /// Receiver for background project GitHub-link lookups.
-    project_github_link_receiver: broadcast::Receiver<ProjectGitHubLinkReply>,
     /// Cached pull request metadata keyed by `project_id:branch_name`.
     pub(crate) project_pull_requests: HashMap<String, crate::git_actions::PullRequestStatus>,
     /// Sender used by background pull-request lookups.
@@ -4798,7 +4790,6 @@ impl AnotherOneApp {
         // replies (render tick drains every 16 ms) but leaves enough
         // headroom that a future daemon/mobile subscriber can briefly
         // pause without triggering `Lagged`.
-        let (project_github_link_sender, project_github_link_receiver) = broadcast::channel(64);
         let (project_pull_request_sender, project_pull_request_receiver) = broadcast::channel(64);
         let (project_page_pull_requests_sender, project_page_pull_requests_receiver) =
             broadcast::channel(64);
@@ -4924,22 +4915,20 @@ impl AnotherOneApp {
             focus_handle,
             titlebar_drag_pending: false,
             refresh_timer_started: false,
+            control_registry: std::cell::RefCell::new(crate::control::ControlRegistry::default()),
             active_git_actions: HashMap::new(),
             pending_changed_files_git_mutations: HashMap::new(),
             changed_files_git_mutation_sender,
             changed_files_git_mutation_receiver,
             git_diff_state: None,
-            git_diff_receiver: None,
             git_refresh_operation: BroadcastOperation::default(),
             new_task_branch_refresh_operation: BroadcastOperation::default(),
             task_creation_receiver: None,
             branch_creation_receiver: None,
             pending_task_launch: None,
-            project_add_receiver: None,
+            project_add_in_progress: false,
             worktree_deletion_sender,
             worktree_deletion_receiver,
-            project_github_link_sender,
-            project_github_link_receiver,
             project_pull_requests: HashMap::new(),
             project_pull_request_sender,
             project_pull_request_receiver,
@@ -8886,6 +8875,18 @@ impl AnotherOneApp {
                 Ok(AppEvent::DaemonHandleResolved(result)) => {
                     dirty |= self.handle_daemon_handle_resolved(result, cx);
                 }
+                Ok(AppEvent::ChangedFileDiffLoaded { selection, result }) => {
+                    dirty |= self.handle_changed_file_diff_loaded(selection, result, cx);
+                }
+                Ok(AppEvent::ProjectAddCompleted { result }) => {
+                    dirty |= self.handle_project_add_completed(result, cx);
+                }
+                Ok(AppEvent::ProjectGitHubLinkReplyReceived {
+                    project_id,
+                    github_url,
+                }) => {
+                    dirty |= self.handle_project_github_link_reply(project_id, github_url);
+                }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             }
@@ -8976,6 +8977,89 @@ impl AnotherOneApp {
                 true
             }
         }
+    }
+
+    fn handle_changed_file_diff_loaded(
+        &mut self,
+        selection: crate::project_store::GitDiffSelection,
+        result: Result<crate::project_store::GitDiff, String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let active_selection = self.workspace_pane.read(cx).active_git_diff.clone();
+        if active_selection.as_ref() != Some(&selection) {
+            return false;
+        }
+        self.git_diff_state = Some(match result {
+            Ok(diff) => GitDiffPaneState::Loaded(Arc::new(diff)),
+            Err(error) => {
+                self.show_error_toast(error.clone(), cx);
+                GitDiffPaneState::Failed(error)
+            }
+        });
+        true
+    }
+
+    fn handle_project_add_completed(
+        &mut self,
+        result: Result<crate::project_store::PreparedProject, String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.project_add_in_progress = false;
+        match result {
+            Ok(project) => {
+                let project_name = project.project.name.clone();
+                let project_id = project.project.id.clone();
+                let added = matches!(
+                    self.apply_mutation(
+                        another_one_core::state_authority::Mutation::InsertPreparedProject(
+                            project.clone(),
+                        ),
+                    ),
+                    another_one_core::state_authority::MutationOutcome::Changed(true)
+                );
+                if added {
+                    self.workspace_pane.update(cx, |workspace, cx| {
+                        workspace.activate_project_page(project_id.clone(), cx);
+                    });
+                    self.show_success_toast(
+                        format!("Added {} to the sidebar.", project_name),
+                        cx,
+                    );
+                } else {
+                    self.show_info_toast(
+                        format!("{} is already in the sidebar.", project_name),
+                        cx,
+                    );
+                }
+            }
+            Err(error) => {
+                self.show_error_toast(error, cx);
+            }
+        }
+        true
+    }
+
+    fn handle_project_github_link_reply(
+        &mut self,
+        project_id: String,
+        github_url: Option<String>,
+    ) -> bool {
+        self.project_github_link_requests.remove(&project_id);
+        self.project_github_link_checked.insert(project_id.clone());
+        if let Some(url) = github_url {
+            if self
+                .project_github_links
+                .get(&project_id)
+                .map(String::as_str)
+                != Some(url.as_str())
+            {
+                self.project_github_links.insert(project_id, url);
+                return true;
+            }
+        } else if self.project_github_links.remove(&project_id).is_some() {
+            return true;
+        }
+        false
     }
 
     /// Step 5 of rc/terminal-hardening: dispatch a
@@ -9991,7 +10075,7 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn begin_add_project(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        if self.project_add_receiver.is_some() {
+        if self.project_add_in_progress {
             self.show_info_toast("A project is already being added.", cx);
             return;
         }
@@ -10002,8 +10086,12 @@ impl AnotherOneApp {
             .unwrap_or_else(|| path.display().to_string());
         self.show_info_toast(format!("Adding {}...", project_label), cx);
 
-        self.project_add_receiver =
-            Some(another_one_core::project_service::spawn_project_add(path));
+        self.project_add_in_progress = true;
+        let tx = self.app_event_tx.clone();
+        std::thread::spawn(move || {
+            let result = crate::project_store::prepare_project(&path);
+            let _ = tx.send(crate::app_event::AppEvent::ProjectAddCompleted { result });
+        });
         cx.notify();
     }
 
@@ -10296,7 +10384,6 @@ impl AnotherOneApp {
 
     pub(crate) fn close_active_tab_shortcut(&mut self, cx: &mut Context<Self>) -> bool {
         if self.workspace_pane.read(cx).active_git_diff.is_some() {
-            self.git_diff_receiver = None;
             self.git_diff_state = None;
             self.workspace_pane.update(cx, |workspace, cx| {
                 workspace.active_git_diff = None;
@@ -11487,10 +11574,11 @@ impl AnotherOneApp {
             cx.notify();
         });
         self.git_diff_state = Some(GitDiffPaneState::Loading);
-        self.git_diff_receiver = Some(another_one_core::git_service::spawn_changed_file_diff_load(
-            selection,
-            project_path,
-        ));
+        let tx = self.app_event_tx.clone();
+        std::thread::spawn(move || {
+            let result = crate::project_store::read_changed_file_diff(&project_path, selection.clone());
+            let _ = tx.send(crate::app_event::AppEvent::ChangedFileDiffLoaded { selection, result });
+        });
         cx.notify();
     }
 
@@ -11544,7 +11632,6 @@ impl AnotherOneApp {
     }
 
     pub(crate) fn clear_changed_file_diff_state(&mut self, cx: &mut Context<Self>) {
-        self.git_diff_receiver = None;
         self.git_diff_state = None;
         cx.notify();
     }
@@ -11972,40 +12059,6 @@ impl AnotherOneApp {
         should_notify
     }
 
-    fn drain_changed_file_diff(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.git_diff_receiver.as_mut() else {
-            return false;
-        };
-
-        match receiver.try_recv() {
-            Ok(reply) => {
-                self.git_diff_receiver = None;
-                let active_selection = self.workspace_pane.read(cx).active_git_diff.clone();
-                if active_selection.as_ref() != Some(&reply.selection) {
-                    return false;
-                }
-
-                self.git_diff_state = Some(match reply.result {
-                    Ok(diff) => GitDiffPaneState::Loaded(Arc::new(diff)),
-                    Err(error) => {
-                        self.show_error_toast(error.clone(), cx);
-                        GitDiffPaneState::Failed(error)
-                    }
-                });
-                true
-            }
-            Err(broadcast::error::TryRecvError::Empty) => false,
-            Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                log::warn!("changed_file_diff drain lagged {n} messages");
-                false
-            }
-            Err(broadcast::error::TryRecvError::Closed) => {
-                self.git_diff_receiver = None;
-                false
-            }
-        }
-    }
-
     fn drain_task_creation(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(receiver) = self.task_creation_receiver.as_mut() else {
             return false;
@@ -12214,60 +12267,6 @@ impl AnotherOneApp {
         }
     }
 
-    fn drain_project_add(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(receiver) = self.project_add_receiver.as_mut() else {
-            return false;
-        };
-
-        match receiver.try_recv() {
-            Ok(reply) => {
-                self.project_add_receiver = None;
-                match reply.result {
-                    Ok(project) => {
-                        let project_name = project.project.name.clone();
-                        let project_id = project.project.id.clone();
-                        let added = matches!(
-                            self.apply_mutation(
-                                another_one_core::state_authority::Mutation::InsertPreparedProject(
-                                    project.clone(),
-                                ),
-                            ),
-                            another_one_core::state_authority::MutationOutcome::Changed(true)
-                        );
-                        if added {
-                            self.workspace_pane.update(cx, |workspace, cx| {
-                                workspace.activate_project_page(project_id.clone(), cx);
-                            });
-                            self.show_success_toast(
-                                format!("Added {} to the sidebar.", project_name),
-                                cx,
-                            );
-                        } else {
-                            self.show_info_toast(
-                                format!("{} is already in the sidebar.", project_name),
-                                cx,
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        self.show_error_toast(error, cx);
-                    }
-                }
-                true
-            }
-            Err(broadcast::error::TryRecvError::Empty) => false,
-            Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                log::warn!("project_add drain lagged {n} messages");
-                false
-            }
-            Err(broadcast::error::TryRecvError::Closed) => {
-                self.project_add_receiver = None;
-                self.show_error_toast("The add project process did not complete.", cx);
-                true
-            }
-        }
-    }
-
     fn drain_worktree_deletions(&mut self, cx: &mut Context<Self>) -> bool {
         let mut should_notify = false;
 
@@ -12363,61 +12362,17 @@ impl AnotherOneApp {
 
         self.project_github_link_requests
             .insert(project_id.to_string());
+        let tx = self.app_event_tx.clone();
         another_one_core::git_service::spawn_github_link_lookup(
-            self.project_github_link_sender.clone(),
             project_id.to_string(),
             project_path.to_path_buf(),
+            move |reply| {
+                let _ = tx.send(crate::app_event::AppEvent::ProjectGitHubLinkReplyReceived {
+                    project_id: reply.project_id,
+                    github_url: reply.github_url,
+                });
+            },
         );
-    }
-
-    fn drain_project_github_link_lookup(&mut self) -> bool {
-        let mut should_notify = false;
-
-        loop {
-            let reply = match self.project_github_link_receiver.try_recv() {
-                Ok(reply) => reply,
-                Err(broadcast::error::TryRecvError::Empty)
-                | Err(broadcast::error::TryRecvError::Closed) => break,
-                Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    // Lost `n` replies. We can't know which project ids
-                    // were dropped, so wipe the in-flight set; the next
-                    // render tick will re-request any still-needed
-                    // lookups. Without this, a dropped reply strands
-                    // its project id in the set forever and
-                    // `request_project_github_link_lookup` early-returns
-                    // for that project until app restart.
-                    log::warn!(
-                        "project_github_link drain lagged {n} messages; clearing in-flight set"
-                    );
-                    self.project_github_link_requests.clear();
-                    continue;
-                }
-            };
-            self.project_github_link_requests.remove(&reply.project_id);
-            self.project_github_link_checked
-                .insert(reply.project_id.clone());
-
-            if let Some(github_url) = reply.github_url {
-                if self
-                    .project_github_links
-                    .get(&reply.project_id)
-                    .map(String::as_str)
-                    != Some(github_url.as_str())
-                {
-                    self.project_github_links
-                        .insert(reply.project_id, github_url);
-                    should_notify = true;
-                }
-            } else if self
-                .project_github_links
-                .remove(&reply.project_id)
-                .is_some()
-            {
-                should_notify = true;
-            }
-        }
-
-        should_notify
     }
 
     fn request_project_pull_request_lookup(
@@ -17772,6 +17727,7 @@ fn word_start_before(text: &str, cursor: usize) -> usize {
 impl Render for AnotherOneApp {
     #[hotpath::measure]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.control_registry.borrow_mut().clear();
         let view = cx.entity().clone();
         // Start terminal refresh timer once.
         if !self.refresh_timer_started {
@@ -17793,14 +17749,11 @@ impl Render for AnotherOneApp {
                             let mut sidebar_changed = false;
                             sidebar_changed |= this.drain_git_actions(cx);
                             sidebar_changed |= this.drain_changed_files_git_mutations(cx);
-                            should_notify |= this.drain_changed_file_diff(cx);
                             sidebar_changed |= this.drain_git_refresh(cx);
                             should_notify |= this.drain_new_task_branch_refresh(cx);
                             should_notify |= this.drain_task_creation(cx);
                             should_notify |= this.drain_branch_creation(cx);
-                            should_notify |= this.drain_project_add(cx);
                             should_notify |= this.drain_worktree_deletions(cx);
-                            should_notify |= this.drain_project_github_link_lookup();
                             should_notify |= this.drain_project_pull_request_lookup(cx);
                             should_notify |= this.drain_project_page_pull_requests(cx);
                             sidebar_changed |= this.drain_project_check_runs_lookup(cx);

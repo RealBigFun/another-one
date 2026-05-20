@@ -53,4 +53,30 @@ pub(crate) enum AppEvent {
     /// thread boundary. After this fires, no further events of this
     /// variant arrive.
     DaemonHandleResolved(Result<daemon::EndpointHandle, String>),
+
+    /// A background changed-file diff load completed. Only applied if
+    /// the active `workspace_pane.active_git_diff` still matches
+    /// `selection`; stale replies are silently dropped.
+    ChangedFileDiffLoaded {
+        selection: crate::project_store::GitDiffSelection,
+        result: Result<crate::project_store::GitDiff, String>,
+    },
+
+    /// A background add-project preparation completed. `result` is
+    /// `Ok(prepared)` or `Err(message)`; on success the handler folds
+    /// the project into `project_store`, activates its page, and shows
+    /// a success toast — or an info toast if the project was already
+    /// present (in which case the page is not re-activated).
+    ProjectAddCompleted {
+        result: Result<crate::project_store::PreparedProject, String>,
+    },
+
+    /// A background project GitHub-link lookup completed. The handler
+    /// updates `project_github_links`, clears the in-flight entry in
+    /// `project_github_link_requests`, and adds the project to
+    /// `project_github_link_checked` to permanently suppress re-requests.
+    ProjectGitHubLinkReplyReceived {
+        project_id: String,
+        github_url: Option<String>,
+    },
 }

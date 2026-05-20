@@ -1624,6 +1624,9 @@ impl ProjectStore {
             // first launch with a JSON, the existing state on every
             // launch after).
             let json_path = Self::config_path();
+            #[cfg(debug_assertions)]
+            let db_path = crate::project_store::dev_state_db_path();
+            #[cfg(not(debug_assertions))]
             let db_path = crate::sqlite_persistence::default_state_db_path();
             if let Err(err) = crate::sqlite_persistence::migrate_from_json(&json_path, &db_path) {
                 eprintln!("project_store: SQLite migration failed: {err}");
@@ -3676,6 +3679,58 @@ pub(crate) fn app_config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("another-one")
+}
+
+/// Returns the dev-only state DB path for debug builds.
+///
+/// Derived at runtime from the running binary's location so it lands
+/// inside `target/debug/` — already gitignored and automatically
+/// removed when the worktree or `cargo clean` clears the target dir.
+/// On first run the production `state.sqlite` is cloned via
+/// `VACUUM INTO` (captures WAL data) so projects are pre-populated.
+/// Subsequent runs reuse the copy, so mutations persist between
+/// debug sessions.
+#[cfg(debug_assertions)]
+pub(crate) fn dev_state_db_path() -> PathBuf {
+    let dev_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(".another-one")))
+        .unwrap_or_else(|| app_config_dir());
+    let db_path = dev_dir.join(crate::sqlite_persistence::STATE_DB_FILENAME);
+    if !db_path.exists() {
+        if let Err(e) = std::fs::create_dir_all(&dev_dir) {
+            eprintln!("project_store[dev]: failed to create dev state dir: {e}");
+            return db_path;
+        }
+        let prod_path = crate::sqlite_persistence::default_state_db_path();
+        if prod_path.exists() {
+            // VACUUM INTO captures uncommitted WAL data; plain file copy would miss it.
+            match rusqlite::Connection::open_with_flags(
+                &prod_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            ) {
+                Ok(conn) => {
+                    let escaped = db_path.display().to_string().replace('\'', "''");
+                    let sql = format!("VACUUM INTO '{escaped}'");
+                    match conn.execute_batch(&sql) {
+                        Ok(()) => eprintln!(
+                            "project_store[dev]: seeded dev state from {:?} → {:?}",
+                            prod_path, db_path
+                        ),
+                        Err(e) => eprintln!(
+                            "project_store[dev]: VACUUM INTO failed ({e}); starting empty"
+                        ),
+                    }
+                }
+                Err(e) => eprintln!(
+                    "project_store[dev]: could not open production DB for seeding ({e}); \
+                     starting empty"
+                ),
+            }
+        }
+    }
+    db_path
 }
 
 pub fn prepare_project(folder: &Path) -> Result<PreparedProject, String> {

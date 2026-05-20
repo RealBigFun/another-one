@@ -2130,9 +2130,18 @@ impl AnotherOneApp {
         icon_path: &'static str,
         label: SharedString,
         style: SidebarTaskMenuItemStyle,
+        control_id: crate::control::ControlId,
+        registry: &std::cell::RefCell<crate::control::ControlRegistry>,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        registry.borrow_mut().register(crate::control::ControlEntry {
+            id: control_id,
+            label: label.clone(),
+            kind: crate::control::ControlKind::Button,
+            enabled: true,
+            handler: None,
+        });
         div()
             .id(button_id)
             .flex()
@@ -2202,6 +2211,9 @@ impl AnotherOneApp {
             "Delete this direct task from the sidebar"
         };
 
+        let task_id_str: gpui::SharedString =
+            menu.task_id.clone().unwrap_or_default().into();
+
         div()
             .w(px(TASK_MENU_W))
             .rounded_md()
@@ -2221,6 +2233,11 @@ impl AnotherOneApp {
                     text_color: text_col,
                     hover_bg,
                 },
+                crate::control::ControlId::Task {
+                    task_id: task_id_str.clone(),
+                    kind: crate::control::TaskControl::Pin,
+                },
+                &self.control_registry,
                 move |this, _ev, _window, cx| {
                     this.sidebar_task_menu = None;
                     if let Some(task_id) = pin_task_id.as_deref() {
@@ -2241,6 +2258,11 @@ impl AnotherOneApp {
                     text_color: text_col,
                     hover_bg,
                 },
+                crate::control::ControlId::Task {
+                    task_id: task_id_str.clone(),
+                    kind: crate::control::TaskControl::NewTaskFromBranch,
+                },
+                &self.control_registry,
                 move |this, _ev, window, cx| {
                     this.sidebar_task_menu = None;
                     this.focus_handle.focus(window, cx);
@@ -2263,6 +2285,11 @@ impl AnotherOneApp {
                     text_color: text_col,
                     hover_bg,
                 },
+                crate::control::ControlId::Task {
+                    task_id: task_id_str.clone(),
+                    kind: crate::control::TaskControl::Rename,
+                },
+                &self.control_registry,
                 move |this, _ev, window, cx| {
                     this.sidebar_task_menu = None;
                     this.focus_handle.focus(window, cx);
@@ -2285,6 +2312,11 @@ impl AnotherOneApp {
                     text_color: danger_col,
                     hover_bg: danger_hover_bg,
                 },
+                crate::control::ControlId::Task {
+                    task_id: task_id_str,
+                    kind: crate::control::TaskControl::Delete,
+                },
+                &self.control_registry,
                 move |this, _ev, _window, cx| {
                     if let Some(task_id) = delete_task_id.clone() {
                         this.request_sidebar_task_delete(
